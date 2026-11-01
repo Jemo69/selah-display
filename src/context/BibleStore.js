@@ -83,6 +83,10 @@ const useBibleStore = create(
         // On by default so copy-paste blobs in imported XML never render in
         // full; persisted settings without the key also read as enabled.
         truncateVersionPreviews: true,
+        // Separate opt-out for local Bible search analytics (searchAnalytics
+        // logSearchEvent). On by default; persisted settings without the key
+        // also read as enabled.
+        logBibleSearches: true,
         versificationOffsets: {}
       },
       ui: {

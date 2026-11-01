@@ -588,6 +588,9 @@ const BibleSection = ({ darkMode }) => {
   // Default-on: persisted settings from older versions lack the key and must
   // keep trimming copy-paste blobs until the operator opts out.
   const truncateVersionPreviews = settings?.truncateVersionPreviews !== false;
+  // Separate setting: Bible search logging (local-only search analytics).
+  // Default-on so older persisted settings keep logging until opted out.
+  const logBibleSearches = settings?.logBibleSearches !== false;
 
   const toggleSwitchInPlace = () => updateSettings({ switchInPlace: !switchInPlace });
 
@@ -687,6 +690,20 @@ const BibleSection = ({ darkMode }) => {
           <p className={`text-xs mt-1 leading-relaxed ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Cut oversized verse text (for example a copy-pasted duplicate block inside an imported XML verse) down to a short snippet in the preview-all-translations tray, so the panel stays fast. Turn off to show the full text.</p>
         </div>
         <Switch checked={truncateVersionPreviews} onCheckedChange={() => updateSettings({ truncateVersionPreviews: !truncateVersionPreviews })} aria-label="Trim long verses in translation previews" />
+      </button>
+      <button
+        type="button"
+        onClick={() => updateSettings({ logBibleSearches: !logBibleSearches })}
+        data-testid="log-bible-searches-toggle"
+        className={`w-full text-left flex items-center justify-between gap-4 rounded-xl border p-4 transition-all ${darkMode ? 'bg-[#282946]/40 border-[#282946] text-gray-100' : 'bg-white border-gray-200 text-gray-900'}`}
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>Log Bible searches</span>
+          </div>
+          <p className={`text-xs mt-1 leading-relaxed ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Keep local-only analytics for Bible passage searches (query text, result counts, timing). Turn off to stop recording Bible searches. Nothing is uploaded.</p>
+        </div>
+        <Switch checked={logBibleSearches} onCheckedChange={() => updateSettings({ logBibleSearches: !logBibleSearches })} aria-label="Log Bible searches" />
       </button>
       <div className={`rounded-xl border p-4 ${darkMode ? 'bg-[#282946]/40 border-[#282946]' : 'bg-white border-gray-200'}`}>
         <div className={`text-sm font-medium mb-1.5 ${darkMode ? 'text-white' : 'text-gray-900'}`}>Bible split method</div>

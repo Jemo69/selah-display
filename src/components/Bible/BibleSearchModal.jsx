@@ -257,7 +257,10 @@ export default function BibleSearchModal({ isOpen, onClose, onSelectVerses, dark
       setSearching(false);
       // Fire-and-forget search telemetry: sanitized + batched on idle, never
       // awaited so the worker round-trip stays the only latency here.
-      logSearchEvent({
+      // Separate User Preferences > Bible setting: skip logging when the
+      // operator opts out via "Log Bible searches".
+      if (useBibleStore.getState().settings?.logBibleSearches !== false) {
+        logSearchEvent({
         surface: 'bible',
         query: searchQueryRef.current,
         resultCount: results.length,
@@ -265,6 +268,7 @@ export default function BibleSearchModal({ isOpen, onClose, onSelectVerses, dark
         latencyMs: searchStartedAtRef.current ? Date.now() - searchStartedAtRef.current : null,
         meta: { searchAll: searchAllRef.current },
       });
+      }
       diagInfo('bible', 'passage search finished', {
         queryChars: searchQueryRef.current.length,
         results: results.length,
