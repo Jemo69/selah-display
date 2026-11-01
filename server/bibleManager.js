@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { parseBible, searchBible, buildSearchIndex } from '../shared/bible/index.js';
+import { parseBible, searchBible, searchBibleExperimental, buildSearchIndex } from '../shared/bible/index.js';
 import createServerLogger from './logger.js';
 
 const log = createServerLogger('BibleManager');
@@ -135,7 +135,7 @@ export function removeBible(id) {
   log.info(`Bible removed: ${id}`);
 }
 
-export function search(query, limit = 50, searchAll = false) {
+export function search(query, limit = 50, searchAll = false, experimental = false) {
   const current = getActiveBible();
   if (!current) return [];
   try {
@@ -145,7 +145,9 @@ export function search(query, limit = 50, searchAll = false) {
         attachSearchIndex(bible);
       }
     }
-    const results = searchBible(current, query, bibles, limit, defaultBibleId, searchAll);
+    const results = experimental === true
+      ? searchBibleExperimental(current, query, bibles, limit, defaultBibleId, searchAll)
+      : searchBible(current, query, bibles, limit, defaultBibleId, searchAll);
     return results || [];
   } catch (e) {
     log.error('Search error:', e.message);

@@ -7,7 +7,7 @@ import { formatForDisplay } from '@tanstack/hotkeys';
 import useRccgTphbStore from '../context/RccgTphbStore';
 import useToast from '../hooks/useToast';
 import useHttpActionRunner from '../hooks/useHttpActionRunner';
-import { useOutputAutomationState, useOutputRegistry, usePerformanceSettings, useHttpActionButtonsState, useFHintEnabled, useFreeNotesEnabled, useLyricContentSearchEnabled, useBibleVerseEditorEnabled, useSchedulerEnabled } from '../hooks/useStoreSelectors';
+import { useOutputAutomationState, useOutputRegistry, usePerformanceSettings, useHttpActionButtonsState, useFHintEnabled, useFreeNotesEnabled, useLyricContentSearchEnabled, useBibleVerseEditorEnabled, useSchedulerEnabled, useSentenceSearchExperimental } from '../hooks/useStoreSelectors';
 import { buildOutputAutomationTemplate, runOutputAutomationAction } from '../utils/outputAutomation';
 import { buildHttpExample, inspectHttpActionConfig } from '../utils/httpAction';
 import { normalizeHttpVariables } from '../utils/httpActionVariables';
@@ -1146,6 +1146,7 @@ const ExperimentalSection = ({ darkMode }) => {
   const { enabled: lyricSearchEnabled, setEnabled: setLyricSearchEnabled } = useLyricContentSearchEnabled();
   const { enabled: schedulerEnabled, setEnabled: setSchedulerEnabled } = useSchedulerEnabled();
   const { enabled: bibleVerseEditorEnabled, setEnabled: setBibleVerseEditorEnabled } = useBibleVerseEditorEnabled();
+  const { enabled: sentenceSearchEnabled, setEnabled: setSentenceSearchEnabled } = useSentenceSearchExperimental();
   // The master switch itself. Read here so the Experimental card can show the
   // real on/off state and gate the surface — the store stays the single source
   // of truth, and nothing here writes it except the toggle below.
@@ -1212,6 +1213,17 @@ const ExperimentalSection = ({ darkMode }) => {
     });
   };
 
+  const handleToggleSentenceSearch = (checked) => {
+    setSentenceSearchEnabled(checked);
+    showToast({
+      title: checked ? 'Sentence search enabled' : 'Sentence search disabled',
+      message: checked
+        ? 'Bible + file search now rank whole sentences first (experimental). Reference lookups like isa 44 5 keep working.'
+        : 'Bible + file search use the default per-word ranking.',
+      variant: checked ? 'success' : 'info'
+    });
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -1221,6 +1233,37 @@ const ExperimentalSection = ({ darkMode }) => {
         <p className={`text-xs mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
           Preview and test new capabilities before they become permanent. These features can be turned on or off at any time.
         </p>
+      </div>
+
+      {/* Sentence-first search ranking */}
+      <div className={`rounded-xl border p-5 space-y-4 transition-all ${darkMode ? 'border-gray-800 bg-gray-900/50' : 'border-gray-200 bg-white'}`}>
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1.5 flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`text-sm font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                Sentence Search Ranking
+              </span>
+              <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                darkMode
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                  : 'bg-amber-100 text-amber-800 border border-amber-300'
+              }`}>
+                Experimental
+              </span>
+              <span className={`text-[10px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded ${
+                sentenceSearchEnabled
+                  ? (darkMode ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' : 'bg-emerald-100 text-emerald-800 border border-emerald-200')
+                  : (darkMode ? 'bg-gray-800 text-gray-400 border border-gray-700' : 'bg-gray-100 text-gray-500 border border-gray-200')
+              }`}>
+                {sentenceSearchEnabled ? 'ON' : 'OFF'}
+              </span>
+            </div>
+            <p className={`text-xs leading-relaxed ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+              Rank whole sentences first: “for God so love the world” finds John 3:16, “water to into wine” finds the sentence — not verses/files containing a single word. Reference lookups like “isa 44 5” keep working.
+            </p>
+          </div>
+          <Switch checked={sentenceSearchEnabled} onCheckedChange={handleToggleSentenceSearch} aria-label="Toggle Sentence Search Ranking" />
+        </div>
       </div>
 
       {/* Full-Text Lyric Content Search */}

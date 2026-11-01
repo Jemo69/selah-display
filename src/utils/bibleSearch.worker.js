@@ -1,4 +1,4 @@
-import { searchBible } from 'shared/bible';
+import { searchBible, searchBibleExperimental } from 'shared/bible';
 
 let cachedBibles = {};
 let cachedCurrentBible = null;
@@ -7,10 +7,10 @@ let cachedCurrentBible = null;
 const queryCache = new Map();
 const QUERY_CACHE_LIMIT = 100;
 
-function cacheKey(query, maxResults, defaultBibleId, searchAll) {
+function cacheKey(query, maxResults, defaultBibleId, searchAll, experimental = false) {
   const ids = Object.keys(cachedBibles).sort().join(',');
   const cur = cachedCurrentBible?.id || '';
-  return `${cur}|${ids}|${String(query).toLowerCase()}|${maxResults}|${defaultBibleId}|${searchAll}`;
+  return `${cur}|${ids}|${String(query).toLowerCase()}|${maxResults}|${defaultBibleId}|${searchAll}|exp:${experimental ? 1 : 0}`;
 }
 
 function cacheGet(key) {
@@ -30,7 +30,7 @@ function cacheSet(key, value) {
 }
 
 self.onmessage = function(e) {
-  const { currentBible, query, allBibles, maxResults, defaultBibleId, searchAll, refreshBibles, pruneBibles, qid } = e.data;
+  const { currentBible, query, allBibles, maxResults, defaultBibleId, searchAll, refreshBibles, pruneBibles, qid, experimental } = e.data; // experimental: sentence-first ranking (Experimental flag)
 
   if (refreshBibles && allBibles && typeof allBibles === 'object') {
     cachedBibles = allBibles;
@@ -50,14 +50,17 @@ self.onmessage = function(e) {
 
   const activeCurrent = currentBible || cachedCurrentBible;
   if (typeof query === 'string' && query.trim().length > 0) {
-    const key = cacheKey(query, maxResults, defaultBibleId, searchAll);
+    const useExp = experimental === true;
+    const key = cacheKey(query, maxResults, defaultBibleId, searchAll, useExp);
     const cached = cacheGet(key);
     if (cached) {
       if (qid != null) self.postMessage({ qid, results: cached, cached: true });
       else self.postMessage(cached);
       return;
     }
-    const results = searchBible(activeCurrent, query, cachedBibles, maxResults, defaultBibleId, searchAll);
+    const results = useExp
+      ? searchBibleExperimental(activeCurrent, query, cachedBibles, maxResults, defaultBibleId, searchAll)
+      : searchBible(activeCurrent, query, cachedBibles, maxResults, defaultBibleId, searchAll);
     cacheSet(key, results);
     if (qid != null) self.postMessage({ qid, results });
     else self.postMessage(results);

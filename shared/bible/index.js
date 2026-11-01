@@ -1,4 +1,5 @@
 import { detectBibleFormat } from './xmlUtils.js';
+import { normalizeSentenceText, sentenceContentTokens, scoreSentenceVerse } from './sentenceSearch.js';
 import { parseZefaniaBible } from './zefaniaBible.js';
 import { parseOsisBible } from './osisBible.js';
 import { parseBebliaBible } from './bebliaBible.js';
@@ -905,6 +906,247 @@ export function searchBible(currentBible, query, allBibles = {}, maxResults = 50
     for (const result of results) {
       if (!byBible.has(result.bibleId)) byBible.set(result.bibleId, []);
       byBible.get(result.bibleId).push(result);
+    }
+    const balanced = [];
+    for (const group of byBible.values()) {
+      group.sort((a, b) => b.score - a.score);
+      balanced.push(...group.slice(0, perBibleCap));
+    }
+    results = balanced;
+  }
+
+  return results
+    .sort((a, b) => {
+      const aIsDefault = a.bibleId === defaultBibleId;
+      const bIsDefault = b.bibleId === defaultBibleId;
+      if (aIsDefault && !bIsDefault) return -1;
+      if (bIsDefault && !aIsDefault) return 1;
+      return b.score - a.score;
+    })
+    .slice(0, maxResults)
+    .map(({ score, ...rest }) => rest);
+}
+
+// --- Experimental sentence-first search (behind Experimental flag) ---
+// Same reference handling as searchBible (isa 44 5 must keep working), but
+// text ranking is sentence-first: exact phrase wins, then ordered coverage.
+// Single-word OR hits are filtered when the query is a sentence.
+// Faster than the default path: no vocabulary-wide prefix scan — only
+// exact + plural-variant postings are intersected, then reranked.
+
+function experimentalTieredPostingsExact(index, term, cap = 2000) {
+  const exact = index[term] || [];
+  let variant = [];
+  if (term.endsWith('s') && term.length > 4) {
+    variant = index[term.slice(0, -1)] || [];
+  } else {
+    variant = index[`${term}s`] || [];
+  }
+  const seen = new Set(exact.map((r) => `${r.b}-${r.c}-${r.v}`));
+  const out = [...exact.map((r) => ({ rec: r }))];
+  for (const r of variant) {
+    const k = `${r.b}-${r.c}-${r.v}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push({ rec: r });
+    if (out.length >= cap) break;
+  }
+  return out.slice(0, cap);
+}
+
+export function searchBibleExperimental(currentBible, query, allBibles = {}, maxResults = 50, defaultBibleId = null, searchAll = false) {
+  if (!currentBible || !currentBible.books) return [];
+  const rawQuery = String(query || '').trim();
+  if (!rawQuery) return [];
+
+  const biblesToSearch = (searchAll && Object.keys(allBibles).length > 0)
+    ? Object.values(allBibles).sort((a, b) => {
+      if (a.id === defaultBibleId && b.id !== defaultBibleId) return -1;
+      if (b.id === defaultBibleId && a.id !== defaultBibleId) return 1;
+      if (a.id === currentBible.id && b.id !== currentBible.id) return -1;
+      if (b.id === currentBible.id && a.id !== currentBible.id) return 1;
+      return 0;
+    })
+    : [currentBible];
+
+  // 1. Reference path identical to searchBible — grouped + single.
+  const groupedReferences = searchGroupedReferences(biblesToSearch, rawQuery, maxResults, currentBible?.id);
+  if (groupedReferences) return groupedReferences;
+
+  const referenceMatch = rawQuery.match(REFERENCE_REGEX);
+  if (referenceMatch) {
+    const results = [];
+    const [, bookPart, chapterPart, versePart1, versePart2, rangeEndPart] = referenceMatch;
+    const versePart = versePart1 || versePart2;
+    for (const bible of biblesToSearch) {
+      const bookMatch = findBookInArray(bible.books, bookPart);
+      if (!bookMatch) continue;
+      const chapter = findChapter(bookMatch, chapterPart);
+      if (!chapter) continue;
+      if (versePart) {
+        const startVerse = parseInt(versePart, 10);
+        const endVerse = parseInt(rangeEndPart || versePart, 10);
+        const versesInRange = (chapter.verses || []).filter((v) => v.number >= startVerse && v.number <= endVerse);
+        if (versesInRange.length > 0) {
+          const normalizedEnd = Number.isNaN(endVerse) ? startVerse : endVerse;
+          results.push({
+            book: bookMatch.number,
+            bookName: bookMatch.name,
+            chapter: chapter.number,
+            verse: startVerse,
+            endVerse: normalizedEnd,
+            verses: versesInRange.map((v) => v.number),
+            text: versesInRange.map((v) => v.text || '').join(' ').trim(),
+            reference: normalizedEnd > startVerse
+              ? `${bookMatch.name} ${chapter.number}:${startVerse}-${normalizedEnd}`
+              : `${bookMatch.name} ${chapter.number}:${startVerse}`,
+            bibleId: bible.id,
+            bibleName: bible.name,
+          });
+        }
+      } else if (chapter.verses?.length > 0) {
+        if (bible.id === currentBible.id || (!currentBible.id && biblesToSearch.length === 1)) {
+          return chapter.verses.slice(0, maxResults).map((verse) => ({
+            book: bookMatch.number,
+            bookName: bookMatch.name,
+            chapter: chapter.number,
+            verse: verse.number,
+            text: verse.text || '',
+            reference: `${bookMatch.name} ${chapter.number}:${verse.number}`,
+            bibleId: bible.id,
+            bibleName: bible.name,
+          }));
+        }
+      }
+    }
+    if (results.length > 0) return results.slice(0, maxResults);
+  }
+
+  // 2. Sentence path.
+  const combinedQuery = parseCombinedQuery(rawQuery, currentBible.books);
+  const searchTerm = combinedQuery.book ? combinedQuery.textTerm : rawQuery;
+  if (!searchTerm || searchTerm.trim().length < 2) return [];
+
+  const queryNorm = normalizeSentenceText(searchTerm);
+  const queryContent = sentenceContentTokens(searchTerm);
+  if (queryContent.length === 0) return [];
+
+  const bookFilterNumber = combinedQuery.book
+    ? findBookInArray(currentBible.books, combinedQuery.book.name)?.number ?? null
+    : null;
+
+  let results = [];
+  for (const bible of biblesToSearch) {
+    const isCurrent = bible.id === currentBible.id;
+    const isDefault = bible.id === defaultBibleId;
+    const priorityBoost = (isDefault ? 100 : 0) + (isCurrent ? 50 : 0);
+    const perBibleFilter = combinedQuery.book
+      ? findBookInArray(bible.books, combinedQuery.book.name)?.number ?? null
+      : null;
+
+    const perBibleCap = searchAll && biblesToSearch.length > 1
+      ? Math.max(1, Math.ceil(maxResults / biblesToSearch.length)) * 3
+      : maxResults * 2;
+
+    if (bible.searchIndex) {
+      // Fast candidate retrieval: intersect exact+plural postings only.
+      // No Object.keys prefix scan (the slow part of the old path).
+      const unions = queryContent.map((term) => {
+        const set = new Set();
+        for (const { rec } of experimentalTieredPostingsExact(bible.searchIndex, term, 800)) {
+          if (perBibleFilter != null && rec.b !== perBibleFilter) continue;
+          set.add(`${rec.b}-${rec.c}-${rec.v}`);
+        }
+        return set;
+      });
+      let candidateKeys = null;
+      if (queryContent.length === 1) {
+        candidateKeys = [...(unions[0] || [])];
+      } else {
+        candidateKeys = [...(unions[0] || [])];
+        for (let i = 1; i < unions.length; i++) {
+          const s = unions[i];
+          candidateKeys = candidateKeys.filter((k) => s.has(k));
+          if (candidateKeys.length === 0) break;
+        }
+        // When strict AND yields nothing (typo like word/world), fall back to
+        // union so fuzzy sentence scoring still gets a chance — but the
+        // sentence gate below filters single-word OR hits.
+        if (candidateKeys.length === 0) {
+          const unionAll = new Set();
+          for (const s of unions) for (const k of s) unionAll.add(k);
+          candidateKeys = [...unionAll];
+        }
+      }
+
+      const scored = [];
+      const lookup = (b, c, v) => {
+        const book = bible.bookMap?.[b] || bible.books.find((bk) => bk.number === b);
+        if (!book) return null;
+        const chapter = book.chapterMap?.[c] || book.chapters.find((ch) => ch.number === c);
+        if (!chapter) return null;
+        const verse = chapter.verseMap?.[v] || chapter.verses.find((vx) => vx.number === v);
+        if (!verse) return null;
+        return { book, chapter, verse };
+      };
+
+      for (const key of candidateKeys.slice(0, perBibleCap * 4)) {
+        const [b, c, v] = key.split('-').map(Number);
+        if (perBibleFilter != null && b !== perBibleFilter) continue;
+        if (bookFilterNumber != null && perBibleFilter == null && b !== bookFilterNumber) continue;
+        const found = lookup(b, c, v);
+        if (!found) continue;
+        const s = scoreSentenceVerse(queryNorm, queryContent, found.verse.text || '');
+        if (!s) continue;
+        scored.push({
+          book: found.book.number,
+          bookName: found.book.name,
+          chapter: found.chapter.number,
+          verse: found.verse.number,
+          text: found.verse.text,
+          reference: `${found.book.name} ${found.chapter.number}:${found.verse.number}`,
+          bibleId: bible.id,
+          bibleName: bible.name,
+          score: s.score + priorityBoost + (s.phrase ? 500 : 0),
+        });
+      }
+      scored.sort((a, b) => b.score - a.score);
+      results.push(...scored.slice(0, perBibleCap));
+      continue;
+    }
+
+    // No index: full scan with sentence scoring (same gate).
+    for (const book of bible.books) {
+      if (perBibleFilter != null && book.number !== perBibleFilter) continue;
+      for (const chapter of book.chapters || []) {
+        for (const verse of chapter.verses || []) {
+          const s = scoreSentenceVerse(queryNorm, queryContent, verse.text || '');
+          if (!s) continue;
+          results.push({
+            book: book.number,
+            bookName: book.name,
+            chapter: chapter.number,
+            verse: verse.number,
+            text: verse.text,
+            reference: `${book.name} ${chapter.number}:${verse.number}`,
+            bibleId: bible.id,
+            bibleName: bible.name,
+            score: s.score + priorityBoost,
+          });
+          if (results.length >= perBibleCap * 2) break;
+        }
+        if (results.length >= perBibleCap * 2) break;
+      }
+      if (results.length >= perBibleCap * 2) break;
+    }
+  }
+
+  if (searchAll && biblesToSearch.length > 1) {
+    const perBibleCap = Math.max(1, Math.ceil(maxResults / biblesToSearch.length));
+    const byBible = new Map();
+    for (const r of results) {
+      if (!byBible.has(r.bibleId)) byBible.set(r.bibleId, []);
+      byBible.get(r.bibleId).push(r);
     }
     const balanced = [];
     for (const group of byBible.values()) {
