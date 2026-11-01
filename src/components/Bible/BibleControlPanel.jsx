@@ -88,6 +88,7 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
 
   const output1Settings = useLyricsStore((s) => s.output1Settings) || {};
   const bibleVerseEditorEnabled = useLyricsStore((s) => s.bibleVerseEditorEnabled ?? false);
+  const sentenceExperimental = useLyricsStore((s) => s.sentenceSearchExperimental === true);
   const isOutputOn = useLyricsStore((s) => s.isOutputOn);
   const setIsOutputOn = useLyricsStore((s) => s.setIsOutputOn);
   const controlSocket = useControlSocket?.() || null;
@@ -182,6 +183,7 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
         maxResults: 20,
         defaultBibleId,
         searchAll,
+        experimental: sentenceExperimental,
         ...(biblesChanged ? { refreshBibles: true, allBibles: bibles } : {}),
         ...(currentChanged ? { currentBible } : {})
       });
@@ -190,7 +192,7 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
     return () => {
       clearTimeout(handle);
     };
-  }, [query, currentBible, bibles, defaultBibleId, searchAll]);
+  }, [query, currentBible, bibles, defaultBibleId, searchAll, sentenceExperimental]);
 
   const handleBookToggle = useCallback((bookNumber) => {
     setExpandedBooks(prev => ({
