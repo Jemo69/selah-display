@@ -315,7 +315,10 @@ export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
   const STOP = new Set(['the','a','an','and','or','of','to','in','on','for','with','from','as','is','are','was','were','be','been','am','it','its','this','that','these','those']);
   const contentTerms = query.terms.filter((t) => t && !STOP.has(t));
   const useTerms = contentTerms.length > 0 ? contentTerms : query.terms;
-  const hayTokens = normContent.split(' ').filter(Boolean);
+  // Hay tokens shorter than 3 chars (or stopwords) carry no signal and only
+  // create false substring hits (query "watre" matching lyric "at" via
+  // q.includes(hay)). Skip them; the title fallback below still works.
+  const hayTokens = normContent.split(' ').filter((t) => t && t.length >= 3 && !STOP.has(t));
   let cursor = 0;
   let first = -1;
   let last = -1;

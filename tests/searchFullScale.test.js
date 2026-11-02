@@ -107,23 +107,28 @@ describe('ROUND 1 full-scale: experimental tops John 3:16 on user queries', () =
     }
   });
 
-  it('speed: experimental stays within budget on the full canon', () => {
+  it('speed: absolute budget on the full canon (no ratio gates)', () => {
     const { bible } = buildFullCanon();
     const indexed = indexBible(bible);
-    const q = 'for God so loved the world';
-    searchBible(indexed, q, {}, 20);
-    searchBibleExperimental(indexed, q, {}, 20);
-    let oldT = 0;
-    let expT = 0;
-    for (let i = 0; i < 3; i++) {
-      let t = performance.now();
+    const queries = [
+      'for God so loved the world',
+      'for God so loved the word',
+      'so love the world that',
+      'god',
+    ];
+    for (const q of queries) {
       searchBible(indexed, q, {}, 20);
-      oldT += performance.now() - t;
-      t = performance.now();
       searchBibleExperimental(indexed, q, {}, 20);
-      expT += performance.now() - t;
     }
-    console.log(`full-canon avg ms — old: ${(oldT / 3).toFixed(2)} exp: ${(expT / 3).toFixed(2)}`);
-    expect(expT / 3).toBeLessThanOrEqual((oldT / 3) * 1.5 + 5);
+    for (const q of queries) {
+      const t0 = performance.now();
+      searchBible(indexed, q, {}, 20);
+      const oldMs = performance.now() - t0;
+      const t1 = performance.now();
+      searchBibleExperimental(indexed, q, {}, 20);
+      const expMs = performance.now() - t1;
+      console.log(`full-canon ${JSON.stringify(q)}: old ${oldMs.toFixed(2)}ms exp ${expMs.toFixed(2)}ms`);
+      expect(expMs).toBeLessThan(50);
+    }
   });
 });

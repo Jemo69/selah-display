@@ -31,10 +31,14 @@ export const SENTENCE_STOPWORDS = new Set([
 ]);
 
 export function normalizeSentenceText(value = '') {
-  return String(value || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
+  const lower = String(value || '').toLowerCase();
+  // ASCII fast path: NFD + diacritic-strip is the identity on ASCII, and
+  // the whole canon (KJV) is ASCII — skip it per verse per keystroke.
+  // Output is byte-identical to the slow path for ASCII input.
+  const stripped = /^[\x00-\x7F]*$/.test(lower)
+    ? lower
+    : lower.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return stripped
     .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();

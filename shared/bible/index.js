@@ -1,5 +1,5 @@
 import { detectBibleFormat } from './xmlUtils.js';
-import { normalizeSentenceText, sentenceContentTokens, scoreSentenceVerse, matchLeadingBook, withinEditOne } from './sentenceSearch.js';
+import { normalizeSentenceText, sentenceContentTokens, scoreSentenceVerse, matchLeadingBook } from './sentenceSearch.js';
 import { parseZefaniaBible } from './zefaniaBible.js';
 import { parseOsisBible } from './osisBible.js';
 import { parseBebliaBible } from './bebliaBible.js';
@@ -950,21 +950,6 @@ function experimentalTermVariants(term) {
   return [...new Set(out)];
 }
 
-function experimentalTieredPostingsExact(index, term, cap = 2000) {
-  const seen = new Set();
-  const out = [];
-  for (const variant of experimentalTermVariants(term)) {
-    for (const r of index[variant] || []) {
-      const k = `${r.b}-${r.c}-${r.v}`;
-      if (seen.has(k)) continue;
-      seen.add(k);
-      out.push({ rec: r });
-      if (out.length >= cap) return out;
-    }
-  }
-  return out;
-}
-
 export function searchBibleExperimental(currentBible, query, allBibles = {}, maxResults = 50, defaultBibleId = null, searchAll = false) {
   if (!currentBible || !currentBible.books) return [];
   const rawQuery = String(query || '').trim();
@@ -1063,43 +1048,84 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
       : maxResults * 2;
 
     if (bible.searchIndex) {
-      // Fast candidate retrieval with FULL recall: posting sets are uncapped
-      // (set construction is ~1ms; only the scored pool is bounded), terms
-      // processed rarest-first so a huge early-canon list can never crowd
-      // out the sentence. Capping per-term lists demoted real matches out
-      // of contention on full 31k-verse corpora — a typo query recalled
-      // nothing past Genesis. No Object.keys prefix scan anywhere.
+      // Fast candidate retrieval with FULL recall. Posting keys are packed
+      // integers (b*1e6+c*1e3+v — book/chapter/verse are all < 1000), so
+      // set/map work is allocation-free. No Object.keys prefix scan anywhere.
+      // Single-term sets are capped at 2000 like the old path (ranking is
+      // provably identical: one shared weight shifts every score equally).
       const totalVerses = bible.books.reduce((t, bk) => t + (bk.chapters?.reduce((c, ch) => c + (ch.verses?.length || 0), 0) || 0), 0);
+      const singleTerm = queryContent.length === 1;
       const termSets = queryContent.map((term) => {
         const set = new Set();
+        // Returns false ONLY when the single-term cap is hit (stop scanning
+        // entirely). Filtered-out and duplicate records return true so the
+        // scan continues past them — otherwise book-scoped queries would
+        // stop at the first out-of-scope posting and lose recall.
         const push = (rec) => {
-          if (perBibleFilter != null && rec.b !== perBibleFilter) return;
-          set.add(`${rec.b}-${rec.c}-${rec.v}`);
+          if (perBibleFilter != null && rec.b !== perBibleFilter) return true;
+          const k = rec.b * 1000000 + rec.c * 1000 + rec.v;
+          if (set.has(k)) return true;
+          if (singleTerm && set.size >= 2000) return false;
+          set.add(k);
+          return true;
+        };
+        const pushAll = (postings) => {
+          for (const rec of postings) {
+            if (!push(rec)) return false;
+          }
+          return true;
         };
         for (const variant of experimentalTermVariants(term)) {
-          for (const rec of bible.searchIndex[variant] || []) push(rec);
-          if (queryContent.length === 1 && set.size >= 2000) break;
+          if (!pushAll(bible.searchIndex[variant] || [])) break;
         }
-        if (set.size === 0 && term.length >= 4) {
-          let added = 0;
-          const take = (postings) => {
-            for (const rec of postings) {
-              push(rec);
-              if (++added >= 2000) return true;
-            }
-            return false;
+        // Typo neighbors via GENERATION, not vocabulary scan: all 1-edit
+        // insertions/deletions/substitutions are hashed directly (~250
+        // lookups vs a 12k-key scan). Runs only when the exact+variant set
+        // is small — when thousands of literal postings already fill the
+        // pool, neighbor expansion only adds cost, never recall the pool
+        // can use. Empty and rare terms always expand (typo recall).
+        if (term.length >= 4 && set.size < 500) {
+          const seen = new Set();
+          const tryKey = (key) => {
+            if (key.length < 4 || seen.has(key)) return true;
+            seen.add(key);
+            const postings = bible.searchIndex[key];
+            if (postings) return pushAll(postings);
+            return true;
           };
-          for (const key of Object.keys(bible.searchIndex)) {
-            if (key.length < 4 || !withinEditOne(term, key)) continue;
-            if (take(bible.searchIndex[key])) break;
+          let stop = false;
+          // Deletions (extra char typed: "worrld" -> "world").
+          for (let i = 0; i < term.length && !stop; i++) {
+            if (!tryKey(term.slice(0, i) + term.slice(i + 1))) stop = true;
           }
-          // KJV writes "every thing" as two words, so no single key is
-          // one edit from "evrything" — fall back to index keys that are
-          // substrings of the term ("thing" in "evrything").
-          if (added < 2000) {
-            for (const key of Object.keys(bible.searchIndex)) {
-              if (key.length < 4 || key === term || !term.includes(key)) continue;
-              if (take(bible.searchIndex[key])) break;
+          // Substitutions (wrong char: "aginst" needs insert, "wird" -> "word").
+          for (let i = 0; i < term.length && !stop; i++) {
+            for (let c = 97; c <= 122 && !stop; c++) {
+              const v = term.slice(0, i) + String.fromCharCode(c) + term.slice(i + 1);
+              if (v === term) continue;
+              if (!tryKey(v)) stop = true;
+            }
+          }
+          // Insertions (missing char: "evrything" -> "everything",
+          // "word" -> "world", "aginst" -> "against").
+          for (let i = 0; i <= term.length && !stop; i++) {
+            for (let c = 97; c <= 122 && !stop; c++) {
+              if (!tryKey(term.slice(0, i) + String.fromCharCode(c) + term.slice(i))) stop = true;
+            }
+          }
+        }
+        // Compound splits for still-empty typo terms ("evrything" has no
+        // 1-edit neighbor that is a real word): all substrings len>=4 are
+        // hashed directly instead of scanning the vocabulary.
+        if (set.size === 0 && term.length >= 6) {
+          const seen = new Set();
+          for (let i = 0; i <= term.length - 4 && set.size < 2000; i++) {
+            for (let j = i + 4; j <= term.length && set.size < 2000; j++) {
+              const sub = term.slice(i, j);
+              if (sub === term || seen.has(sub)) continue;
+              seen.add(sub);
+              const postings = bible.searchIndex[sub];
+              if (postings) for (const rec of postings) push(rec);
             }
           }
         }
@@ -1109,43 +1135,13 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
       const termWeights = queryContent.map((t) => weightOf.get(t));
       termSets.sort((a, b) => a.set.size - b.set.size);
       const unions = termSets.map((t) => t.set);
-      let candidateKeys = null;
-      if (queryContent.length === 1) {
-        candidateKeys = [...(unions[0] || [])];
-      } else {
-        // Hit-count ordering for the union pool (verses matching the most
-        // query terms first), never bible order: on a full 31k-verse corpus a
-        // bible-order slice(0, N) truncated before ever reaching John (book 43),
-        // so typo queries could never recall the sentence.
-        const hits = new Map();
-        for (const s of unions) {
-          for (const k of s) hits.set(k, (hits.get(k) || 0) + 1);
-        }
-        const byHits = [...hits.entries()]
-          .sort((a, b) => b[1] - a[1])
-          .map(([k]) => k);
-        const intersect = [...(unions[0] || [])];
-        for (let i = 1; i < unions.length; i++) {
-          const s = unions[i];
-          for (let j = intersect.length - 1; j >= 0; j--) {
-            if (!s.has(intersect[j])) intersect.splice(j, 1);
-          }
-          if (intersect.length === 0) break;
-        }
-        // Ambiguity policy: strict matches lead, but fuzzy near-misses stay
-        // visible below (top-up from the hit-ordered union). A literal verse
-        // always outranks a fuzzy one via the exact-phrase bonus — yet when
-        // the user typo'd, the intended sentence is still on screen instead
-        // of being filtered into silence. The sentence gate below still
-        // removes single-word OR hits from the pool.
-        if (intersect.length === 0) {
-          candidateKeys = byHits;
-        } else {
-          const inStrict = new Set(intersect);
-          candidateKeys = [...intersect, ...byHits.filter((k) => !inStrict.has(k))];
-        }
-      }
-
+      // Pool budget: bounded for keystroke latency; ORDERING (not size)
+      // protects recall. Hit-count buckets order linearly (no comparator
+      // sort); an explicit phrase hunt rescues deep exact-phrase hits that
+      // any positional slice would truncate; the single-term path keeps the
+      // old 2000-cap for parity.
+      const HARD = 2500;
+      const TOPUP = Math.min(250, Math.max(20, maxResults * 5));
       const scored = [];
       const lookup = (b, c, v) => {
         const book = bible.bookMap?.[b] || bible.books.find((bk) => bk.number === b);
@@ -1156,12 +1152,122 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
         if (!verse) return null;
         return { book, chapter, verse };
       };
+      // Linear-time hit ordering: bucket keys by count (insertion-stable
+      // within a bucket, so ties keep bible order exactly like before).
+      const bucketOrder = (hits, exclude, limit) => {
+        let top = 0;
+        for (const c of hits.values()) if (c > top) top = c;
+        const buckets = new Array(top + 1);
+        for (const k of hits.keys()) {
+          if (exclude && exclude.has(k)) continue;
+          const c = hits.get(k);
+          (buckets[c] || (buckets[c] = [])).push(k);
+        }
+        const out = [];
+        for (let c = top; c >= 0 && out.length < limit; c--) {
+          const bkt = buckets[c];
+          if (!bkt) continue;
+          for (const k of bkt) {
+            out.push(k);
+            if (out.length >= limit) break;
+          }
+        }
+        return out;
+      };
+      // Exact-phrase hunt over an oversized intersect: a deep exact-phrase
+      // verse would never be scored otherwise. Cheap raw-lowercase
+      // substring on intersect keys only, bounded scan, stops at maxResults.
+      const huntPhrase = (keys) => {
+        const found = [];
+        const seenH = new Set();
+        const lim = Math.min(keys.length, 6000);
+        for (let i = 0; i < lim && found.length < maxResults; i++) {
+          const k = keys[i];
+          const b = Math.floor(k / 1000000);
+          const c = Math.floor((k % 1000000) / 1000);
+          const v = k % 1000;
+          const rec = lookup(b, c, v);
+          if (!rec || !rec.verse.text || seenH.has(k)) continue;
+          if (String(rec.verse.text).toLowerCase().includes(queryNorm)) {
+            seenH.add(k);
+            found.push(k);
+          }
+        }
+        return found;
+      };
+      let candidateKeys = null;
+      if (singleTerm) {
+        // Unchanged parity with the old 2000-cap path: score the head only.
+        candidateKeys = [...(unions[0] || [])].slice(0, perBibleCap * 4);
+      } else {
+        const intersect = [...(unions[0] || [])];
+        for (let i = 1; i < unions.length; i++) {
+          const s = unions[i];
+          for (let j = intersect.length - 1; j >= 0; j--) {
+            if (!s.has(intersect[j])) intersect.splice(j, 1);
+          }
+          if (intersect.length === 0) break;
+        }
+        if (intersect.length === 0) {
+          // Typo path: no verse matches everything; order the whole union
+          // by hit count and score the head. Fuzzy near-misses live at
+          // the front, single-word noise never passes the gate below.
+          const hits = new Map();
+          for (const s of unions) {
+            for (const k of s) hits.set(k, (hits.get(k) || 0) + 1);
+          }
+          candidateKeys = bucketOrder(hits, null, HARD);
+        } else if (intersect.length >= HARD) {
+          // Mega-intersect: the pool slice alone would truncate deep hits,
+          // so hunt exact-phrase verses explicitly and prepend them — the
+          // scoring gate still filters everything else normally.
+          const phraseHits = huntPhrase(intersect);
+          const inPool = new Set(phraseHits);
+          const head = [];
+          for (const k of intersect) {
+            if (head.length + phraseHits.length >= HARD) break;
+            if (inPool.has(k)) continue;
+            inPool.add(k);
+            head.push(k);
+          }
+          candidateKeys = [...phraseHits, ...head];
+        } else {
+          // Ambiguity policy: strict matches lead, but fuzzy near-misses stay
+          // visible below. Top-up is ordered by (hit count, rarity weight) so
+          // a near-miss on RARE terms (water+wine) outranks one on glue
+          // (water+into) regardless of canon position — bible-order ties
+          // buried John 2:9 past the pool cap. The sentence gate below still
+          // removes single-word OR hits from the pool.
+          const hits = new Map();
+          const wsum = new Map();
+          termSets.forEach((t, ti) => {
+            const w = termWeights[queryContent.indexOf(t.term)] || 0;
+            for (const k of t.set) {
+              hits.set(k, (hits.get(k) || 0) + 1);
+              wsum.set(k, (wsum.get(k) || 0) + w);
+            }
+          });
+          const inStrict = new Set(intersect);
+          const top = [];
+          const consider = (k) => {
+            if (inStrict.has(k)) return;
+            const h = hits.get(k);
+            const w = wsum.get(k) || 0;
+            let i = 0;
+            while (i < top.length && (top[i].h > h || (top[i].h === h && top[i].w >= w))) i++;
+            if (i >= TOPUP) return;
+            top.splice(i, 0, { k, h, w });
+            if (top.length > TOPUP) top.pop();
+          };
+          for (const k of hits.keys()) consider(k);
+          candidateKeys = [...intersect, ...top.map((x) => x.k)];
+        }
+      }
 
-      // Scoring pool stays bounded for keystroke latency; the multi-term
-      // pool is wider because hit-ordering already put the best first.
-      const poolCap = queryContent.length === 1 ? perBibleCap * 4 : perBibleCap * 10;
-      for (const key of candidateKeys.slice(0, poolCap)) {
-        const [b, c, v] = key.split('-').map(Number);
+      for (const key of candidateKeys) {
+        const b = Math.floor(key / 1000000);
+        const c = Math.floor((key % 1000000) / 1000);
+        const v = key % 1000;
         if (perBibleFilter != null && b !== perBibleFilter) continue;
         if (bookFilterNumber != null && perBibleFilter == null && b !== bookFilterNumber) continue;
         const found = lookup(b, c, v);
