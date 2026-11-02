@@ -286,3 +286,59 @@ describe('Determinism', () => {
     expect(typeof first).toBe('number');
   });
 });
+
+describe('Full-corpus recall (regression: union truncation)', () => {
+  // A full-size corpus where the sentence sits PAST the old bible-order
+  // truncation point: 500 god-verses, then 500 loved-verses, then 500
+  // word-verses, then John 3:16. Pre-fix, the union fallback sliced the
+  // first ~80 keys in bible order (Genesis only) and John was never scored.
+  const makeFullCorpus = () => {
+    const books = [];
+    const filler = (word, n) => {
+      const verses = [];
+      for (let i = 1; i <= n; i++) verses.push({ number: i, text: `filler verse ${i} about ${word} and daily matters` });
+      return verses;
+    };
+    books.push({ number: 1, name: 'Genesis', chapters: [{ number: 1, verses: filler('god', 500) }] });
+    books.push({ number: 2, name: 'Exodus', chapters: [{ number: 1, verses: filler('loved', 500) }] });
+    books.push({ number: 3, name: 'Leviticus', chapters: [{ number: 1, verses: filler('word', 500) }] });
+    books.push({
+      number: 43, name: 'John',
+      chapters: [{ number: 3, verses: [{ number: 16, text: 'For God so loved the world that he gave his only begotten Son that whosoever believeth in him should not perish but have everlasting life' }] }],
+    });
+    return { id: 'full', name: 'FULL', books };
+  };
+
+  const withIndex = (bible) => {
+    const index = {};
+    const norm = (s) => String(s || '').toLowerCase().replace(/'s\b/g, '').replace(/[^a-z0-9]/g, '');
+    for (const book of bible.books) {
+      for (const chapter of book.chapters) {
+        for (const verse of chapter.verses) {
+          const seen = new Set();
+          for (const word of String(verse.text || '').toLowerCase().split(/\s+/)) {
+            const n = norm(word);
+            if (!n || n.length < 3 || seen.has(n)) continue;
+            seen.add(n);
+            (index[n] = index[n] || []).push({ b: book.number, c: chapter.number, v: verse.number });
+          }
+        }
+      }
+    }
+    return { ...bible, searchIndex: index };
+  };
+
+  it('typo sentence query still recalls John 3:16 past the truncation point', () => {
+    const bible = withIndex(makeFullCorpus());
+    const results = searchBibleExperimental(bible, 'for God so love the word', {}, 10);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].reference).toBe('John 3:16');
+  });
+
+  it('exact sentence query ranks John 3:16 first on the full corpus', () => {
+    const bible = withIndex(makeFullCorpus());
+    const results = searchBibleExperimental(bible, 'for God so loved the world', {}, 10);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].reference).toBe('John 3:16');
+  });
+});

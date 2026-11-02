@@ -934,24 +934,35 @@ export function searchBible(currentBible, query, allBibles = {}, maxResults = 50
 // Faster than the default path: no vocabulary-wide prefix scan — only
 // exact + plural-variant postings are intersected, then reranked.
 
+// Bounded morphological variants for candidate lookup. The old path's
+// vocabulary-wide prefix scan found love/loved/loving for free; dropping
+// that scan (for speed) must not drop inflection recall. These are O(1)
+// direct index lookups — never a scan — so the speed design holds.
+function experimentalTermVariants(term) {
+  const out = [term];
+  if (term.endsWith('s') && term.length > 4) out.push(term.slice(0, -1));
+  else out.push(`${term}s`);
+  // love<->loved, cry<->cried, study<->studied, pray<->prayed
+  out.push(`${term}d`, `${term}ed`);
+  if (term.endsWith('ed') && term.length > 5) out.push(term.slice(0, -2), term.slice(0, -1));
+  else if (term.endsWith('d') && term.length > 4) out.push(term.slice(0, -1));
+  if (term.endsWith('ies') && term.length > 5) out.push(`${term.slice(0, -3)}y`);
+  return [...new Set(out)];
+}
+
 function experimentalTieredPostingsExact(index, term, cap = 2000) {
-  const exact = index[term] || [];
-  let variant = [];
-  if (term.endsWith('s') && term.length > 4) {
-    variant = index[term.slice(0, -1)] || [];
-  } else {
-    variant = index[`${term}s`] || [];
+  const seen = new Set();
+  const out = [];
+  for (const variant of experimentalTermVariants(term)) {
+    for (const r of index[variant] || []) {
+      const k = `${r.b}-${r.c}-${r.v}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push({ rec: r });
+      if (out.length >= cap) return out;
+    }
   }
-  const seen = new Set(exact.map((r) => `${r.b}-${r.c}-${r.v}`));
-  const out = [...exact.map((r) => ({ rec: r }))];
-  for (const r of variant) {
-    const k = `${r.b}-${r.c}-${r.v}`;
-    if (seen.has(k)) continue;
-    seen.add(k);
-    out.push({ rec: r });
-    if (out.length >= cap) break;
-  }
-  return out.slice(0, cap);
+  return out;
 }
 
 export function searchBibleExperimental(currentBible, query, allBibles = {}, maxResults = 50, defaultBibleId = null, searchAll = false) {
@@ -1072,10 +1083,20 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
         // When strict AND yields nothing (typo like word/world), fall back to
         // union so fuzzy sentence scoring still gets a chance — but the
         // sentence gate below filters single-word OR hits.
+        // Union is ordered by TERM-HIT COUNT (verses matching the most query
+        // terms first), never bible order: on a full 31k-verse corpus the old
+        // bible-order slice(0, N) truncated before ever reaching John (book 43),
+        // so typo queries could never recall the sentence. Hit-count ordering
+        // puts 2/3-match verses like John 3:16 (god, loved) at the front, and
+        // the sentence gate still filters single-word OR hits below.
         if (candidateKeys.length === 0) {
-          const unionAll = new Set();
-          for (const s of unions) for (const k of s) unionAll.add(k);
-          candidateKeys = [...unionAll];
+          const hits = new Map();
+          for (const s of unions) {
+            for (const k of s) hits.set(k, (hits.get(k) || 0) + 1);
+          }
+          candidateKeys = [...hits.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .map(([k]) => k);
         }
       }
 
