@@ -114,22 +114,27 @@ class SocketService {
     final completer = _firstConnect = Completer<void>();
     _publish(const ConnectionStatus(phase: ConnectionPhase.connecting));
 
+    // Plain http works on LAN and Tailscale alike (100.x / MagicDNS).
+    // Polling first (passes tailnet relays), websocket upgrade when fast.
     final socket = _socket = io.io(
       'http://$host:$port',
       io.OptionBuilder()
           .setTransports(['polling', 'websocket'])
           .setAuth({'token': token})
           .enableReconnection()
-          .setReconnectionDelay(1000)
-          .setReconnectionDelayMax(8000)
-          .setTimeout(10000)
+          .setReconnectionDelay(800)
+          .setReconnectionDelayMax(4000)
+          .setTimeout(AppConfig.socketTimeout.inMilliseconds)
           .build(),
     );
 
     socket.onConnect((_) {
       _everConnected = true;
       socket.emit('clientConnect', {'type': 'mobile'});
-      socket.emit('requestCurrentState');
+      // Light first: <4KB snapshot so a 1KB lyric appears instantly on
+      // slow church Wi-Fi / Tailscale; full setlist content is lazy.
+      socket.emit('requestLightState');
+      socket.emit('requestSchedule');
       _publish(ConnectionStatus(phase: ConnectionPhase.connected));
       _flushQueue();
       _startHeartbeat();
@@ -182,22 +187,38 @@ class SocketService {
     for (final name in [
       'currentState',
       'periodicStateSync',
+      'syncState',
       'lineUpdate',
       'lyricsLoad',
       'lyricsTimestampsUpdate',
       'lyricsSectionsUpdate',
       'fileNameUpdate',
       'setlistUpdate',
+      'setlistAddSuccess',
+      'setlistRemoveSuccess',
+      'setlistReorderSuccess',
+      'setlistError',
       'outputToggle',
       'showStateUpdate',
       'tickerUpdate',
+      'tickerAddSuccess',
+      'tickerError',
       'individualOutputToggle',
       'setlistLoadSuccess',
       'bibleVerseLoaded',
       'freeNoteLoaded',
       'contentModeUpdate',
+      'contentLoaded',
+      'scheduleState',
+      'scheduleError',
+      'draftSubmitted',
+      'draftApproved',
+      'draftRejected',
+      'draftError',
       'permissionError',
       'authError',
+      'lyricsSplitSuccess',
+      'heartbeat_ack',
     ]) {
       socket.on(name, (data) => _emit(SocketEvent(name, data)));
     }

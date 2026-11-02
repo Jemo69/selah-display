@@ -978,10 +978,15 @@ export default function registerSocketEvents(io, { hasPermission }) {
       }
 
       log.info(`Client ${socket.id} confirmed as: ${type}`);
-      socket.emit('currentState', buildCurrentState(connectedClients.get(socket.id)));
+      const info = connectedClients.get(socket.id);
+      if (type === 'mobile' || type === 'web') {
+        socket.emit('currentState', buildStateSummary(info));
+      } else {
+        socket.emit('currentState', buildCurrentState(info));
+      }
     });
 
-    socket.on('requestCurrentState', () => {
+    socket.on('requestCurrentState', (payload) => {
       if (!hasPermission(socket, 'lyrics:read')) {
         socket.emit('permissionError', 'Insufficient permissions to read current state');
         return;
@@ -989,8 +994,49 @@ export default function registerSocketEvents(io, { hasPermission }) {
 
       log.info('State requested by authenticated client:', socket.id);
       const clientInfo = connectedClients.get(socket.id);
-      socket.emit('currentState', buildCurrentState(clientInfo));
+      // Mobile fast path: { light: true } gets the <4KB snapshot (no file
+      // contents) instead of the full desktop state. Prevents a 1KB lyric
+      // from costing 100KB+ over church Wi-Fi / Tailscale.
+      const wantsLight = payload && typeof payload === 'object' && (payload.light === true || payload.summary === true);
+      const isController = clientInfo?.type === 'mobile' || clientInfo?.type === 'web';
+      if (wantsLight || (isController && payload === undefined && socket.lightStatePreferred)) {
+        socket.emit('currentState', { ...buildLightState(clientInfo), light: true });
+      } else if (isController && !socket.fullSetlistGranted) {
+        // Controllers default to the summary shape (metadata only) unless
+        // they explicitly asked for full content via requestSetlist.
+        socket.emit('currentState', buildStateSummary(clientInfo));
+      } else {
+        socket.emit('currentState', buildCurrentState(clientInfo));
+      }
       log.info(`Current state sent to: ${socket.id} (${currentLyrics.length} lyrics, ${setlistFiles.length} setlist items)`);
+    });
+
+    // Explicit light-state + fingerprint sync for phones on slow links.
+    // requestLightState -> currentState (light:true); requestSync {since} ->
+    // syncState { changed, fingerprint, state? } — ~100 bytes when unchanged.
+    socket.on('requestLightState', () => {
+      if (!hasPermission(socket, 'lyrics:read')) {
+        socket.emit('permissionError', 'Insufficient permissions to read current state');
+        return;
+      }
+      socket.lightStatePreferred = true;
+      const clientInfo = connectedClients.get(socket.id);
+      socket.emit('currentState', { ...buildLightState(clientInfo), light: true });
+    });
+
+    socket.on('requestSync', (payload) => {
+      if (!hasPermission(socket, 'lyrics:read')) {
+        socket.emit('permissionError', 'Insufficient permissions to read current state');
+        return;
+      }
+      const since = payload && typeof payload === 'object' ? String(payload.since || payload.fingerprint || '') : String(payload || '');
+      const fingerprint = getStateFingerprint();
+      if (since && since === fingerprint) {
+        socket.emit('syncState', { changed: false, fingerprint, timestamp: Date.now() });
+        return;
+      }
+      const clientInfo = connectedClients.get(socket.id);
+      socket.emit('syncState', { changed: true, fingerprint, state: buildLightState(clientInfo), timestamp: Date.now() });
     });
 
     socket.on('requestSetlist', () => {
@@ -1892,7 +1938,11 @@ export default function registerSocketEvents(io, { hasPermission }) {
     setTimeout(() => {
       if (socket.connected) {
         const clientInfo = connectedClients.get(socket.id);
-        socket.emit('currentState', buildCurrentState(clientInfo));
+        if (clientInfo?.type === 'mobile' || clientInfo?.type === 'web') {
+          socket.emit('currentState', buildStateSummary(clientInfo));
+        } else {
+          socket.emit('currentState', buildCurrentState(clientInfo));
+        }
       }
     }, 100);
 
@@ -1973,6 +2023,81 @@ export function buildCurrentState(clientInfo) {
   }
 
   return state;
+}
+
+export function getStateFingerprint() {
+  try { return computeStateFingerprint(); } catch { return String(Date.now()); }
+}
+
+/**
+ * Tiny mobile-first snapshot: everything the phone needs to render, nothing
+ * it doesn't. The full `currentState` ships every setlist file's *content*
+ * (50 files x KBs = MBs over socket.io polling) which is why a 1KB lyric
+ * felt slow on a phone. Light state sends the setlist as metadata only
+ * plus a window into the lyrics; full content arrives on explicit load.
+ * Typical size: <4KB vs 100KB+.
+ */
+export function buildLightState(clientInfo) {
+  const summary = setlistFiles.map((file) => ({
+    id: file.id,
+    displayName: file.displayName,
+    originalName: file.originalName,
+    fileType: file.fileType,
+    lastModified: file.lastModified,
+    addedAt: file.addedAt,
+  }));
+  const schedule = (() => { try { return scheduler.getSnapshot(); } catch { return { loaded: false }; } })();
+  return {
+    lyrics: currentLyrics,
+    lyricsCount: currentLyrics.length,
+    selectedLine: currentSelectedLine,
+    lyricsFileName: currentLyricsFileName || '',
+    isOutputOn: currentIsOutputOn,
+    showState: currentShowState,
+    ticker: getTickerState(),
+    output1Enabled: currentOutput1Enabled,
+    output2Enabled: currentOutput2Enabled,
+    stageEnabled: currentStageEnabled,
+    setlist: summary,
+    setlistCount: summary.length,
+    contentMode: currentContentMode,
+    bibleVersion: currentBibleVersion,
+    scheduleLoaded: Boolean(schedule?.loaded),
+    scheduleStatus: schedule?.status || 'idle',
+    scheduleName: schedule?.schedule?.name || '',
+    fingerprint: getStateFingerprint(),
+    timestamp: Date.now(),
+  };
+}
+
+export function getScheduleSnapshot() {
+  try { return scheduler.getSnapshot(); } catch (e) { return { loaded: false, error: e?.message || String(e) }; }
+}
+
+export function loadScheduleInternal(doc) {
+  const snapshot = scheduler.load(doc);
+  if (ioInstance) ioInstance.emit('scheduleState', snapshot);
+  notifySessionStateChanged();
+  return snapshot;
+}
+
+export function controlScheduleInternal(action, payload = {}) {
+  let snapshot = null;
+  if (action === 'start') snapshot = scheduler.start();
+  else if (action === 'pause') snapshot = scheduler.pause();
+  else if (action === 'resume') snapshot = scheduler.resume();
+  else if (action === 'stop') snapshot = scheduler.stop();
+  else if (action === 'next') snapshot = scheduler.next();
+  else if (action === 'prev') snapshot = scheduler.prev();
+  else if (action === 'replan') snapshot = scheduler.replan(payload?.startEpochMs);
+  else if (action === 'reconcile') snapshot = scheduler.reconcile({
+    actualStartEpochMs: payload?.actualStartEpochMs,
+    strategy: payload?.strategy === 'shift' ? 'shift' : 'compress',
+  });
+  else throw new Error(`Unknown schedule action: ${action}`);
+  if (ioInstance) ioInstance.emit('scheduleState', snapshot);
+  notifySessionStateChanged();
+  return snapshot;
 }
 
 export function buildStateSummary(clientInfo) {

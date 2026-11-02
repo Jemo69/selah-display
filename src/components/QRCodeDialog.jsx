@@ -74,6 +74,16 @@ const QRCodeDialog = ({ isOpen, onClose, darkMode }) => {
 
     const getLocalIP = async () => {
       try {
+        if (window.electronAPI?.getLocalIPs) {
+          const res = await window.electronAPI.getLocalIPs();
+          const list = res?.all || [...(res?.lan || []), ...(res?.tailnet || [])];
+          setAllIPs({ lan: res?.lan || [], tailnet: res?.tailnet || [], all: list });
+          const first = list[0]?.address || list[0];
+          if (first) {
+            setLocalIP(typeof first === 'string' ? first : first.address);
+            return;
+          }
+        }
         if (window.electronAPI && window.electronAPI.getLocalIP) {
           const ip = await window.electronAPI.getLocalIP();
           setLocalIP(ip);
@@ -313,7 +323,7 @@ const QRCodeDialog = ({ isOpen, onClose, darkMode }) => {
             `}>
               <li className="flex gap-2">
                 <span className={`font-semibold shrink-0 ${darkMode ? 'text-[#82AAFF]' : 'text-blue-600'}`}>1.</span>
-                <span>Connect to the same WiFi network</span>
+                <span>Same Wi-Fi — or Tailscale (100.x) when off-site</span>
               </li>
               <li className="flex gap-2">
                 <span className={`font-semibold shrink-0 ${darkMode ? 'text-[#82AAFF]' : 'text-blue-600'}`}>2.</span>
@@ -332,6 +342,29 @@ const QRCodeDialog = ({ isOpen, onClose, darkMode }) => {
             `}>
               {connectionURL}
             </div>
+
+            {/* Network selector (LAN + Tailscale) */}
+            {(allIPs.tailnet.length > 0 || allIPs.all.length > 1) && (
+              <div className="flex flex-wrap justify-center gap-1.5">
+                {(allIPs.all.length > 0 ? allIPs.all : [{ address: localIP }]).map((entry) => {
+                  const addr = typeof entry === 'string' ? entry : entry.address;
+                  const isTailscale = typeof entry === 'object' ? entry.tailscale : String(addr).startsWith('100.');
+                  const active = addr === localIP;
+                  return (
+                    <button
+                      key={addr}
+                      onClick={() => setLocalIP(addr)}
+                      className={`px-2.5 py-1 rounded-full text-xs font-mono border ${active
+                        ? (darkMode ? 'bg-[#7DDBD3] text-[#111231] border-[#7DDBD3]' : 'bg-blue-600 text-white border-blue-600')
+                        : (darkMode ? 'border-[#282946] text-[#D8DEE0]' : 'border-gray-300 text-gray-700')}`}
+                      title={isTailscale ? 'Tailscale tailnet — use off-site' : 'Local Wi-Fi'}
+                    >
+                      {isTailscale ? 'Tailscale ' : ''}{addr}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
             {/* Join Code */}
             {joinCode && (

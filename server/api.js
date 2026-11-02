@@ -22,7 +22,18 @@ import {
   showTickerItemInternal,
   getCurrentLyricsState,
   setSelectedLineInternal,
+  getStateFingerprint,
+  buildLightState,
+  getScheduleSnapshot,
+  loadScheduleInternal,
+  controlScheduleInternal,
 } from './events.js';
+import {
+  parseFileNavigatorQuery,
+  prepareNavigatorSearchRecord,
+  scoreNavigatorSearchRecord,
+} from '../shared/fileNavigatorSearch.js';
+import { scoreNavigatorRecordSentence } from '../shared/fileNavigatorSentence.js';
 import {
   search as bibleSearch,
   resolveReference as bibleResolve,
@@ -340,6 +351,10 @@ router.get('/bible/search', (req, res) => {
     const q = req.query.q || req.query.query;
     const limit = parseInt(req.query.limit || '20', 10);
     const searchAll = String(req.query.searchAll || '').toLowerCase() === 'true';
+    // Sentence-first ranking (Experimental on desktop: User Preferences >
+    // Experimental > Sentence Search Ranking). Mobile passes
+    // ?experimental=true to get the same "hear whole sentences first" wins.
+    const experimental = ['true', '1', 'sentence'].includes(String(req.query.experimental || '').toLowerCase());
 
     if (!q) return res.status(400).json({ success: false, error: 'q query param required' });
 
@@ -355,13 +370,14 @@ router.get('/bible/search', (req, res) => {
       });
     }
 
-    const results = bibleSearch(q, Number.isNaN(limit) ? 20 : Math.min(Math.max(limit, 1), 100), searchAll);
+    const results = bibleSearch(q, Number.isNaN(limit) ? 20 : Math.min(Math.max(limit, 1), 100), searchAll, experimental);
 
     res.json({
       success: true,
       query: q,
       count: results.length,
       results,
+      experimental,
       activeBible: { id: activeBible.id, name: activeBible.name },
       bibles: getAllBibles(),
     });
@@ -381,6 +397,92 @@ router.get('/bible/list', (req, res) => {
     });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ---- Mobile fast path: light state + delta sync ----
+// GET /api/v1/state/light — <4KB snapshot for phones (no file contents).
+// GET /api/v1/sync?since=<fingerprint> — { changed: bool, fingerprint, state? }
+// Phones poll /sync every few seconds as a socket fallback; when nothing
+// changed the reply is ~100 bytes, so Tailscale + church Wi-Fi stay snappy.
+router.get('/state/light', (req, res) => {
+  try {
+    res.json({ success: true, ...buildLightState(req.user), fingerprint: getStateFingerprint() });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+router.get('/sync', (req, res) => {
+  try {
+    const since = String(req.query.since || '');
+    const fingerprint = getStateFingerprint();
+    if (since && since === fingerprint) {
+      return res.json({ success: true, changed: false, fingerprint, timestamp: Date.now() });
+    }
+    res.json({ success: true, changed: true, fingerprint, state: buildLightState(req.user), timestamp: Date.now() });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ---- Setlist search (ports the desktop sentence-first wins to mobile) ----
+// GET /api/v1/setlist/search?q=...&experimental=true&limit=20
+router.get('/setlist/search', (req, res) => {
+  try {
+    const q = String(req.query.q || req.query.query || '');
+    const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
+    const experimental = ['true', '1', 'sentence'].includes(String(req.query.experimental || '').toLowerCase());
+    if (!q.trim()) return res.status(400).json({ success: false, error: 'q query param required' });
+    const parsed = parseFileNavigatorQuery(q);
+    const files = getSetlistFiles();
+    const scored = [];
+    for (const f of files) {
+      const record = prepareNavigatorSearchRecord({
+        fileName: f.originalName || f.displayName,
+        relativePath: f.displayName,
+        fileType: f.fileType || 'txt',
+        contentText: typeof f.content === 'string' ? f.content.slice(0, 20000) : '',
+      });
+      const hit = experimental
+        ? scoreNavigatorRecordSentence(record, parsed)
+        : scoreNavigatorSearchRecord(record, parsed);
+      if (hit) scored.push({ file: { id: f.id, displayName: f.displayName, originalName: f.originalName, fileType: f.fileType }, score: hit.score, matchedField: hit.matchedField, sentence: Boolean(hit.sentence) });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    res.json({ success: true, query: q, count: Math.min(scored.length, limit), results: scored.slice(0, limit), experimental, totalSetlist: files.length });
+  } catch (e) {
+    log.error('Setlist search error:', e.message);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ---- Service run-sheet clock (scheduler) for mobile ----
+router.get('/schedule', (req, res) => {
+  try {
+    res.json({ success: true, ...getScheduleSnapshot(), timestamp: Date.now() });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+router.post('/schedule/load', (req, res) => {
+  try {
+    const snapshot = loadScheduleInternal(req.body);
+    res.json({ success: true, ...snapshot });
+  } catch (e) {
+    res.status(400).json({ success: false, error: e.message });
+  }
+});
+
+router.post('/schedule/control', (req, res) => {
+  try {
+    const { action, ...rest } = req.body || {};
+    if (!action) return res.status(400).json({ success: false, error: 'action required (start, pause, resume, stop, next, prev, replan, reconcile)' });
+    const snapshot = controlScheduleInternal(String(action), rest);
+    res.json({ success: true, ...snapshot });
+  } catch (e) {
+    res.status(400).json({ success: false, error: e.message });
   }
 });
 

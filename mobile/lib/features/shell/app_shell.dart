@@ -22,6 +22,7 @@ const _destinations = [
   _Dest('/control', Icons.slideshow, 'Control'),
   _Dest('/setlist', Icons.list, 'Setlist'),
   _Dest('/bible', Icons.menu_book, 'Bible'),
+  _Dest('/schedule', Icons.schedule, 'Schedule'),
   _Dest('/settings', Icons.settings, 'Settings'),
 ];
 
@@ -39,6 +40,7 @@ class AppShell extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final status = ref.watch(connectionStatusProvider);
+    final show = ref.watch(showStateProvider);
     final wide = MediaQuery.sizeOf(context).width >= 600;
     final index = _indexOf(GoRouterState.of(context).uri.path);
 
@@ -51,6 +53,8 @@ class AppShell extends ConsumerWidget {
             else
               ConnectingBanner(status: status),
           ],
+          if (show.scheduleLoaded && show.scheduleStatus == 'running')
+            _ScheduleStrip(name: show.scheduleName),
           Expanded(
             child: wide
                 ? Row(
@@ -86,6 +90,39 @@ class AppShell extends ConsumerWidget {
               ],
               onDestinationSelected: (i) => context.go(_destinations[i].route),
             ),
+    );
+  }
+}
+
+class _ScheduleStrip extends StatelessWidget {
+  const _ScheduleStrip({required this.name});
+  final String name;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppTheme.accentDim.withValues(alpha: 0.25),
+      child: SafeArea(
+        top: false,
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
+          child: Row(
+            children: [
+              const Icon(Icons.schedule, size: 14),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  name.isEmpty ? 'Schedule running' : 'Running: $name',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

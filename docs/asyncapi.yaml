@@ -27,6 +27,10 @@ channels:
         $ref: '#/components/messages/splitNormalGroup'
       requestCurrentState:
         $ref: '#/components/messages/requestCurrentState'
+      requestLightState:
+        $ref: '#/components/messages/requestLightState'
+      requestSync:
+        $ref: '#/components/messages/requestSync'
       requestSetlist:
         $ref: '#/components/messages/requestSetlist'
       setlistAdd:
@@ -425,7 +429,20 @@ components:
     requestCurrentState:
       name: requestCurrentState
       payload:
+        type: ['null', 'object']
+        description: Mobile fast path may pass { light: true }.
+      x-permissions: ['lyrics:read']
+    requestLightState:
+      name: requestLightState
+      payload:
         type: 'null'
+        description: Mobile <4KB snapshot (no setlist file contents).
+      x-permissions: ['lyrics:read']
+    requestSync:
+      name: requestSync
+      payload:
+        type: ['null', 'object']
+        description: '{ since: fingerprint } -> syncState { changed, fingerprint, state? }.'
       x-permissions: ['lyrics:read']
     requestSetlist:
       name: requestSetlist

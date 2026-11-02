@@ -16,6 +16,19 @@ Signed release APKs are attached to GitHub Releases
 2. Open this app on a phone/tablet on the same Wi-Fi — Selah appears under "Find Selah".
 3. Tap the server, type the on-screen code, done. (No server found? Use the manual IP field.)
 
+### Off-site over Tailscale
+1. Put the church PC and your phone on the same tailnet.
+2. In the desktop QR dialog, tap the **Tailscale `100.x`** address so the QR encodes the tailnet route.
+3. On the phone, enter the `100.x` IP or `<name>.tail*.ts.net` MagicDNS name manually if auto-discovery finds nothing (mDNS does not cross a tailnet).
+4. Pair with the join code as usual. The app uses light snapshots + delta sync, so even a slow relay feels instant.
+
+## Screens
+- **Control** — live lyric preview, PREV/NEXT/JUMP, outputs, show states (LIVE/CLEAR/BLACKOUT/LOGO), announcements.
+- **Setlist** — sentence-first search, load, reorder, swipe-to-delete, add-text-song.
+- **Bible** — reference quick-load, full-text search (sentence-first ON), all-translations toggle, translation list.
+- **Schedule** — run-sheet clock: start/pause/resume/stop/next/prev with live countdown (REST-backed, works while the socket reconnects).
+- **Settings** — switch server, forget pairing.
+
 The pairing is remembered; next launch offers "resume last connection".
 
 ## Development

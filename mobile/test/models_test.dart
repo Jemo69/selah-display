@@ -84,4 +84,77 @@ void main() {
       expect(alt.fileType, 'txt');
     });
   });
-}
+  group('ShowState light + schedule', () {
+    test('fromCurrentState accepts the light setlist shape', () {
+      final state = ShowState.fromCurrentState({
+        'lyrics': ['Amazing grace'],
+        'selectedLine': 0,
+        'lyricsFileName': 'Grace',
+        'isOutputOn': true,
+        'light': true,
+        'setlist': [
+          {'id': 's1', 'displayName': 'Song One', 'fileType': 'txt'},
+        ],
+        'scheduleLoaded': true,
+        'scheduleStatus': 'running',
+        'scheduleName': 'Sunday',
+        'fingerprint': 'abc123',
+      });
+      expect(state.setlist.single.displayName, 'Song One');
+      expect(state.scheduleLoaded, isTrue);
+      expect(state.scheduleStatus, 'running');
+      expect(state.scheduleName, 'Sunday');
+      expect(state.fingerprint, 'abc123');
+    });
+
+    test('applyLight merges without wiping lyrics', () {
+      const base = ShowState(
+        lyrics: ['line one', 'line two'],
+        selectedLine: 0,
+        fileName: 'Song',
+        setlist: [SetlistItem(id: 's1', displayName: 'Song')],
+      );
+      final merged = base.applyLight({
+        'selectedLine': 1,
+        'showState': 'LOGO',
+        'fingerprint': 'def456',
+      });
+      expect(merged.lyrics, hasLength(2)); // lyrics preserved
+      expect(merged.selectedLine, 1);
+      expect(merged.showControl, ShowControlState.logo);
+      expect(merged.setlist.single.id, 's1'); // setlist preserved
+      expect(merged.fingerprint, 'def456');
+    });
+
+    test('ScheduleSnapshot parses the server shape', () {
+      final snap = ScheduleSnapshot.fromJson({
+        'loaded': true,
+        'status': 'running',
+        'itemIndex': 1,
+        'schedule': {
+          'name': 'Sunday Service',
+          'items': [
+            {'name': 'Opener'},
+            {'name': 'Sermon'},
+          ],
+        },
+      });
+      expect(snap.loaded, isTrue);
+      expect(snap.name, 'Sunday Service');
+      expect(snap.itemCount, 2);
+      expect(snap.currentItemName, 'Sermon');
+    });
+
+    test('SyncResult parses changed + unchanged', () {
+      final changed = SyncResult.fromJson({
+        'changed': true,
+        'fingerprint': 'x',
+        'state': {'lyricsFileName': 'Song', 'selectedLine': 2},
+      });
+      expect(changed.changed, isTrue);
+      expect(changed.state?.lyricsFileName, 'Song');
+      final same = SyncResult.fromJson({'changed': false, 'fingerprint': 'x'});
+      expect(same.changed, isFalse);
+      expect(same.state, isNull);
+    });
+  });}

@@ -38,6 +38,14 @@ class SettingsScreen extends ConsumerWidget {
               icon: const Icon(Icons.swap_horiz),
               label: const Text('Switch server'),
             ),
+            Card(
+              color: AppTheme.surface,
+              child: const ListTile(
+                leading: Icon(Icons.bolt, size: 32),
+                title: Text('Fast sync + Tailscale ready'),
+                subtitle: Text('Light snapshots, delta sync, sentence-first search, scheduler'),
+              ),
+            ),
             const SizedBox(height: 12),
             OutlinedButton.icon(
               style: OutlinedButton.styleFrom(
@@ -61,7 +69,7 @@ class SettingsScreen extends ConsumerWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'v1.0.1',
+                    'v1.1.0',
                     style:
                         TextStyle(fontSize: 12, color: AppTheme.textSecondary),
                   ),
