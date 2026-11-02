@@ -342,3 +342,54 @@ describe('Full-corpus recall (regression: union truncation)', () => {
     expect(results[0].reference).toBe('John 3:16');
   });
 });
+
+describe('Ambiguity policy (literal beats fuzzy, fuzzy stays visible)', () => {
+  // The query "for God so love the word" is genuinely ambiguous: typo for
+  // "world" (John 3:16) OR the literal words "love"+"word" (e.g. a verse
+  // about loving the Word). Policy: exact/literal always outranks fuzzy,
+  // and fuzzy candidates stay visible below — the ranker never pretends to
+  // know, and never silently rewrites the query. Fuzzy only tops when no
+  // literal match exists (the typo case).
+  const makeAmbiguousBible = () => ({
+    id: 'amb',
+    name: 'AMB',
+    books: [{
+      number: 43, name: 'John', chapters: [{ number: 3, verses: [
+        { number: 16, text: 'For God so loved the world that he gave his only begotten Son that whosoever believeth in him should not perish but have everlasting life' },
+        { number: 17, text: 'Blessed are they who for God so love the word and keep it in their hearts always' },
+      ] }],
+    }],
+  });
+
+  const withIndex = (bible) => {
+    const index = {};
+    const norm = (s) => String(s || '').toLowerCase().replace(/'s\b/g, '').replace(/[^a-z0-9]/g, '');
+    for (const book of bible.books) {
+      for (const chapter of book.chapters) {
+        for (const verse of chapter.verses) {
+          const seen = new Set();
+          for (const word of String(verse.text || '').toLowerCase().split(/\s+/)) {
+            const n = norm(word);
+            if (!n || n.length < 3 || seen.has(n)) continue;
+            seen.add(n);
+            (index[n] = index[n] || []).push({ b: book.number, c: chapter.number, v: verse.number });
+          }
+        }
+      }
+    }
+    return { ...bible, searchIndex: index };
+  };
+
+  it('literal sentence outranks the fuzzy typo candidate', () => {
+    const bible = withIndex(makeAmbiguousBible());
+    const results = searchBibleExperimental(bible, 'for God so love the word', {}, 10);
+    expect(results.length).toBeGreaterThanOrEqual(2);
+    expect(results[0].reference).toBe('John 3:17');
+  });
+
+  it('fuzzy candidate stays visible below the literal (recall preserved)', () => {
+    const bible = withIndex(makeAmbiguousBible());
+    const results = searchBibleExperimental(bible, 'for God so love the word', {}, 10);
+    expect(results.some((r) => r.reference === 'John 3:16')).toBe(true);
+  });
+});

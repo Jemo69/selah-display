@@ -1074,29 +1074,36 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
       if (queryContent.length === 1) {
         candidateKeys = [...(unions[0] || [])];
       } else {
-        candidateKeys = [...(unions[0] || [])];
+        // Hit-count ordering for the union pool (verses matching the most
+        // query terms first), never bible order: on a full 31k-verse corpus a
+        // bible-order slice(0, N) truncated before ever reaching John (book 43),
+        // so typo queries could never recall the sentence.
+        const hits = new Map();
+        for (const s of unions) {
+          for (const k of s) hits.set(k, (hits.get(k) || 0) + 1);
+        }
+        const byHits = [...hits.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .map(([k]) => k);
+        const intersect = [...(unions[0] || [])];
         for (let i = 1; i < unions.length; i++) {
           const s = unions[i];
-          candidateKeys = candidateKeys.filter((k) => s.has(k));
-          if (candidateKeys.length === 0) break;
-        }
-        // When strict AND yields nothing (typo like word/world), fall back to
-        // union so fuzzy sentence scoring still gets a chance — but the
-        // sentence gate below filters single-word OR hits.
-        // Union is ordered by TERM-HIT COUNT (verses matching the most query
-        // terms first), never bible order: on a full 31k-verse corpus the old
-        // bible-order slice(0, N) truncated before ever reaching John (book 43),
-        // so typo queries could never recall the sentence. Hit-count ordering
-        // puts 2/3-match verses like John 3:16 (god, loved) at the front, and
-        // the sentence gate still filters single-word OR hits below.
-        if (candidateKeys.length === 0) {
-          const hits = new Map();
-          for (const s of unions) {
-            for (const k of s) hits.set(k, (hits.get(k) || 0) + 1);
+          for (let j = intersect.length - 1; j >= 0; j--) {
+            if (!s.has(intersect[j])) intersect.splice(j, 1);
           }
-          candidateKeys = [...hits.entries()]
-            .sort((a, b) => b[1] - a[1])
-            .map(([k]) => k);
+          if (intersect.length === 0) break;
+        }
+        // Ambiguity policy: strict matches lead, but fuzzy near-misses stay
+        // visible below (top-up from the hit-ordered union). A literal verse
+        // always outranks a fuzzy one via the exact-phrase bonus — yet when
+        // the user typo'd, the intended sentence is still on screen instead
+        // of being filtered into silence. The sentence gate below still
+        // removes single-word OR hits from the pool.
+        if (intersect.length === 0) {
+          candidateKeys = byHits;
+        } else {
+          const inStrict = new Set(intersect);
+          candidateKeys = [...intersect, ...byHits.filter((k) => !inStrict.has(k))];
         }
       }
 
