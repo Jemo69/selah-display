@@ -138,8 +138,15 @@ export function matchLeadingBook(books, query) {
     if (abbr) exact.set(abbr, book);
   }
   for (let n = Math.min(3, tokens.length); n >= 1; n--) {
-    const candidate = normalizeBookToken(tokens.slice(0, n).join(' '));
+    const raw = tokens.slice(0, n).join(' ');
+    const candidate = normalizeBookToken(raw);
     if (!candidate) continue;
+    // A single leading token that is a stopword ("a", "an", "am", "as",
+    // ...) or shorter than 3 chars ("So", "Am" abbreviations) must never
+    // scope a sentence: translations abbreviate books that way and the
+    // scoping would be data-dependent. Multi-token candidates ("1 Jn",
+    // "Song of Solomon") are inherently specific and stay eligible.
+    if (n === 1 && (candidate.length < 3 || SENTENCE_STOPWORDS.has(candidate))) continue;
     const book = exact.get(candidate);
     if (book) {
       return { book, rest: tokens.slice(n).join(' ') };
@@ -148,7 +155,7 @@ export function matchLeadingBook(books, query) {
   return null;
 }
 
-export function scoreSentenceVerse(queryNorm, queryContent, verseText) {
+export function scoreSentenceVerse(queryNorm, queryContent, verseText, termWeights) {
   const verseNorm = normalizeSentenceText(verseText);
   if (!verseNorm || !queryNorm) return null;
   const verseToks = verseNorm.split(' ').filter(Boolean);
@@ -169,18 +176,26 @@ export function scoreSentenceVerse(queryNorm, queryContent, verseText) {
 
   // 2. Ordered coverage: walk verse tokens once, matching query tokens in order.
   //    versePos[q] = index in verseToks where q matched, or -1.
-  let qi = 0;
+  //    Exact token equality outranks prefix/edit-distance fuzz: a verse that
+  //    says what the operator typed beats one that merely resembles it.
   let firstPos = -1;
   let lastPos = -1;
   let matched = 0;
+  let exactMatches = 0;
+  let weightSum = 0;
+  const weights = Array.isArray(termWeights) && termWeights.length === queryContent.length
+    ? termWeights
+    : queryContent.map(() => 1);
   // For each query token, find next matching verse token at/after cursor.
   let cursor = 0;
   for (let q = 0; q < queryContent.length; q += 1) {
     const qt = queryContent[q];
     let found = -1;
+    let foundExact = false;
     for (let v = cursor; v < verseToks.length; v += 1) {
       if (sentenceTokensMatch(qt, verseToks[v])) {
         found = v;
+        foundExact = qt === verseToks[v];
         break;
       }
     }
@@ -189,6 +204,8 @@ export function scoreSentenceVerse(queryNorm, queryContent, verseText) {
     lastPos = found;
     cursor = found + 1;
     matched += 1;
+    weightSum += weights[q] || 0;
+    if (foundExact) exactMatches += 1;
     // Keep order: only count in-order matches. Out-of-order tokens are skipped
     // (they simply don't increment matched), so scattered hits score low.
   }
@@ -226,9 +243,10 @@ export function scoreSentenceVerse(queryNorm, queryContent, verseText) {
   }
 
   const lenPenalty = Math.log(1 + verseNorm.length) * 20;
-  // Weight rare (long) words more: sum of matched token lengths.
-  // Recompute cheaply: approximate by coverage * avg length 5.
-  const score = coverage * 600 + orderBonus - lenPenalty;
+  // Rarity-weighted match mass (rare terms like "wine" vote far more than
+  // glue like "into"), plus an exactness bonus so a literal verse always
+  // outranks a fuzzy lookalike — the ambiguity policy, expressed in numbers.
+  const score = coverage * 600 + orderBonus + weightSum * 400 + exactMatches * 150 - lenPenalty;
 
-  return { score, matched, coverage, phrase: false, ordered: orderBonus > 0, span };
+  return { score, matched, coverage, phrase: false, ordered: orderBonus > 0, span, exact: exactMatches };
 }

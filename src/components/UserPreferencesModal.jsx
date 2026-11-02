@@ -1259,7 +1259,7 @@ const ExperimentalSection = ({ darkMode }) => {
               </span>
             </div>
             <p className={`text-xs leading-relaxed ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-              Rank whole sentences first: “for God so love the world” finds John 3:16, “water to into wine” finds the sentence — not verses/files containing a single word. Reference lookups like “isa 44 5” keep working.
+              Rank whole sentences first: “for God so love the world” puts John 3:16 first, “water to into wine” ranks the sentence above single-word hits. Reference lookups like “isa 44 5” keep working.
             </p>
           </div>
           <Switch checked={sentenceSearchEnabled} onCheckedChange={handleToggleSentenceSearch} aria-label="Toggle Sentence Search Ranking" />

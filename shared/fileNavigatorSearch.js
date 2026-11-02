@@ -293,15 +293,20 @@ export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
     : (parsedQuery || { terms: [], fileTypes: [] });
   if (query.fileTypes?.length > 0 && !query.fileTypes.includes(record.fileType)) return null;
   if (!query.terms?.length) return null;
+  // Honors the operator's content-search preference exactly like the default
+  // scorer: with searchContent === false, lyric bodies are never consulted —
+  // title/path matches only. The experimental path must not override an
+  // explicit OFF.
+  const contentAllowed = query.searchContent !== false;
   // Synchronous fast path: replicate the sentence gate without the async import.
   // Exact phrase in stem/content wins; else ordered proximity.
   const normStem = record.normalizedStem || '';
-  const normContent = record.normalizedContent || '';
+  const normContent = contentAllowed ? (record.normalizedContent || '') : '';
   const normPath = record.normalizedRelativePath || '';
   const phrase = (query.phrase ?? query.terms.join(' ')).trim();
   if (phrase && normStem === phrase) return { score: 2200, matchedField: 'name', sentence: true };
   if (phrase && normStem.includes(phrase)) return { score: 1800, matchedField: 'name', sentence: true };
-  if (phrase && normContent.includes(phrase)) {
+  if (contentAllowed && phrase && normContent.includes(phrase)) {
     const titleHit = query.terms.some((t) => normStem.includes(t));
     return { score: titleHit ? 1900 : 1600, matchedField: titleHit ? 'both' : 'content', sentence: true };
   }

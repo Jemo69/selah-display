@@ -1,5 +1,5 @@
 import { detectBibleFormat } from './xmlUtils.js';
-import { normalizeSentenceText, sentenceContentTokens, scoreSentenceVerse, matchLeadingBook } from './sentenceSearch.js';
+import { normalizeSentenceText, sentenceContentTokens, scoreSentenceVerse, matchLeadingBook, withinEditOne } from './sentenceSearch.js';
 import { parseZefaniaBible } from './zefaniaBible.js';
 import { parseOsisBible } from './osisBible.js';
 import { parseBebliaBible } from './bebliaBible.js';
@@ -1039,6 +1039,7 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
   // "a"->Amos hijacked every sentence containing a function word and
   // scoped the search to one wrong book. References never reach here.
   const leading = matchLeadingBook(currentBible.books, rawQuery);
+  if (leading && !leading.rest) return [];
   const searchTerm = leading && leading.rest ? leading.rest : rawQuery;
   if (!searchTerm || searchTerm.trim().length < 2) return [];
 
@@ -1068,16 +1069,32 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
       // out the sentence. Capping per-term lists demoted real matches out
       // of contention on full 31k-verse corpora — a typo query recalled
       // nothing past Genesis. No Object.keys prefix scan anywhere.
+      const totalVerses = bible.books.reduce((t, bk) => t + (bk.chapters?.reduce((c, ch) => c + (ch.verses?.length || 0), 0) || 0), 0);
       const termSets = queryContent.map((term) => {
         const set = new Set();
+        const push = (rec) => {
+          if (perBibleFilter != null && rec.b !== perBibleFilter) return;
+          set.add(`${rec.b}-${rec.c}-${rec.v}`);
+        };
         for (const variant of experimentalTermVariants(term)) {
-          for (const rec of bible.searchIndex[variant] || []) {
-            if (perBibleFilter != null && rec.b !== perBibleFilter) continue;
-            set.add(`${rec.b}-${rec.c}-${rec.v}`);
+          for (const rec of bible.searchIndex[variant] || []) push(rec);
+          if (queryContent.length === 1 && set.size >= 2000) break;
+        }
+        if (set.size === 0 && term.length >= 4) {
+          let added = 0;
+          for (const key of Object.keys(bible.searchIndex)) {
+            if (!withinEditOne(term, key)) continue;
+            for (const rec of bible.searchIndex[key]) {
+              push(rec);
+              if (++added >= 2000) break;
+            }
+            if (added >= 2000) break;
           }
         }
         return { term, set };
       });
+      const weightOf = new Map(termSets.map(({ term, set }) => [term, Math.log(1 + totalVerses / (1 + set.size))]));
+      const termWeights = queryContent.map((t) => weightOf.get(t));
       termSets.sort((a, b) => a.set.size - b.set.size);
       const unions = termSets.map((t) => t.set);
       let candidateKeys = null;
@@ -1137,7 +1154,7 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
         if (bookFilterNumber != null && perBibleFilter == null && b !== bookFilterNumber) continue;
         const found = lookup(b, c, v);
         if (!found) continue;
-        const s = scoreSentenceVerse(queryNorm, queryContent, found.verse.text || '');
+        const s = scoreSentenceVerse(queryNorm, queryContent, found.verse.text || '', termWeights);
         if (!s) continue;
         scored.push({
           book: found.book.number,
