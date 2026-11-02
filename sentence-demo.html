@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sentence Search — OLD vs NEW (live)</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif;padding:16px;max-width:1100px;margin:0 auto}
+h1{font-size:20px;text-transform:uppercase;letter-spacing:1px;border:3px solid #000;padding:10px;text-align:center}
+.badge{display:inline-block;border:2px solid #000;padding:2px 8px;font-size:11px;font-weight:bold;text-transform:uppercase}
+.exp{background:#000;color:#fff}
+.sub{text-align:center;font-size:12px;margin:8px 0 12px}
+.panel{border:3px solid #000;margin:12px 0}
+.panel h2{background:#000;color:#fff;font-size:13px;text-transform:uppercase;letter-spacing:2px;padding:8px 12px}
+.qrow{padding:10px 12px;border-bottom:3px solid #000;display:flex;gap:8px;align-items:center}
+.qrow label{font-size:11px;font-weight:bold;text-transform:uppercase;white-space:nowrap}
+.qrow input{flex:1;border:2px solid #000;padding:8px;font-size:14px}
+.cols{display:grid;grid-template-columns:1fr 1fr}
+.col{padding:10px 12px;font-size:13px}
+.col.old{border-right:3px solid #000}
+.col h3{font-size:12px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+.meta{font-size:11px;margin-bottom:8px}
+.meta b{background:#000;color:#fff;padding:1px 6px}
+ol{margin-left:20px}
+li{margin:5px 0;line-height:1.4}
+li .ref{font-weight:bold}
+li.top{background:#000;color:#fff;padding:2px 6px}
+.filt{font-size:11px;text-transform:uppercase;border:2px solid #000;padding:1px 6px}
+#status{position:fixed;bottom:8px;right:8px;border:3px solid #000;background:#fff;padding:6px 10px;font-size:11px;font-weight:bold;text-transform:uppercase}
+</style>
+</head>
+<body>
+<h1>Sentence Search — OLD vs NEW <span class="badge exp">Experimental</span></h1>
+<div class="sub">Live head-to-head on the real parser path: <code>parseBible()</code> → real searchIndex → <code>searchBible</code> vs <code>searchBibleExperimental</code></div>
+
+<div class="panel">
+<h2>1 · Bible sentence query</h2>
+<div class="qrow"><label for="bible-q">Query</label><input id="bible-q" value="for God so love the word" autocomplete="off"></div>
+<div class="cols">
+<div class="col old"><h3>OLD — per-word rank</h3><div class="meta" id="old-meta"></div><ol id="old-results"></ol></div>
+<div class="col"><h3>NEW — sentence-first</h3><div class="meta" id="new-meta"></div><ol id="new-results"></ol></div>
+</div>
+</div>
+
+<div class="panel">
+<h2>2 · Reference must not break</h2>
+<div class="qrow"><label for="ref-q">Query</label><input id="ref-q" value="isa 44 5" autocomplete="off"></div>
+<div class="cols">
+<div class="col old"><h3>OLD</h3><div class="meta" id="old-ref-meta"></div><ol id="old-ref-results"></ol></div>
+<div class="col"><h3>NEW</h3><div class="meta" id="new-ref-meta"></div><ol id="new-ref-results"></ol></div>
+</div>
+</div>
+
+<div class="panel">
+<h2>3 · File search sentence query</h2>
+<div class="qrow"><label for="file-q">Query</label><input id="file-q" value="water to into wine" autocomplete="off"></div>
+<div class="cols">
+<div class="col old"><h3>OLD — per-term scorer</h3><div class="meta" id="old-file-meta"></div><ol id="old-file-results"></ol></div>
+<div class="col"><h3>NEW — sentence-first</h3><div class="meta" id="new-file-meta"></div><ol id="new-file-results"></ol></div>
+</div>
+</div>
+
+<div id="status">READY</div>
+
+<script type="module">
+import { parseBible, searchBible, searchBibleExperimental } from 'shared/bible/index.js';
+import { parseFileNavigatorQuery, prepareNavigatorSearchRecord, scoreNavigatorSearchRecord, scoreNavigatorSearchRecordExperimental } from 'shared/fileNavigatorSearch.js';
+
+const XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<XMLBIBLE biblename="Sentence Demo KJV-ish">
+<BIBLEBOOK bnumber="43" bname="John" babbr="John">
+<CHAPTER cnumber="3">
+<VERS vnumber="16">For God so loved the world that he gave his only begotten Son that whosoever believeth in him should not perish but have everlasting life.</VERS>
+<VERS vnumber="17">For God sent not his Son into the world to condemn the world but that the world through him might be saved.</VERS>
+<VERS vnumber="18">He that believeth on him is not condemned but he that believeth not is condemned already.</VERS>
+</CHAPTER>
+</BIBLEBOOK>
+<BIBLEBOOK bnumber="23" bname="Isaiah" babbr="Isa">
+<CHAPTER cnumber="44">
+<VERS vnumber="5">One shall say I am the LORDS and another shall call himself by the name of Jacob.</VERS>
+<VERS vnumber="6">Thus saith the LORD the King of Israel and his redeemer the LORD of hosts I am the first and I am the last.</VERS>
+</CHAPTER>
+</BIBLEBOOK>
+<BIBLEBOOK bnumber="19" bname="Psalms" babbr="Ps">
+<CHAPTER cnumber="23">
+<VERS vnumber="1">The LORD is my shepherd I shall not want.</VERS>
+<VERS vnumber="2">He maketh me to lie down in green pastures he leadeth me beside the still waters.</VERS>
+</CHAPTER>
+</BIBLEBOOK>
+<BIBLEBOOK bnumber="1" bname="Genesis" babbr="Gen">
+<CHAPTER cnumber="1">
+<VERS vnumber="1">In the beginning God created the heaven and the earth.</VERS>
+<VERS vnumber="27">So God created man in his own image in the image of God created he him.</VERS>
+</CHAPTER>
+</BIBLEBOOK>
+</XMLBIBLE>`;
+
+// REAL production path: detect format + parse + build searchIndex + bookMap.
+const bible = parseBible(XML, 'sentence-demo');
+const statusEl = document.getElementById('status');
+statusEl.textContent = `PARSED books=${bible.books.length} indexed=${bible.searchIndex ? Object.keys(bible.searchIndex).length + ' terms' : 'NONE'}`;
+
+const FILES = [
+  { filePath: '/songs/water-into-wine.txt', fileName: 'water-into-wine.txt', relativePath: 'songs/water-into-wine.txt', contentText: 'Jesus turned water into wine at the wedding in Cana of Galilee' },
+  { filePath: '/songs/scattered.txt', fileName: 'scattered-thoughts.txt', relativePath: 'songs/scattered-thoughts.txt', contentText: 'Water falls on the mountain. Into the valley runs the river. Wine is stored in the cellar.' },
+  { filePath: '/songs/water-only.txt', fileName: 'water-song.txt', relativePath: 'songs/water-song.txt', contentText: 'Water water water nothing else here' },
+].map(prepareNavigatorSearchRecord);
+
+function esc(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+function renderList(el, rows) {
+  el.innerHTML = rows.map((r, i) => `<li class="${i === 0 ? 'top' : ''}"><span class="ref">${esc(r.reference || r.fileName)}</span> — ${esc((r.text || r.snippet || '').slice(0, 110))}${r.filtered ? ' <span class="filt">filtered</span>' : ''}</li>`).join('') || '<li>— no results —</li>';
+}
+
+function runBible(q, outList, outMeta) {
+  const t0 = performance.now();
+  const res = searchBible(bible, q, {}, 5);
+  const dt = performance.now() - t0;
+  outMeta.innerHTML = `top: <b>${esc(res[0]?.reference || '—')}</b> · ${res.length} hits · ${dt.toFixed(2)}ms`;
+  renderList(outList, res);
+  return res;
+}
+function runBibleNew(q, outList, outMeta) {
+  const t0 = performance.now();
+  const res = searchBibleExperimental(bible, q, {}, 5);
+  const dt = performance.now() - t0;
+  outMeta.innerHTML = `top: <b>${esc(res[0]?.reference || '—')}</b> · ${res.length} hits · ${dt.toFixed(2)}ms`;
+  renderList(outList, res);
+  return res;
+}
+function runFile(q, scorer, outList, outMeta) {
+  const parsed = parseFileNavigatorQuery(q);
+  const t0 = performance.now();
+  const scored = FILES.map((rec) => ({ rec, m: scorer(rec, parsed) })).filter((x) => x.m).sort((a, b) => b.m.score - a.m.score);
+  const dt = performance.now() - t0;
+  const rows = scored.map((x) => ({ fileName: `${x.rec.fileName} [${x.m.matchedField} ${Math.round(x.m.score)}]`, text: x.rec.normalizedContent.slice(0, 110) }));
+  // Show filtered-out files explicitly so the comparison is honest.
+  const matched = new Set(scored.map((x) => x.rec.filePath));
+  for (const rec of FILES) if (!matched.has(rec.filePath)) rows.push({ fileName: rec.fileName, snippet: 'no match', text: rec.normalizedContent.slice(0, 110), filtered: true });
+  outMeta.innerHTML = `top: <b>${esc(scored[0]?.rec.fileName || '—')}</b> · ${scored.length}/${FILES.length} match · ${dt.toFixed(2)}ms`;
+  renderList(outList, rows);
+  return scored;
+}
+
+const $ = (id) => document.getElementById(id);
+function runAll() {
+  runBible($('bible-q').value, $('old-results'), $('old-meta'));
+  runBibleNew($('bible-q').value, $('new-results'), $('new-meta'));
+  runBible($('ref-q').value, $('old-ref-results'), $('old-ref-meta'));
+  runBibleNew($('ref-q').value, $('new-ref-results'), $('new-ref-meta'));
+  runFile($('file-q').value, scoreNavigatorSearchRecord, $('old-file-results'), $('old-file-meta'));
+  runFile($('file-q').value, scoreNavigatorSearchRecordExperimental, $('new-file-results'), $('new-file-meta'));
+  // Machine-readable summary for the scripted harness (dual channel: DOM + js).
+  window.__sentenceSummary = {
+    bibleOldTop: $('old-meta').textContent,
+    bibleNewTop: $('new-meta').textContent,
+    refOldTop: $('old-ref-meta').textContent,
+    refNewTop: $('new-ref-meta').textContent,
+    fileOldTop: $('old-file-meta').textContent,
+    fileNewTop: $('new-file-meta').textContent,
+  };
+}
+for (const id of ['bible-q', 'ref-q', 'file-q']) $(id).addEventListener('input', runAll);
+runAll();
+statusEl.textContent += ' · LIVE';
+</script>
+</body>
+</html>

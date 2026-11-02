@@ -95,3 +95,4 @@ speech-engine/models/
 *.safetensors
 ggml-*
 .gstack/
+shots/

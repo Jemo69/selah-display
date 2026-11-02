@@ -1,0 +1,13 @@
+[
+  {"action": "goto", "url": "http://localhost:5174/sentence-demo.html"},
+  {"action": "wait_idle"},
+  {"action": "assert", "text": "John 3:16"},
+  {"action": "assert", "text": "Isaiah 44:5"},
+  {"action": "type", "selector": "#bible-q", "text": "for God so loved the world"},
+  {"action": "assert", "text": "John 3:16"},
+  {"action": "type", "selector": "#ref-q", "text": "John 3:16"},
+  {"action": "assert", "text": "John 3:16"},
+  {"action": "type", "selector": "#file-q", "text": "turned water into wine"},
+  {"action": "assert", "text": "water-into-wine.txt"},
+  {"action": "screenshot"}
+]
