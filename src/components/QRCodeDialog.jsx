@@ -24,7 +24,16 @@ const QRCodeDialog = ({ isOpen, onClose, darkMode }) => {
   const [joinCode, setJoinCode] = useState(null);
   const { showToast } = useToast();
 
-  const port = import.meta.env.DEV ? '5174' : '4000';
+  // The page is served from the backend itself (packaged app or custom
+  // PORT boot), so its port IS the port the phone must dial — not a
+  // build-time constant. Dev keeps 5174 (Vite proxies /api to the backend).
+  const port = (() => {
+    try {
+      const locPort = window.location?.port;
+      if (locPort && locPort !== '5174') return locPort;
+    } catch { /* non-browser */ }
+    return import.meta.env.DEV ? '5174' : '4000';
+  })();
   const urlBase = `http://${localIP}:${port}/`;
 
   const refreshJoinCode = useCallback(async () => {

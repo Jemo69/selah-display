@@ -2,6 +2,7 @@ import { BrowserWindow, shell } from 'electron';
 import path from 'path';
 import { isDev, resolveProductionPath, appRoot } from './paths.js';
 import createMainLogger from './logger.js';
+import { backendBaseUrl } from './utils.js';
 
 const log = createMainLogger('Windows');
 
@@ -86,8 +87,7 @@ export function createWindow(route = '/', options = {}) {
 
   // Honor PORT so custom-port boots (dogfood, side-by-side instances) load
   // their own backend instead of whatever holds 4000.
-  const backendPort = process.env.PORT || 4000;
-  const backendBase = `http://127.0.0.1:${backendPort}`;
+  const backendBase = backendBaseUrl();
   if (isDev) {
     const devUrl = `http://localhost:5174${route}`;
     // When launched as a built app (`npm run build` + `npm run electron`) the

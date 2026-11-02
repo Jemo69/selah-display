@@ -39,6 +39,15 @@ export async function getLocalIPAddress() {
     return activeIP;
 }
 
+// Single source of truth for this instance's backend origin. The backend
+// fork inherits process.env (see main/backend.js), so PORT is authoritative;
+// default 4000 preserves every existing install, shortcut, and QR payload.
+export function backendBaseUrl() {
+    const raw = Number(process.env.PORT);
+    const port = Number.isInteger(raw) && raw > 0 && raw < 65536 ? raw : 4000;
+    return `http://127.0.0.1:${port}`;
+}
+
 const isTailscaleAddress = (addr = '') => {
     const parts = String(addr).split('.').map(Number);
     if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;

@@ -68,6 +68,18 @@ describe('QRCodeDialog (mobile connect, Tailscale)', () => {
     });
   });
 
+  it('encodes the port the page was served from (custom PORT boots)', async () => {
+    // jsdom serves the test page itself; the dialog must echo that port,
+    // not the 4000 build-time default, or custom-port QR codes misdial.
+    const onClose = vi.fn();
+    render(<QRCodeDialog isOpen onClose={onClose} darkMode={false} />);
+    const expectedPort = window.location.port || '4000';
+    await waitFor(() => {
+      const urls = screen.getAllByText(new RegExp(`:${expectedPort}/`, 'i'));
+      expect(urls.length).toBeGreaterThan(0);
+    });
+  });
+
   it('renders nothing when closed', () => {
     const onClose = vi.fn();
     const { container } = render(
