@@ -520,3 +520,42 @@ describe('Reviewer hardening (independent R1 findings)', () => {
     expect(results[0].reference).toBe('Romans 8:31');
   });
 });
+
+describe('Compound-split typo (KJV writes "every thing")', () => {
+  const withIndex = (bible) => {
+    const index = {};
+    const norm = (s) => String(s || '').toLowerCase().replace(/'s\b/g, '').replace(/[^a-z0-9]/g, '');
+    for (const book of bible.books) {
+      for (const chapter of book.chapters) {
+        for (const verse of chapter.verses) {
+          const seen = new Set();
+          for (const word of String(verse.text || '').toLowerCase().split(/\s+/)) {
+            const n = norm(word);
+            if (!n || n.length < 3 || seen.has(n)) continue;
+            seen.add(n);
+            (index[n] = index[n] || []).push({ b: book.number, c: chapter.number, v: verse.number });
+          }
+        }
+      }
+    }
+    return { ...bible, searchIndex: index };
+  };
+
+  it('joined typo "evrything" matches split "every thing" in order', () => {
+    const bible = withIndex({
+      id: 'comp', name: 'COMP',
+      books: [
+        { number: 19, name: 'Psalms', chapters: [{ number: 136, verses: [
+          { number: 1, text: 'O give thanks unto the LORD for he is good' },
+          { number: 2, text: 'O give thanks unto the God of gods' },
+        ] }] },
+        { number: 52, name: '1 Thessalonians', chapters: [{ number: 5, verses: [
+          { number: 18, text: 'In every thing give thanks for this is the will of God' },
+        ] }] },
+      ],
+    });
+    const results = searchBibleExperimental(bible, 'in evrything give thanks', {}, 10);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].reference).toBe('1 Thessalonians 5:18');
+  });
+});

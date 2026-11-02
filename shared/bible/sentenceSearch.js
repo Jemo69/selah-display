@@ -162,15 +162,24 @@ export function scoreSentenceVerse(queryNorm, queryContent, verseText, termWeigh
   if (verseToks.length === 0 || queryContent.length === 0) return null;
 
   // 1. Exact phrase wins outright — cheapest check, C-level includes().
+  // A substring hit means every content token matched EXACTLY, so the
+  // phrase path carries the same rarity mass and exactness bonus as the
+  // ordered path (plus the phrase premium): no fuzzy verse can outscore
+  // the verse that says precisely what was typed.
   if (verseNorm.includes(queryNorm)) {
     const lenPenalty = Math.log(1 + verseNorm.length) * 8;
+    const weights = Array.isArray(termWeights) && termWeights.length === queryContent.length
+      ? termWeights
+      : queryContent.map(() => 1);
+    const weightSum = weights.reduce((t, w) => t + (w || 0), 0);
     return {
-      score: 2000 - lenPenalty,
+      score: 2000 + weightSum * 400 + queryContent.length * 150 - lenPenalty,
       matched: queryContent.length,
       coverage: 1,
       phrase: true,
       ordered: true,
       span: queryNorm.length,
+      exact: queryContent.length,
     };
   }
 
@@ -192,6 +201,7 @@ export function scoreSentenceVerse(queryNorm, queryContent, verseText, termWeigh
     const qt = queryContent[q];
     let found = -1;
     let foundExact = false;
+    let advance = 1;
     for (let v = cursor; v < verseToks.length; v += 1) {
       if (sentenceTokensMatch(qt, verseToks[v])) {
         found = v;
@@ -199,10 +209,23 @@ export function scoreSentenceVerse(queryNorm, queryContent, verseText, termWeigh
         break;
       }
     }
+    // Compound fallback: KJV splits compounds ("every thing") that the
+    // operator types joined ("evrything"). Only for long tokens, only
+    // when no single token matched, first in-order pair wins.
+    if (found === -1 && qt.length >= 7) {
+      for (let v = cursor; v + 1 < verseToks.length; v += 1) {
+        const pair = verseToks[v] + verseToks[v + 1];
+        if (pair.length >= 7 && sentenceTokensMatch(qt, pair)) {
+          found = v;
+          advance = 2;
+          break;
+        }
+      }
+    }
     if (found === -1) continue;
     if (firstPos === -1) firstPos = found;
     lastPos = found;
-    cursor = found + 1;
+    cursor = found + advance;
     matched += 1;
     weightSum += weights[q] || 0;
     if (foundExact) exactMatches += 1;

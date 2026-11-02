@@ -1082,13 +1082,25 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
         }
         if (set.size === 0 && term.length >= 4) {
           let added = 0;
-          for (const key of Object.keys(bible.searchIndex)) {
-            if (!withinEditOne(term, key)) continue;
-            for (const rec of bible.searchIndex[key]) {
+          const take = (postings) => {
+            for (const rec of postings) {
               push(rec);
-              if (++added >= 2000) break;
+              if (++added >= 2000) return true;
             }
-            if (added >= 2000) break;
+            return false;
+          };
+          for (const key of Object.keys(bible.searchIndex)) {
+            if (key.length < 4 || !withinEditOne(term, key)) continue;
+            if (take(bible.searchIndex[key])) break;
+          }
+          // KJV writes "every thing" as two words, so no single key is
+          // one edit from "evrything" — fall back to index keys that are
+          // substrings of the term ("thing" in "evrything").
+          if (added < 2000) {
+            for (const key of Object.keys(bible.searchIndex)) {
+              if (key.length < 4 || key === term || !term.includes(key)) continue;
+              if (take(bible.searchIndex[key])) break;
+            }
           }
         }
         return { term, set };
