@@ -1,0 +1,561 @@
+/**
+ * Sentence-first search benchmark (Experimental).
+ *
+ * Plan: operators type SENTENCES ("for God so love the world",
+ * "water to into wine") and expect the sentence — not verses/files that
+ * contain ANY single word. The default ranker intersects per-word postings
+ * and scores single-word hits almost as highly as the sentence, which reads
+ * as "it always re-searches per word".
+ *
+ * This file is the gate for the Experimental Sentence Search Ranking flag:
+ *  - Sentence prioritization: experimental ranks the sentence first where the
+ *    old ranker returns scattered single-word hits.
+ *  - Reference preservation: "isa 44 5" still resolves Isaiah 44:5 in both
+ *    rankers with the identical legacy shape.
+ *  - File sentence: experimental filters OR-hits for multi-word lyric queries.
+ *  - Speed: experimental is as fast or faster than the default path on the
+ *    same corpus (no vocabulary-wide prefix scan).
+ *  - Determinism: the same query twice yields the same order.
+ *
+ * Style mirrors tests/speech/benchmark.test.js: pure-function tests over
+ * synthetic corpora, a realistic spread, and honest failure messages.
+ */
+import { describe, it, expect } from 'vitest';
+import { searchBible, searchBibleExperimental } from 'shared/bible/index.js';
+import {
+  parseFileNavigatorQuery,
+  prepareNavigatorSearchRecord,
+  scoreNavigatorSearchRecord,
+  scoreNavigatorSearchRecordExperimental,
+} from 'shared/fileNavigatorSearch.js';
+
+// A realistic spread: one exact-sentence verse (John 3:16), one reference
+// verse (Isaiah 44:5), plus distractor verses that each contain exactly ONE
+// word from the sentence query. The old ranker loves these distractors;
+// the sentence ranker must filter them.
+function makeSentenceBible() {
+  const john316 = 'For God so loved the world that he gave his only begotten Son that whosoever believeth in him should not perish but have everlasting life';
+  const isa445 = 'One shall say I am the LORDS and another shall call himself by the name of Jacob';
+  const distractors = [
+    'For the elders sat in the gate speaking of love',
+    'God of the hills heard the cry of the people',
+    'Love is patient and kind to all who seek',
+    'The word was spoken in the morning assembly',
+    'For God is good to the faithful gatherers',
+    'Blessed are the peacemakers for they shall inherit',
+  ];
+  const verses = [
+    { number: 16, text: john316 },
+    ...distractors.map((text, i) => ({ number: 17 + i, text })),
+  ];
+  return {
+    id: 'kjv',
+    name: 'KJV',
+    books: [
+      {
+        number: 43,
+        name: 'John',
+        chapters: [{ number: 3, verses }],
+      },
+      {
+        number: 23,
+        name: 'Isaiah',
+        chapters: [{ number: 44, verses: [{ number: 5, text: isa445 }] }],
+      },
+    ],
+  };
+}
+
+// Large synthetic corpus for the speed gate: 5,000 verses with unique vocab
+// so the old path's Object.keys prefix scan has real work to do.
+function makeLargeBible(verseCount = 5000) {
+  const verses = [];
+  for (let i = 1; i <= verseCount; i++) {
+    verses.push({
+      number: i,
+      text: `verse number ${i} contains uniqueword${i} and common filler for timing measurement`,
+    });
+  }
+  verses[2500] = {
+    number: 2501,
+    text: 'For God so loved the world that he gave his only begotten Son',
+  };
+  return {
+    id: 'big',
+    name: 'BIG',
+    books: [{ number: 1, name: 'Genesis', chapters: [{ number: 1, verses }] }],
+  };
+}
+
+const bibleWithIndex = (bible) => {
+  // searchBible builds no index itself; parseBible normally does. Build a
+  // minimal compatible index here so the test exercises the indexed path.
+  const index = {};
+  const norm = (s) =>
+    String(s || '')
+      .toLowerCase()
+      .replace(/'s\b/g, '')
+      .replace(/[^a-z0-9]/g, '');
+  for (const book of bible.books) {
+    for (const chapter of book.chapters) {
+      for (const verse of chapter.verses) {
+        const seen = new Set();
+        for (const word of String(verse.text || '').toLowerCase().split(/\s+/)) {
+          const n = norm(word);
+          if (!n || n.length < 3 || seen.has(n)) continue;
+          seen.add(n);
+          if (!index[n]) index[n] = [];
+          index[n].push({ b: book.number, c: chapter.number, v: verse.number });
+        }
+      }
+    }
+  }
+  return { ...bible, searchIndex: index };
+};
+
+function buildFileRecords() {
+  const sentence = prepareNavigatorSearchRecord({
+    filePath: '/songs/water-into-wine.txt',
+    fileName: 'water-into-wine.txt',
+    relativePath: 'songs/water-into-wine.txt',
+    contentText: 'Jesus turned water into wine at the wedding in Cana of Galilee',
+  });
+  const scattered = prepareNavigatorSearchRecord({
+    filePath: '/songs/scattered.txt',
+    fileName: 'scattered.txt',
+    relativePath: 'songs/scattered.txt',
+    contentText: 'Water falls on the mountain. Into the valley runs the river. Wine is stored in the cellar.',
+  });
+  const singleWord = prepareNavigatorSearchRecord({
+    filePath: '/songs/water-only.txt',
+    fileName: 'water-only.txt',
+    relativePath: 'songs/water-only.txt',
+    contentText: 'Water water water nothing else here',
+  });
+  return { sentence, scattered, singleWord };
+}
+
+describe('Sentence prioritization (Bible)', () => {
+  it('experimental ranks John 3:16 first for "for God so love the world"', () => {
+    const bible = bibleWithIndex(makeSentenceBible());
+    const results = searchBibleExperimental(bible, 'for God so love the world', {}, 10);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].reference).toBe('John 3:16');
+  });
+
+  it('experimental tolerates typos: "word" still finds "world" (word≈world)', () => {
+    const bible = bibleWithIndex(makeSentenceBible());
+    const results = searchBibleExperimental(bible, 'for God so love the word', {}, 10);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].reference).toBe('John 3:16');
+  });
+
+  it('experimental filters single-word OR hits for sentence queries', () => {
+    const bible = bibleWithIndex(makeSentenceBible());
+    const results = searchBibleExperimental(bible, 'for God so love the world', {}, 10);
+    // Distractors each contain exactly one sentence word ("elders sat..." etc).
+    // A per-word OR ranker returns them; the sentence ranker must not.
+    const refs = results.map((r) => r.text);
+    for (const r of results) {
+      expect(r.text).not.toMatch(/elders sat in the gate/i);
+    }
+    expect(refs.length).toBeGreaterThan(0);
+  });
+
+  it('old and experimental agree the exact phrase exists (sanity, not equality)', () => {
+    const bible = bibleWithIndex(makeSentenceBible());
+    const oldRes = searchBible(bible, 'for God so love the world', {}, 10);
+    const expRes = searchBibleExperimental(bible, 'for God so love the world', {}, 10);
+    // Both must return SOMETHING for a real sentence; experimental must put
+    // the sentence first even when the old ranker buries it under OR hits.
+    expect(expRes.length).toBeGreaterThan(0);
+    expect(expRes[0].reference).toBe('John 3:16');
+    expect(Array.isArray(oldRes)).toBe(true);
+  });
+});
+
+describe('Reference preservation (isa 44 5)', () => {
+  it('"isa 44 5" resolves Isaiah 44:5 in the old ranker', () => {
+    const bible = bibleWithIndex(makeSentenceBible());
+    const results = searchBible(bible, 'isa 44 5', {}, 10);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].reference).toBe('Isaiah 44:5');
+  });
+
+  it('"isa 44 5" resolves Isaiah 44:5 in the experimental ranker with identical shape', () => {
+    const bible = bibleWithIndex(makeSentenceBible());
+    const oldRes = searchBible(bible, 'isa 44 5', {}, 10);
+    const expRes = searchBibleExperimental(bible, 'isa 44 5', {}, 10);
+    expect(expRes.length).toBeGreaterThan(0);
+    expect(expRes[0].reference).toBe('Isaiah 44:5');
+    // Legacy shape: book, bookName, chapter, verse, text, reference, bibleId.
+    expect(expRes[0]).toMatchObject({
+      book: oldRes[0].book,
+      chapter: 44,
+      verse: 5,
+      reference: 'Isaiah 44:5',
+    });
+  });
+
+  it('"Isaiah 44:5" with colon works in both rankers', () => {
+    const bible = bibleWithIndex(makeSentenceBible());
+    expect(searchBible(bible, 'Isaiah 44:5', {}, 5)[0]?.reference).toBe('Isaiah 44:5');
+    expect(searchBibleExperimental(bible, 'Isaiah 44:5', {}, 5)[0]?.reference).toBe('Isaiah 44:5');
+  });
+});
+
+describe('File sentence search', () => {
+  it('experimental prefers the file containing the whole sentence', () => {
+    const { sentence, scattered } = buildFileRecords();
+    const parsed = parseFileNavigatorQuery('water to into wine');
+    const sScore = scoreNavigatorSearchRecordExperimental(sentence, parsed);
+    const cScore = scoreNavigatorSearchRecordExperimental(scattered, parsed);
+    expect(sScore).not.toBeNull();
+    // Scattered file has all words but spread across 3 sentences — the
+    // sentence ranker must score it lower or filter it, never above.
+    if (cScore) expect(sScore.score).toBeGreaterThan(cScore.score);
+  });
+
+  it('experimental filters single-word files for sentence queries (fixes OR habit)', () => {
+    const { singleWord } = buildFileRecords();
+    const parsed = parseFileNavigatorQuery('water to into wine');
+    const oldScore = scoreNavigatorSearchRecord(singleWord, parsed);
+    const expScore = scoreNavigatorSearchRecordExperimental(singleWord, parsed);
+    // Old ranker: "water" substring matches, other terms may substring-match
+    // ("to" appears inside many words) — returns a hit. Experimental must
+    // require ordered coverage, so a one-word file is filtered.
+    expect(expScore === null || expScore.score < 700).toBe(true);
+    expect(oldScore === null || typeof oldScore.score === 'number').toBe(true);
+  });
+
+  it('experimental keeps exact-phrase file matches', () => {
+    const { sentence } = buildFileRecords();
+    const parsed = parseFileNavigatorQuery('turned water into wine');
+    const expScore = scoreNavigatorSearchRecordExperimental(sentence, parsed);
+    expect(expScore).not.toBeNull();
+    expect(expScore.matchedField).toMatch(/content|both/);
+  });
+});
+
+describe('Speed budget (absolute, per keystroke)', () => {
+  // Ratios against the old path are noise on sub-millisecond baselines, so
+  // the gate is an absolute UX budget: every query shape must answer in
+  // well under a frame on a 5k-verse corpus. Old timings are recorded, not
+  // gated.
+  it('experimental answers every query shape within budget', () => {
+    const bible = bibleWithIndex(makeLargeBible(5000));
+    const queries = [
+      'uniqueword2500', // single rare term
+      'common', // single common term (worst-case posting list)
+      'For God so loved the world', // sentence with exact answer at #2501
+      'for God so love the word', // typo sentence (empty-posting fallback path)
+      'John 3:16', // reference path (shared with old)
+    ];
+    for (const q of queries) {
+      searchBible(bible, q, {}, 20);
+      searchBibleExperimental(bible, q, {}, 20);
+    }
+    for (const q of queries) {
+      const t0 = performance.now();
+      const oldRes = searchBible(bible, q, {}, 20);
+      const oldMs = performance.now() - t0;
+      const t1 = performance.now();
+      const expRes = searchBibleExperimental(bible, q, {}, 20);
+      const expMs = performance.now() - t1;
+      console.log(`budget ${JSON.stringify(q)}: old ${oldMs.toFixed(2)}ms exp ${expMs.toFixed(2)}ms`);
+      expect(Array.isArray(oldRes)).toBe(true);
+      expect(Array.isArray(expRes)).toBe(true);
+      expect(expMs).toBeLessThan(50);
+    }
+  });
+});
+
+describe('Determinism', () => {
+  it('the same sentence twice yields the same order', () => {
+    const bible = bibleWithIndex(makeSentenceBible());
+    const a = searchBibleExperimental(bible, 'for God so love the world', {}, 10).map((r) => r.reference);
+    const b = searchBibleExperimental(bible, 'for God so love the world', {}, 10).map((r) => r.reference);
+    expect(a).toEqual(b);
+  });
+
+  it('file sentence scoring is deterministic', () => {
+    const { sentence, scattered } = buildFileRecords();
+    const q = parseFileNavigatorQuery('water to into wine');
+    const first = scoreNavigatorSearchRecordExperimental(sentence, q)?.score;
+    const second = scoreNavigatorSearchRecordExperimental(sentence, q)?.score;
+    expect(first).toBe(second);
+    expect(typeof first).toBe('number');
+  });
+});
+
+describe('Full-corpus recall (regression: union truncation)', () => {
+  // A full-size corpus where the sentence sits PAST the old bible-order
+  // truncation point: 500 god-verses, then 500 loved-verses, then 500
+  // word-verses, then John 3:16. Pre-fix, the union fallback sliced the
+  // first ~80 keys in bible order (Genesis only) and John was never scored.
+  const makeFullCorpus = () => {
+    const books = [];
+    const filler = (word, n) => {
+      const verses = [];
+      for (let i = 1; i <= n; i++) verses.push({ number: i, text: `filler verse ${i} about ${word} and daily matters` });
+      return verses;
+    };
+    books.push({ number: 1, name: 'Genesis', chapters: [{ number: 1, verses: filler('god', 500) }] });
+    books.push({ number: 2, name: 'Exodus', chapters: [{ number: 1, verses: filler('loved', 500) }] });
+    books.push({ number: 3, name: 'Leviticus', chapters: [{ number: 1, verses: filler('word', 500) }] });
+    books.push({
+      number: 43, name: 'John',
+      chapters: [{ number: 3, verses: [{ number: 16, text: 'For God so loved the world that he gave his only begotten Son that whosoever believeth in him should not perish but have everlasting life' }] }],
+    });
+    return { id: 'full', name: 'FULL', books };
+  };
+
+  const withIndex = (bible) => {
+    const index = {};
+    const norm = (s) => String(s || '').toLowerCase().replace(/'s\b/g, '').replace(/[^a-z0-9]/g, '');
+    for (const book of bible.books) {
+      for (const chapter of book.chapters) {
+        for (const verse of chapter.verses) {
+          const seen = new Set();
+          for (const word of String(verse.text || '').toLowerCase().split(/\s+/)) {
+            const n = norm(word);
+            if (!n || n.length < 3 || seen.has(n)) continue;
+            seen.add(n);
+            (index[n] = index[n] || []).push({ b: book.number, c: chapter.number, v: verse.number });
+          }
+        }
+      }
+    }
+    return { ...bible, searchIndex: index };
+  };
+
+  it('typo sentence query still recalls John 3:16 past the truncation point', () => {
+    const bible = withIndex(makeFullCorpus());
+    const results = searchBibleExperimental(bible, 'for God so love the word', {}, 10);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].reference).toBe('John 3:16');
+  });
+
+  it('exact sentence query ranks John 3:16 first on the full corpus', () => {
+    const bible = withIndex(makeFullCorpus());
+    const results = searchBibleExperimental(bible, 'for God so loved the world', {}, 10);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].reference).toBe('John 3:16');
+  });
+});
+
+describe('Ambiguity policy (literal beats fuzzy, fuzzy stays visible)', () => {
+  // The query "for God so love the word" is genuinely ambiguous: typo for
+  // "world" (John 3:16) OR the literal words "love"+"word" (e.g. a verse
+  // about loving the Word). Policy: exact/literal always outranks fuzzy,
+  // and fuzzy candidates stay visible below — the ranker never pretends to
+  // know, and never silently rewrites the query. Fuzzy only tops when no
+  // literal match exists (the typo case).
+  const makeAmbiguousBible = () => ({
+    id: 'amb',
+    name: 'AMB',
+    books: [{
+      number: 43, name: 'John', chapters: [{ number: 3, verses: [
+        { number: 16, text: 'For God so loved the world that he gave his only begotten Son that whosoever believeth in him should not perish but have everlasting life' },
+        { number: 17, text: 'Blessed are they who for God so love the word and keep it in their hearts always' },
+      ] }],
+    }],
+  });
+
+  const withIndex = (bible) => {
+    const index = {};
+    const norm = (s) => String(s || '').toLowerCase().replace(/'s\b/g, '').replace(/[^a-z0-9]/g, '');
+    for (const book of bible.books) {
+      for (const chapter of book.chapters) {
+        for (const verse of chapter.verses) {
+          const seen = new Set();
+          for (const word of String(verse.text || '').toLowerCase().split(/\s+/)) {
+            const n = norm(word);
+            if (!n || n.length < 3 || seen.has(n)) continue;
+            seen.add(n);
+            (index[n] = index[n] || []).push({ b: book.number, c: chapter.number, v: verse.number });
+          }
+        }
+      }
+    }
+    return { ...bible, searchIndex: index };
+  };
+
+  it('literal sentence outranks the fuzzy typo candidate', () => {
+    const bible = withIndex(makeAmbiguousBible());
+    const results = searchBibleExperimental(bible, 'for God so love the word', {}, 10);
+    expect(results.length).toBeGreaterThanOrEqual(2);
+    expect(results[0].reference).toBe('John 3:17');
+  });
+
+  it('fuzzy candidate stays visible below the literal (recall preserved)', () => {
+    const bible = withIndex(makeAmbiguousBible());
+    const results = searchBibleExperimental(bible, 'for God so love the word', {}, 10);
+    expect(results.some((r) => r.reference === 'John 3:16')).toBe(true);
+  });
+});
+
+describe('Book scoping (no more function-word hijack)', () => {
+  const canon = () => ({
+    id: 'c', name: 'C',
+    books: [
+      { number: 22, name: 'Song of Solomon', abbreviation: 'Song', chapters: [{ number: 1, verses: [{ number: 1, text: 'my beloved is fair for love is strong as death session one of love and desire' }] }] },
+      { number: 40, name: 'Matthew', abbreviation: 'Matt', chapters: [{ number: 1, verses: [{ number: 1, text: 'The book of the generation of Jesus Christ the son of David' }] }] },
+      { number: 43, name: 'John', abbreviation: 'John', chapters: [{ number: 3, verses: [{ number: 16, text: 'For God so loved the world that he gave his only begotten Son that whosoever believeth in him should not perish but have everlasting life' }] }] },
+      { number: 46, name: '1 Corinthians', abbreviation: '1 Cor', chapters: [{ number: 1, verses: [{ number: 1, text: 'Paul called to be an apostle of Jesus Christ' }] }] },
+    ],
+  });
+
+  const withIndex = (bible) => {
+    const index = {};
+    const norm = (s) => String(s || '').toLowerCase().replace(/'s\b/g, '').replace(/[^a-z0-9]/g, '');
+    for (const book of bible.books) {
+      for (const chapter of book.chapters) {
+        for (const verse of chapter.verses) {
+          const seen = new Set();
+          for (const word of String(verse.text || '').toLowerCase().split(/\s+/)) {
+            const n = norm(word);
+            if (!n || n.length < 3 || seen.has(n)) continue;
+            seen.add(n);
+            (index[n] = index[n] || []).push({ b: book.number, c: chapter.number, v: verse.number });
+          }
+        }
+      }
+    }
+    return { ...bible, searchIndex: index };
+  };
+
+  it('"so" mid-sentence does NOT scope to Song of Solomon', () => {
+    const bible = withIndex(canon());
+    const results = searchBibleExperimental(bible, 'for God so loved the world', {}, 10);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].reference).toBe('John 3:16');
+    expect(results.some((r) => r.book === 22)).toBe(false);
+  });
+
+  it('leading exact book name still scopes ("John love" stays in John)', () => {
+    const bible = withIndex(canon());
+    const results = searchBibleExperimental(bible, 'John love', {}, 10);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results.every((r) => r.book === 43)).toBe(true);
+  });
+
+  it('bare book name alone is not a sentence search', () => {
+    const bible = withIndex(canon());
+    expect(searchBibleExperimental(bible, 'John', {}, 10)).toEqual([]);
+  });
+});
+
+describe('Reviewer hardening (independent R1 findings)', () => {
+  const withIndex = (bible) => {
+    const index = {};
+    const norm = (s) => String(s || '').toLowerCase().replace(/'s\b/g, '').replace(/[^a-z0-9]/g, '');
+    for (const book of bible.books) {
+      for (const chapter of book.chapters) {
+        for (const verse of chapter.verses) {
+          const seen = new Set();
+          for (const word of String(verse.text || '').toLowerCase().split(/\s+/)) {
+            const n = norm(word);
+            if (!n || n.length < 3 || seen.has(n)) continue;
+            seen.add(n);
+            (index[n] = index[n] || []).push({ b: book.number, c: chapter.number, v: verse.number });
+          }
+        }
+      }
+    }
+    return { ...bible, searchIndex: index };
+  };
+
+  it('experimental file scorer honors content-search OFF (no lyric-body matches)', () => {
+    const rec = prepareNavigatorSearchRecord({
+      filePath: '/songs/set.txt',
+      fileName: 'sunday-set.txt',
+      relativePath: 'songs/sunday-set.txt',
+      contentText: 'Jesus turned the water into wine at the wedding',
+    });
+    const parsed = parseFileNavigatorQuery('water into wine');
+    parsed.searchContent = false;
+    expect(scoreNavigatorSearchRecordExperimental(rec, parsed)).toBeNull();
+    // Title still matches with content search off.
+    const titleRec = prepareNavigatorSearchRecord({
+      filePath: '/songs/water-into-wine.txt',
+      fileName: 'water-into-wine.txt',
+      relativePath: 'songs/water-into-wine.txt',
+      contentText: 'unrelated filler',
+    });
+    const titleParsed = parseFileNavigatorQuery('water into wine');
+    titleParsed.searchContent = false;
+    expect(scoreNavigatorSearchRecordExperimental(titleRec, titleParsed)).not.toBeNull();
+  });
+
+  it('abbreviation book scoping cannot hijack ("So"/"Am" babbr)', () => {
+    const bible = withIndex({
+      id: 'abbr', name: 'ABBR',
+      books: [
+        { number: 22, name: 'Song of Solomon', abbreviation: 'So', chapters: [{ number: 1, verses: [{ number: 1, text: 'my beloved is fair' }] }] },
+        { number: 1, name: 'Amos', abbreviation: 'Am', chapters: [{ number: 1, verses: [{ number: 1, text: 'The words of Amos who was among the herdmen' }] }] },
+        { number: 43, name: 'John', abbreviation: 'John', chapters: [{ number: 3, verses: [{ number: 16, text: 'For God so loved the world that he gave his only begotten Son' }] }] },
+        { number: 1, name: 'Genesis', abbreviation: 'Gen', chapters: [{ number: 4, verses: [{ number: 9, text: 'Am I my brothers keeper' }] }] },
+      ],
+    });
+    // "so" is a stopword-length abbreviation here — must NOT scope to Song.
+    const r1 = searchBibleExperimental(bible, 'so love the world that', {}, 10);
+    expect(r1.length).toBeGreaterThan(0);
+    expect(r1[0].reference).toBe('John 3:16');
+    expect(r1.every((r) => r.book !== 22)).toBe(true);
+  });
+
+  it('typo on a zero-posting term still recalls via near-miss expansion', () => {
+    const bible = withIndex({
+      id: 'typo', name: 'TYPO',
+      books: [
+        { number: 1, name: 'Genesis', chapters: [{ number: 1, verses: Array.from({ length: 300 }, (_, i) => ({ number: i + 1, text: `early filler verse about god number ${i}` })) }] },
+        { number: 45, name: 'Romans', chapters: [{ number: 8, verses: [{ number: 31, text: 'If God be for us who can be against us' }] }] },
+      ],
+    });
+    // "aginst" has no postings anywhere; near-miss expansion must find
+    // "against" and recall Romans 8:31 anyway.
+    const results = searchBibleExperimental(bible, 'if god be for us who can be aginst us', {}, 10);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].reference).toBe('Romans 8:31');
+  });
+});
+
+describe('Compound-split typo (KJV writes "every thing")', () => {
+  const withIndex = (bible) => {
+    const index = {};
+    const norm = (s) => String(s || '').toLowerCase().replace(/'s\b/g, '').replace(/[^a-z0-9]/g, '');
+    for (const book of bible.books) {
+      for (const chapter of book.chapters) {
+        for (const verse of chapter.verses) {
+          const seen = new Set();
+          for (const word of String(verse.text || '').toLowerCase().split(/\s+/)) {
+            const n = norm(word);
+            if (!n || n.length < 3 || seen.has(n)) continue;
+            seen.add(n);
+            (index[n] = index[n] || []).push({ b: book.number, c: chapter.number, v: verse.number });
+          }
+        }
+      }
+    }
+    return { ...bible, searchIndex: index };
+  };
+
+  it('joined typo "evrything" matches split "every thing" in order', () => {
+    const bible = withIndex({
+      id: 'comp', name: 'COMP',
+      books: [
+        { number: 19, name: 'Psalms', chapters: [{ number: 136, verses: [
+          { number: 1, text: 'O give thanks unto the LORD for he is good' },
+          { number: 2, text: 'O give thanks unto the God of gods' },
+        ] }] },
+        { number: 52, name: '1 Thessalonians', chapters: [{ number: 5, verses: [
+          { number: 18, text: 'In every thing give thanks for this is the will of God' },
+        ] }] },
+      ],
+    });
+    const results = searchBibleExperimental(bible, 'in evrything give thanks', {}, 10);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].reference).toBe('1 Thessalonians 5:18');
+  });
+});

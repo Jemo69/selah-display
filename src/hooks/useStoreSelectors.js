@@ -366,6 +366,16 @@ export const useBibleVerseEditorEnabled = () =>
         shallow
     );
 
+export const useSentenceSearchExperimental = () =>
+    useStoreWithEqualityFn(
+        useLyricsStore,
+        (state) => ({
+            enabled: state.sentenceSearchExperimental ?? false,
+            setEnabled: state.setSentenceSearchExperimental,
+        }),
+        shallow
+    );
+
 export const usePreviewMultiviewState = () =>
     useStoreWithEqualityFn(
         useLyricsStore,

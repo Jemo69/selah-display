@@ -278,3 +278,77 @@ export function createHighlightedSnippet(content = '', query = '', fileType = 't
   return escaped.replace(regex, '<mark class="bg-yellow-200 text-yellow-900 dark:bg-yellow-500/30 dark:text-yellow-200 px-0.5 rounded font-medium">$1</mark>');
 }
 
+
+// --- Experimental sentence-first file scoring (behind Experimental flag) ---
+// Import is lazy to avoid a require cycle: fileNavigatorSentence is standalone
+// and never imports this file.
+export async function scoreNavigatorSearchRecordExperimentalAsync(record, parsedQuery) {
+  const mod = await import('./fileNavigatorSentence.js');
+  return mod.scoreNavigatorRecordSentence(record, parsedQuery);
+}
+
+export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
+  const query = typeof parsedQuery === 'string'
+    ? parseFileNavigatorQuery(parsedQuery)
+    : (parsedQuery || { terms: [], fileTypes: [] });
+  if (query.fileTypes?.length > 0 && !query.fileTypes.includes(record.fileType)) return null;
+  if (!query.terms?.length) return null;
+  // Honors the operator's content-search preference exactly like the default
+  // scorer: with searchContent === false, lyric bodies are never consulted —
+  // title/path matches only. The experimental path must not override an
+  // explicit OFF.
+  const contentAllowed = query.searchContent !== false;
+  // Synchronous fast path: replicate the sentence gate without the async import.
+  // Exact phrase in stem/content wins; else ordered proximity.
+  const normStem = record.normalizedStem || '';
+  const normContent = contentAllowed ? (record.normalizedContent || '') : '';
+  const normPath = record.normalizedRelativePath || '';
+  const phrase = (query.phrase ?? query.terms.join(' ')).trim();
+  if (phrase && normStem === phrase) return { score: 2200, matchedField: 'name', sentence: true };
+  if (phrase && normStem.includes(phrase)) return { score: 1800, matchedField: 'name', sentence: true };
+  if (contentAllowed && phrase && normContent.includes(phrase)) {
+    const titleHit = query.terms.some((t) => normStem.includes(t));
+    return { score: titleHit ? 1900 : 1600, matchedField: titleHit ? 'both' : 'content', sentence: true };
+  }
+  // Ordered proximity over content tokens (stopwords kept for span, but
+  // coverage is measured on content terms only).
+  const STOP = new Set(['the','a','an','and','or','of','to','in','on','for','with','from','as','is','are','was','were','be','been','am','it','its','this','that','these','those']);
+  const contentTerms = query.terms.filter((t) => t && !STOP.has(t));
+  const useTerms = contentTerms.length > 0 ? contentTerms : query.terms;
+  const hayTokens = normContent.split(' ').filter(Boolean);
+  let cursor = 0;
+  let first = -1;
+  let last = -1;
+  let matched = 0;
+  for (const q of useTerms) {
+    let found = -1;
+    for (let i = cursor; i < hayTokens.length; i++) {
+      if (hayTokens[i].includes(q) || q.includes(hayTokens[i])) { found = i; break; }
+    }
+    if (found === -1) continue;
+    if (first === -1) first = found;
+    last = found;
+    cursor = found + 1;
+    matched += 1;
+  }
+  if (matched === 0) {
+    // Title fallback: any single title term still matches (keeps file-title search usable).
+    const titleHit = query.terms.some((t) => normStem.includes(t) || normPath.includes(t));
+    if (titleHit && useTerms.length <= 2) return { score: 500, matchedField: 'name', sentence: false };
+    return null;
+  }
+  const coverage = matched / useTerms.length;
+  if (useTerms.length >= 3 && (matched < 2 || coverage < 0.6)) {
+    // Sentence query but only one scattered word matched — filter (fixes OR habit).
+    const titleOrdered = query.terms.every((t) => normStem.includes(t));
+    if (!titleOrdered) return null;
+  }
+  if (useTerms.length === 2 && matched < 2) return null;
+  const span = first === -1 ? hayTokens.length : last - first + 1;
+  if (query.terms.length >= 3 && span > 12 && coverage < 1) return null;
+  const spanBonus = span <= 6 ? 500 : span <= 10 ? 250 : 80;
+  // Also reward title term hits.
+  const titleBonus = query.terms.some((t) => normStem.includes(t)) ? 300 : 0;
+  const strongest = titleBonus > 0 && normContent ? 'both' : (titleBonus > 0 ? 'name' : 'content');
+  return { score: 700 + spanBonus + coverage * 200 + titleBonus, matchedField: strongest, sentence: true };
+}

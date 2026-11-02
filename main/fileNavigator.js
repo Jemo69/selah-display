@@ -13,6 +13,7 @@ import {
   parseFileNavigatorQuery,
   prepareNavigatorSearchRecord,
   scoreNavigatorSearchRecord,
+  scoreNavigatorSearchRecordExperimental,
 } from '../shared/fileNavigatorSearch.js';
 import { createNavigatorTokenIndex } from '../shared/navigatorTokenIndex.js';
 import { validateNavigatorSaveName } from '../shared/fileNavigatorSave.js';
@@ -1079,7 +1080,7 @@ export async function rebuildFileNavigatorIndex() {
   return getFileNavigatorState();
 }
 
-export async function searchFileNavigator({ query = '', fileTypes = [], limit = 80, searchContent = true } = {}) {
+export async function searchFileNavigator({ query = '', fileTypes = [], limit = 80, searchContent = true, experimental = false } = {}) {
   await ensureInitialized();
   const parsed = parseFileNavigatorQuery(query);
   parsed.searchContent = searchContent !== false;
@@ -1102,12 +1103,13 @@ export async function searchFileNavigator({ query = '', fileTypes = [], limit = 
     }
   } else {
     // 1. Fast candidate lookup via inverted token index
+    const scoreFn = experimental === true ? scoreNavigatorSearchRecordExperimental : scoreNavigatorSearchRecord;
     const candidateKeys = navigatorTokenIndex.findCandidateKeys(parsed.terms);
     if (candidateKeys && candidateKeys.size > 0) {
       for (const key of candidateKeys) {
         const record = records.get(key);
         if (!record) continue;
-        const match = scoreNavigatorSearchRecord(record, parsed);
+        const match = scoreFn(record, parsed);
         if (!match) continue;
         scored.push({ record, ...match });
       }
@@ -1116,7 +1118,7 @@ export async function searchFileNavigator({ query = '', fileTypes = [], limit = 
     // 2. R1 Fallback: if candidates were empty or scored 0 results (typo query, fuzzy, edit-distance)
     if (scored.length === 0) {
       for (const record of records.values()) {
-        const match = scoreNavigatorSearchRecord(record, parsed);
+        const match = scoreFn(record, parsed);
         if (!match) continue;
         scored.push({ record, ...match });
       }
