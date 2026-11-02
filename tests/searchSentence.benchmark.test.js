@@ -393,3 +393,54 @@ describe('Ambiguity policy (literal beats fuzzy, fuzzy stays visible)', () => {
     expect(results.some((r) => r.reference === 'John 3:16')).toBe(true);
   });
 });
+
+describe('Book scoping (no more function-word hijack)', () => {
+  const canon = () => ({
+    id: 'c', name: 'C',
+    books: [
+      { number: 22, name: 'Song of Solomon', abbreviation: 'Song', chapters: [{ number: 1, verses: [{ number: 1, text: 'my beloved is fair for love is strong as death session one of love and desire' }] }] },
+      { number: 40, name: 'Matthew', abbreviation: 'Matt', chapters: [{ number: 1, verses: [{ number: 1, text: 'The book of the generation of Jesus Christ the son of David' }] }] },
+      { number: 43, name: 'John', abbreviation: 'John', chapters: [{ number: 3, verses: [{ number: 16, text: 'For God so loved the world that he gave his only begotten Son that whosoever believeth in him should not perish but have everlasting life' }] }] },
+      { number: 46, name: '1 Corinthians', abbreviation: '1 Cor', chapters: [{ number: 1, verses: [{ number: 1, text: 'Paul called to be an apostle of Jesus Christ' }] }] },
+    ],
+  });
+
+  const withIndex = (bible) => {
+    const index = {};
+    const norm = (s) => String(s || '').toLowerCase().replace(/'s\b/g, '').replace(/[^a-z0-9]/g, '');
+    for (const book of bible.books) {
+      for (const chapter of book.chapters) {
+        for (const verse of chapter.verses) {
+          const seen = new Set();
+          for (const word of String(verse.text || '').toLowerCase().split(/\s+/)) {
+            const n = norm(word);
+            if (!n || n.length < 3 || seen.has(n)) continue;
+            seen.add(n);
+            (index[n] = index[n] || []).push({ b: book.number, c: chapter.number, v: verse.number });
+          }
+        }
+      }
+    }
+    return { ...bible, searchIndex: index };
+  };
+
+  it('"so" mid-sentence does NOT scope to Song of Solomon', () => {
+    const bible = withIndex(canon());
+    const results = searchBibleExperimental(bible, 'for God so loved the world', {}, 10);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].reference).toBe('John 3:16');
+    expect(results.some((r) => r.book === 22)).toBe(false);
+  });
+
+  it('leading exact book name still scopes ("John love" stays in John)', () => {
+    const bible = withIndex(canon());
+    const results = searchBibleExperimental(bible, 'John love', {}, 10);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results.every((r) => r.book === 43)).toBe(true);
+  });
+
+  it('bare book name alone is not a sentence search', () => {
+    const bible = withIndex(canon());
+    expect(searchBibleExperimental(bible, 'John', {}, 10)).toEqual([]);
+  });
+});

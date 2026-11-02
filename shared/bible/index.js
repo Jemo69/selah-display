@@ -1,5 +1,5 @@
 import { detectBibleFormat } from './xmlUtils.js';
-import { normalizeSentenceText, sentenceContentTokens, scoreSentenceVerse } from './sentenceSearch.js';
+import { normalizeSentenceText, sentenceContentTokens, scoreSentenceVerse, matchLeadingBook } from './sentenceSearch.js';
 import { parseZefaniaBible } from './zefaniaBible.js';
 import { parseOsisBible } from './osisBible.js';
 import { parseBebliaBible } from './bebliaBible.js';
@@ -1033,26 +1033,28 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
     if (results.length > 0) return results.slice(0, maxResults);
   }
 
-  // 2. Sentence path.
-  const combinedQuery = parseCombinedQuery(rawQuery, currentBible.books);
-  const searchTerm = combinedQuery.book ? combinedQuery.textTerm : rawQuery;
+  // 2. Sentence path. Book scope is leading-position + EXACT-only
+  // (matchLeadingBook): the shared parseCombinedQuery() matches books
+  // anywhere via prefix/substring, so "so"->Song, "in"->Corinthians,
+  // "a"->Amos hijacked every sentence containing a function word and
+  // scoped the search to one wrong book. References never reach here.
+  const leading = matchLeadingBook(currentBible.books, rawQuery);
+  const searchTerm = leading && leading.rest ? leading.rest : rawQuery;
   if (!searchTerm || searchTerm.trim().length < 2) return [];
 
   const queryNorm = normalizeSentenceText(searchTerm);
   const queryContent = sentenceContentTokens(searchTerm);
   if (queryContent.length === 0) return [];
 
-  const bookFilterNumber = combinedQuery.book
-    ? findBookInArray(currentBible.books, combinedQuery.book.name)?.number ?? null
-    : null;
+  const bookFilterNumber = leading?.book?.number ?? null;
 
   let results = [];
   for (const bible of biblesToSearch) {
     const isCurrent = bible.id === currentBible.id;
     const isDefault = bible.id === defaultBibleId;
     const priorityBoost = (isDefault ? 100 : 0) + (isCurrent ? 50 : 0);
-    const perBibleFilter = combinedQuery.book
-      ? findBookInArray(bible.books, combinedQuery.book.name)?.number ?? null
+    const perBibleFilter = leading?.book
+      ? findBookInArray(bible.books, leading.book.name)?.number ?? null
       : null;
 
     const perBibleCap = searchAll && biblesToSearch.length > 1
@@ -1060,16 +1062,24 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
       : maxResults * 2;
 
     if (bible.searchIndex) {
-      // Fast candidate retrieval: intersect exact+plural postings only.
-      // No Object.keys prefix scan (the slow part of the old path).
-      const unions = queryContent.map((term) => {
+      // Fast candidate retrieval with FULL recall: posting sets are uncapped
+      // (set construction is ~1ms; only the scored pool is bounded), terms
+      // processed rarest-first so a huge early-canon list can never crowd
+      // out the sentence. Capping per-term lists demoted real matches out
+      // of contention on full 31k-verse corpora — a typo query recalled
+      // nothing past Genesis. No Object.keys prefix scan anywhere.
+      const termSets = queryContent.map((term) => {
         const set = new Set();
-        for (const { rec } of experimentalTieredPostingsExact(bible.searchIndex, term, 800)) {
-          if (perBibleFilter != null && rec.b !== perBibleFilter) continue;
-          set.add(`${rec.b}-${rec.c}-${rec.v}`);
+        for (const variant of experimentalTermVariants(term)) {
+          for (const rec of bible.searchIndex[variant] || []) {
+            if (perBibleFilter != null && rec.b !== perBibleFilter) continue;
+            set.add(`${rec.b}-${rec.c}-${rec.v}`);
+          }
         }
-        return set;
+        return { term, set };
       });
+      termSets.sort((a, b) => a.set.size - b.set.size);
+      const unions = termSets.map((t) => t.set);
       let candidateKeys = null;
       if (queryContent.length === 1) {
         candidateKeys = [...(unions[0] || [])];
@@ -1118,7 +1128,10 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
         return { book, chapter, verse };
       };
 
-      for (const key of candidateKeys.slice(0, perBibleCap * 4)) {
+      // Scoring pool stays bounded for keystroke latency; the multi-term
+      // pool is wider because hit-ordering already put the best first.
+      const poolCap = queryContent.length === 1 ? perBibleCap * 4 : perBibleCap * 10;
+      for (const key of candidateKeys.slice(0, poolCap)) {
         const [b, c, v] = key.split('-').map(Number);
         if (perBibleFilter != null && b !== perBibleFilter) continue;
         if (bookFilterNumber != null && perBibleFilter == null && b !== bookFilterNumber) continue;

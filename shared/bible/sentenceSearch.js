@@ -104,6 +104,50 @@ export function sentenceTokensMatch(queryTok, verseTok) {
  * Score one verse against a sentence query.
  * Returns null when the verse fails the sentence gate (single-word OR hit).
  */
+function normalizeBookToken(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s/g, '')
+    .replace(/\./g, '');
+}
+
+/**
+ * Leading-position, EXACT-only book scope for sentence queries.
+ *
+ * The shared parseCombinedQuery() matches books anywhere in the query via
+ * prefix/substring ("so"->Song, "in"->Corinthians, "a"->Amos), which
+ * hijacks every sentence containing a function word and scopes the whole
+ * search to one wrong book. References ("John 3:16", "isa 44 5") never
+ * reach here — they resolve upstream. So a sentence query is only
+ * book-scoped when it OPENS with an exact book name/abbreviation
+ * ("John love", "Psalm shepherd", "1 Jn grace"). Returns
+ * { book, rest } or null.
+ */
+export function matchLeadingBook(books, query) {
+  if (!Array.isArray(books) || books.length === 0) return null;
+  const tokens = String(query || '').trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return null;
+  const exact = new Map();
+  for (const book of books) {
+    if (!book) continue;
+    const name = normalizeBookToken(book.name);
+    if (name) exact.set(name, book);
+    const abbr = normalizeBookToken(book.abbreviation || '');
+    if (abbr) exact.set(abbr, book);
+  }
+  for (let n = Math.min(3, tokens.length); n >= 1; n--) {
+    const candidate = normalizeBookToken(tokens.slice(0, n).join(' '));
+    if (!candidate) continue;
+    const book = exact.get(candidate);
+    if (book) {
+      return { book, rest: tokens.slice(n).join(' ') };
+    }
+  }
+  return null;
+}
+
 export function scoreSentenceVerse(queryNorm, queryContent, verseText) {
   const verseNorm = normalizeSentenceText(verseText);
   if (!verseNorm || !queryNorm) return null;
