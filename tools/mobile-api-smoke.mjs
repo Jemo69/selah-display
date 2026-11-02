@@ -112,11 +112,12 @@ async function main() {
     check('light setlist is metadata only', (light.body.setlist || []).every((e) => !('content' in e)));
     check('light carries fingerprint', typeof light.body.fingerprint === 'string' && light.body.fingerprint.length > 0);
     const fp = light.body.fingerprint;
+    let fp2 = fp;
 
     // 8. Delta sync: full on miss, ~100B on hit.
     const miss = await jfetch(`${BASE}/api/v1/sync`, { headers: H });
     check('sync without since -> changed', miss.body?.changed === true && miss.body?.state);
-    const hit = await jfetch(`${BASE}/api/v1/sync?since=${encodeURIComponent(fp)}`, { headers: H });
+    const hit = await jfetch(`${BASE}/api/v1/sync?since=${encodeURIComponent(fp2)}`, { headers: H });
     const hitBytes = JSON.stringify(hit.body).length;
     check('sync with same fingerprint -> unchanged + tiny', hit.body?.changed === false && hitBytes < 300, `${hitBytes}B`);
 
@@ -130,6 +131,25 @@ async function main() {
     // 10. Bible graceful path (no bibles shipped in this env).
     const bq = await jfetch(`${BASE}/api/v1/bible/search?q=${encodeURIComponent('for God so love the world')}&experimental=true`, { headers: H });
     check('bible search degrades gracefully without bibles', bq.status === 200 && Array.isArray(bq.body?.results), JSON.stringify(bq.body).slice(0, 120));
+
+    // 10b. Phone's exact control calls: show-state, output toggle, ticker, bible ref.
+    const ss = await jfetch(`${BASE}/api/v1/output/show-state`, { method: 'POST', headers: H, body: JSON.stringify({ state: 'LOGO' }) });
+    check('show-state LOGO via REST (dock buttons)', ss.status === 200 && ss.body?.showState === 'LOGO', ss.body?.showState);
+    const tog = await jfetch(`${BASE}/api/v1/output/toggle`, { method: 'POST', headers: H, body: JSON.stringify({}) });
+    check('output toggle via REST (blackout button)', tog.status === 200 && typeof tog.body?.isOutputOn === 'boolean');
+    const tick = await jfetch(`${BASE}/api/v1/ticker`, { method: 'POST', headers: H, body: JSON.stringify({ text: 'Welcome — dogfood' }) });
+    check('ticker add via REST (composer)', tick.status === 200 && tick.body?.item?.id, JSON.stringify(tick.body).slice(0, 80));
+    const tshow = await jfetch(`${BASE}/api/v1/ticker/show`, { method: 'POST', headers: H, body: JSON.stringify({ id: tick.body.item.id }) });
+    check('ticker show via REST', tshow.status === 200);
+    const tclear = await jfetch(`${BASE}/api/v1/ticker/clear`, { method: 'POST', headers: H });
+    check('ticker clear via REST', tclear.status === 200);
+    const bible = await jfetch(`${BASE}/api/v1/bible/reference`, { method: 'POST', headers: H, body: JSON.stringify({ reference: 'John 3:16' }) });
+    check('bible reference load via REST (LOAD button)', bible.status === 200 && bible.body?.fileName === 'John 3:16', JSON.stringify(bible.body).slice(0, 100));
+    const back = await jfetch(`${BASE}/api/v1/output/show-state`, { method: 'POST', headers: H, body: JSON.stringify({ state: 'LIVE' }) });
+    check('show-state back to LIVE', back.body?.showState === 'LIVE');
+    // Re-baseline: the control calls above legitimately moved the state.
+    const light2 = await jfetch(`${BASE}/api/v1/state/light`, { headers: H });
+    fp2 = light2.body?.fingerprint;
 
     // 11. Socket as the phone (socket.io, auth + light + sync + schedule).
     const { io } = await import('socket.io-client');
@@ -151,7 +171,7 @@ async function main() {
     });
     check('requestLightState -> currentState light:true', cur?.light === true, `keys=${Object.keys(cur || {}).length}`);
     const syncP = once('syncState');
-    sock.emit('requestSync', { since: fp });
+    sock.emit('requestSync', { since: fp2 });
     const synced = await syncP;
     check('requestSync same fp -> unchanged', synced?.changed === false, JSON.stringify(synced).slice(0, 100));
 
