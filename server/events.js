@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { processRawTextToLines, parseLrcContent, deriveSectionsFromProcessedLines } from '../shared/lyricsParsing.js';
 import {
   normalizeShowState,
@@ -2026,7 +2027,13 @@ export function buildCurrentState(clientInfo) {
 }
 
 export function getStateFingerprint() {
-  try { return computeStateFingerprint(); } catch { return String(Date.now()); }
+  // Fixed 32-hex digest: the raw material grows with setlist size (full
+  // settings JSON + every file id), which would bloat each ~100B
+  // no-change sync reply and every `since=` query string on slow links.
+  // Consumers only ever compare equality, so a truncated SHA-256 is exact.
+  try {
+    return createHash('sha256').update(computeStateFingerprint(), 'utf8').digest('hex').slice(0, 32);
+  } catch { return String(Date.now()); }
 }
 
 /**

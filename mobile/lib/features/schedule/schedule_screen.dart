@@ -24,14 +24,16 @@ class ScheduleScreen extends ConsumerStatefulWidget {
 class _ScheduleScreenState extends ConsumerState<ScheduleScreen> {
   Timer? _countdown;
   bool _busy = false;
+  String? _loadError;
 
   @override
   void initState() {
     super.initState();
     Future.microtask(() async {
-      try {
-        await ref.read(scheduleProvider.notifier).refresh();
-      } catch (_) {}
+      // Best-effort warm load; failures surface inline (never silent).
+      final err = await ref.read(scheduleProvider.notifier).refresh();
+      if (!mounted) return;
+      setState(() => _loadError = err);
     });
     _countdown = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
@@ -90,7 +92,9 @@ class _ScheduleScreenState extends ConsumerState<ScheduleScreen> {
                           size: 64, color: AppTheme.textSecondary),
                       const SizedBox(height: 12),
                       Text(
-                        'No schedule loaded.\nLoad one on the desktop to drive it from here.',
+                        _loadError != null
+                            ? 'Could not load the schedule.\n$_loadError'
+                            : 'No schedule loaded.\nLoad one on the desktop to drive it from here.',
                         textAlign: TextAlign.center,
                         style: TextStyle(color: AppTheme.textSecondary),
                       ),

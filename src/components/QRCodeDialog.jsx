@@ -13,6 +13,7 @@ const animationDuration = 220;
 const QRCodeDialog = ({ isOpen, onClose, darkMode }) => {
   logger.info('QRCodeDialog mounted', { isOpen });
   const [localIP, setLocalIP] = useState('');
+  const [allIPs, setAllIPs] = useState({ lan: [], tailnet: [], all: [] });
   const [qrCodeDataURL, setQRCodeDataURL] = useState('');
   const [isGenerating, setIsGenerating] = useState(true);
   const [visible, setVisible] = useState(false);

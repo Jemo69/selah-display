@@ -220,17 +220,23 @@ class ServerApi {
         ),
       ).then((_) {});
 
-  Future<void> setlistAddText(String name, String content) => _send(
-        () => http.post(
-          _uri('/setlist/add'),
-          headers: _headers,
-          body: jsonEncode({
-            'name': '$name.txt',
-            'content': content,
-            'fileType': 'txt',
-          }),
-        ),
-      ).then((_) {});
+  Future<void> setlistAddText(String name, String content) {
+    // Fail fast without burning a slow-link upload: the server caps at 2MB.
+    if (utf8.encode(content).length > 2 * 1024 * 1024) {
+      throw ApiException('Song is too large (max 2MB)');
+    }
+    return _send(
+      () => http.post(
+        _uri('/setlist/add'),
+        headers: _headers,
+        body: jsonEncode({
+          'name': '$name.txt',
+          'content': content,
+          'fileType': 'txt',
+        }),
+      ),
+    ).then((_) {});
+  }
 
   Future<void> setlistReorder(List<String> orderedIds) => _send(
         () => http.post(

@@ -176,7 +176,9 @@ const corsMiddleware = (req, res, next) => {
 
 // Middleware
 app.use(corsMiddleware);
-app.use(express.json({ limit: '1mb' }));
+// 3MB: route-level checks (setlist/files cap 2MB) produce clean 400s below
+// this ceiling; anything larger gets a clear 413 from the handler below.
+app.use(express.json({ limit: '3mb' }));
 app.use('/api/auth', tokenRateLimit);
 
 const localhostOnly = (req, res, next) => {
@@ -825,6 +827,19 @@ function serveFrontend() {
     res.sendFile(path.join(frontendPath, 'index.html'));
   });
 }
+
+// Body-parser errors become clear client errors (not opaque 500s) so
+// phones can surface them: oversize -> 413, malformed JSON -> 400.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  if (err?.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Request too large (max 3MB). Split the file and retry.' });
+  }
+  if (err instanceof SyntaxError && 'body' in err) {
+    return res.status(400).json({ error: 'Invalid JSON request body' });
+  }
+  return next(err);
+});
 
 // Error handling middleware
 app.use((err, req, res, next) => {
