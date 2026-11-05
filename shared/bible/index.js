@@ -194,48 +194,6 @@ export function getBiblePairIndex(bible) {
   return pairs;
 }
 
-// Phrase-first candidate lookup: intersect adjacent pair postings,
-// rarest-pair-first (the same commutative-intersection trick as the lyric
-// findPhraseCandidateKeys). Returns null when fewer than 2 tokens (no pair
-// to intersect), else an array of packed keys (possibly empty — the caller
-// falls back to the unigram path so paraphrases/typos never lose recall).
-export function findBiblePairCandidateKeys(bible, queryText) {
-  const toks = bibleRawTokens(queryText);
-  if (toks.length < 2) return null;
-  const pairs = getBiblePairIndex(bible);
-  if (!pairs) return null;
-  const seen = new Set();
-  const pairList = [];
-  for (let i = 0; i + 1 < toks.length; i++) {
-    const key = `${toks[i]} ${toks[i + 1]}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      pairList.push(key);
-    }
-  }
-  pairList.sort((a, b) => (pairs.get(a)?.size ?? 0) - (pairs.get(b)?.size ?? 0));
-  let candidate = null;
-  for (const key of pairList) {
-    const postings = pairs.get(key);
-    if (!postings || postings.size === 0) return [];
-    if (candidate === null) {
-      candidate = new Set(postings);
-    } else if (postings.size < candidate.size) {
-      const next = new Set();
-      for (const packed of postings) {
-        if (candidate.has(packed)) next.add(packed);
-      }
-      candidate = next;
-    } else {
-      for (const packed of candidate) {
-        if (!postings.has(packed)) candidate.delete(packed);
-      }
-    }
-    if (candidate.size === 0) break;
-  }
-  return candidate ? [...candidate] : [];
-}
-
 // Fuzzy pair lookup: exact + morphological-variant + 1-edit-neighbor pairs
 // per position, intersected rarest-first. Preserves the ambiguity policy
 // (literal tops, fuzzy stays visible) that exact-only pair pruning would
