@@ -7,7 +7,7 @@ import { formatForDisplay } from '@tanstack/hotkeys';
 import useRccgTphbStore from '../context/RccgTphbStore';
 import useToast from '../hooks/useToast';
 import useHttpActionRunner from '../hooks/useHttpActionRunner';
-import { useOutputAutomationState, useOutputRegistry, usePerformanceSettings, useHttpActionButtonsState, useFHintEnabled, useFreeNotesEnabled, useLyricContentSearchEnabled, useBibleVerseEditorEnabled, useSchedulerEnabled, useSentenceSearchExperimental } from '../hooks/useStoreSelectors';
+import { useOutputAutomationState, useOutputRegistry, usePerformanceSettings, useHttpActionButtonsState, useFHintEnabled, useFreeNotesEnabled, useBibleVerseEditorEnabled, useSchedulerEnabled, useSentenceSearchExperimental } from '../hooks/useStoreSelectors';
 import { buildOutputAutomationTemplate, runOutputAutomationAction } from '../utils/outputAutomation';
 import { buildHttpExample, inspectHttpActionConfig } from '../utils/httpAction';
 import { normalizeHttpVariables } from '../utils/httpActionVariables';
@@ -741,6 +741,8 @@ const LyricsSection = ({ darkMode }) => {
   const setEnableLyricSplitting = useLyricsStore((s) => s.setEnableLyricSplitting);
   const showSelectedLineHighlight = useLyricsStore((s) => s.showSelectedLineHighlight ?? true);
   const setShowSelectedLineHighlight = useLyricsStore((s) => s.setShowSelectedLineHighlight);
+  const lyricContentSearchEnabled = useLyricsStore((s) => s.lyricContentSearchEnabled ?? true);
+  const setLyricContentSearchEnabled = useLyricsStore((s) => s.setLyricContentSearchEnabled);
 
   const toggleAutoGroupLines = () => setAutoGroupLines(!autoGroupLines);
   const toggleLyricSplitting = () => setEnableLyricSplitting(!enableLyricSplitting);
@@ -787,6 +789,17 @@ const LyricsSection = ({ darkMode }) => {
           <p className={`text-xs mt-1 leading-relaxed ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Keep the selected line visible in the control panel without changing what is sent to displays.</p>
         </div>
         <Switch checked={showSelectedLineHighlight} onCheckedChange={setShowSelectedLineHighlight} />
+      </button>
+      <button
+        type="button"
+        onClick={() => setLyricContentSearchEnabled(!lyricContentSearchEnabled)}
+        className={`w-full text-left flex items-center justify-between gap-4 rounded-xl border p-4 transition-all ${darkMode ? 'bg-[#282946]/40 border-[#282946] text-gray-100' : 'bg-white border-gray-200 text-gray-900'}`}
+      >
+        <div className="min-w-0 flex-1">
+          <span className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>Full-text lyric search</span>
+          <p className={`text-xs mt-1 leading-relaxed ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>File Navigator searches inside song lyrics as well as titles, with highlighted snippets and LYRIC MATCH badges. Disable to search titles and paths only.</p>
+        </div>
+        <Switch checked={lyricContentSearchEnabled} onCheckedChange={setLyricContentSearchEnabled} aria-label="Toggle Full-Text Lyric Content Search" />
       </button>
     </div>
   );
@@ -1143,7 +1156,6 @@ const ModeTemplatesSection = ({ darkMode }) => {
 
 const ExperimentalSection = ({ darkMode }) => {
   const { enabled: freeNotesEnabled, setEnabled: setFreeNotesEnabled } = useFreeNotesEnabled();
-  const { enabled: lyricSearchEnabled, setEnabled: setLyricSearchEnabled } = useLyricContentSearchEnabled();
   const { enabled: schedulerEnabled, setEnabled: setSchedulerEnabled } = useSchedulerEnabled();
   const { enabled: bibleVerseEditorEnabled, setEnabled: setBibleVerseEditorEnabled } = useBibleVerseEditorEnabled();
   const { enabled: sentenceSearchEnabled, setEnabled: setSentenceSearchEnabled } = useSentenceSearchExperimental();
@@ -1161,17 +1173,6 @@ const ExperimentalSection = ({ darkMode }) => {
       message: checked
         ? 'Free Notes mode, Markdown editor, and templates are now active in the app.'
         : 'Free Notes mode is now hidden from the interface.',
-      variant: checked ? 'success' : 'info'
-    });
-  };
-
-  const handleToggleLyricSearch = (checked) => {
-    setLyricSearchEnabled(checked);
-    showToast({
-      title: checked ? 'Lyric Content Search enabled' : 'Lyric Content Search disabled',
-      message: checked
-        ? 'File Navigator will now search inside lyric contents with highlighted snippets.'
-        : 'File Navigator will only search file titles and paths.',
       variant: checked ? 'success' : 'info'
     });
   };
@@ -1266,56 +1267,6 @@ const ExperimentalSection = ({ darkMode }) => {
         </div>
       </div>
 
-      {/* Full-Text Lyric Content Search */}
-      <div className={`rounded-xl border p-5 space-y-4 transition-all ${darkMode ? 'border-gray-800 bg-gray-900/50' : 'border-gray-200 bg-white'}`}>
-        <div className="flex items-start justify-between gap-4">
-          <div className="space-y-1.5 flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className={`text-sm font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                Full-Text Lyric Content Search
-              </span>
-              <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
-                darkMode
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                  : 'bg-amber-100 text-amber-800 border border-amber-300'
-              }`}>
-                Experimental
-              </span>
-              <span className={`text-[10px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded ${
-                lyricSearchEnabled
-                  ? (darkMode ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' : 'bg-emerald-100 text-emerald-800 border border-emerald-200')
-                  : (darkMode ? 'bg-gray-800 text-gray-400 border border-gray-700' : 'bg-gray-100 text-gray-500 border border-gray-200')
-              }`}>
-                {lyricSearchEnabled ? 'ON' : 'OFF'}
-              </span>
-            </div>
-            <p className={`text-xs leading-relaxed ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-              Search inside song lyrics files (.txt, .lrc) in addition to file titles. Powered by an in-memory inverted token index with sub-millisecond candidate pruning, highlighted snippet previews, and badge indicators.
-            </p>
-          </div>
-          <Switch checked={lyricSearchEnabled} onCheckedChange={handleToggleLyricSearch} aria-label="Toggle Full-Text Lyric Content Search" />
-        </div>
-
-        {lyricSearchEnabled ? (
-          <div className={`rounded-lg border p-3 text-xs leading-relaxed flex items-start gap-2.5 ${
-            darkMode ? 'bg-amber-500/10 border-amber-500/30 text-amber-200' : 'bg-amber-50 border-amber-200 text-amber-800'
-          }`}>
-            <Sparkles className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" />
-            <div>
-              <span className="font-semibold">Feature Active:</span> File Navigator searches both song titles and lyric contents. Matching lyrics are highlighted with snippets and marked with <span className="font-semibold">LYRIC MATCH</span> or <span className="font-semibold">TITLE + LYRIC</span> badges.
-            </div>
-          </div>
-        ) : (
-          <div className={`rounded-lg border p-3 text-xs leading-relaxed flex items-start gap-2.5 ${
-            darkMode ? 'bg-gray-950/60 border-gray-800 text-gray-400' : 'bg-gray-50 border-gray-200 text-gray-600'
-          }`}>
-            <FileText className="w-4 h-4 shrink-0 mt-0.5 text-gray-400" />
-            <div>
-              <span className="font-semibold">Feature Inactive:</span> File Navigator only searches file titles and directory paths. Content search and snippet generation are disabled.
-            </div>
-          </div>
-        )}
-      </div>
 
       {/* Bible Verse & Passage Editor */}
       <div className={`rounded-xl border p-5 space-y-4 transition-all ${darkMode ? 'border-gray-800 bg-gray-900/50' : 'border-gray-200 bg-white'}`}>
