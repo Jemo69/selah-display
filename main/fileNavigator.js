@@ -1102,23 +1102,50 @@ export async function searchFileNavigator({ query = '', fileTypes = [], limit = 
       scored.push({ record, score: 0, matchedField: null });
     }
   } else {
-    // 1. Fast candidate lookup via inverted token index
-    const scoreFn = experimental === true ? scoreNavigatorSearchRecordExperimental : scoreNavigatorSearchRecord;
-    const candidateKeys = navigatorTokenIndex.findCandidateKeys(parsed.terms);
-    if (candidateKeys && candidateKeys.size > 0) {
-      for (const key of candidateKeys) {
+    // 1. Fast candidate lookup via inverted token index (rarest-first).
+    // 2. Two-tier scoring: cheap pass (exact/prefix/includes + content
+    //    phrase fast-path, no subsequence/edit-distance) first — snippet and
+    //    keystroke queries resolve here. Fuzzy pass only when cheap finds
+    //    nothing (typo queries). Full-index fallback only when candidates
+    //    are empty or both tiers miss, preserving R1 typo recall.
+    // Phrase-first pruning for snippet queries (>=3 terms, default scorer):
+    // pair-posting intersection collapses ~21 unigram candidates to just
+    // the phrase holders. Falls back to unigram intersection when a pair
+    // is missing (typos, stopword-only gaps) — same recall, less scoring.
+    let candidateKeys = null;
+    if (experimental !== true && parsed.terms.length >= 3) {
+      candidateKeys = navigatorTokenIndex.findPhraseCandidateKeys(parsed.terms);
+    }
+    if (!candidateKeys || candidateKeys.size === 0) {
+      candidateKeys = navigatorTokenIndex.findCandidateKeys(parsed.terms);
+    }
+    const scoreCandidates = (keys, fuzzy) => {
+      const out = [];
+      for (const key of keys) {
         const record = records.get(key);
         if (!record) continue;
-        const match = scoreFn(record, parsed);
+        const match = experimental === true
+          ? scoreNavigatorSearchRecordExperimental(record, parsed)
+          : scoreNavigatorSearchRecord(record, parsed, { fuzzy });
         if (!match) continue;
-        scored.push({ record, ...match });
+        out.push({ record, ...match });
+      }
+      return out;
+    };
+    if (candidateKeys && candidateKeys.size > 0) {
+      scored.push(...scoreCandidates(candidateKeys, false));
+      // Fuzzy tier only on cheap miss (typo queries like "amzing").
+      if (scored.length === 0) {
+        scored.push(...scoreCandidates(candidateKeys, true));
       }
     }
 
-    // 2. R1 Fallback: if candidates were empty or scored 0 results (typo query, fuzzy, edit-distance)
+    // 3. R1 Fallback: if candidates were empty or scored 0 results (typo query, fuzzy, edit-distance)
     if (scored.length === 0) {
       for (const record of records.values()) {
-        const match = scoreFn(record, parsed);
+        const match = experimental === true
+          ? scoreNavigatorSearchRecordExperimental(record, parsed)
+          : scoreNavigatorSearchRecord(record, parsed);
         if (!match) continue;
         scored.push({ record, ...match });
       }
