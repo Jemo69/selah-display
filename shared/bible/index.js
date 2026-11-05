@@ -140,6 +140,211 @@ export function buildSearchIndex(bible) {
   return index;
 }
 
+// --- Word-pair index (lyric hill-climb port) ---
+// Adjacent-token postings power the quote phrase-first path: a 4-word quote
+// meets 3 pair lists (each near the true holder count) instead of 4 unigram
+// lists (stopwords: thousands of verses). Same tokenization as
+// buildSearchIndex (normalizeSearchToken, min length 3, order preserved,
+// stopwords kept so query pairs align with verse pairs).
+// Lazy + WeakMap-cached: never persisted (no IndexedDB bloat, no migration),
+// built per bible object on first quote query. Old persisted bibles without
+// any pair data simply build it on demand.
+const biblePairIndexCache = new WeakMap();
+
+export function bibleRawTokens(text) {
+  const out = [];
+  for (const word of String(text || '').toLowerCase().split(/\s+/)) {
+    const token = normalizeSearchToken(word);
+    if (token && token.length >= 3) out.push(token);
+  }
+  return out;
+}
+
+function buildBiblePairIndex(bible) {
+  const pairs = new Map(); // "tok1 tok2" -> Set<packed b*1e6+c*1e3+v>
+  for (const book of bible.books || []) {
+    for (const chapter of book.chapters || []) {
+      for (const verse of chapter.verses || []) {
+        const toks = bibleRawTokens(verse.text);
+        const seen = new Set();
+        for (let i = 0; i + 1 < toks.length; i++) {
+          const key = `${toks[i]} ${toks[i + 1]}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          let set = pairs.get(key);
+          if (!set) {
+            set = new Set();
+            pairs.set(key, set);
+          }
+          set.add(book.number * 1000000 + chapter.number * 1000 + verse.number);
+        }
+      }
+    }
+  }
+  return pairs;
+}
+
+export function getBiblePairIndex(bible) {
+  if (!bible) return null;
+  let pairs = biblePairIndexCache.get(bible);
+  if (!pairs) {
+    pairs = buildBiblePairIndex(bible);
+    biblePairIndexCache.set(bible, pairs);
+  }
+  return pairs;
+}
+
+// Phrase-first candidate lookup: intersect adjacent pair postings,
+// rarest-pair-first (the same commutative-intersection trick as the lyric
+// findPhraseCandidateKeys). Returns null when fewer than 2 tokens (no pair
+// to intersect), else an array of packed keys (possibly empty — the caller
+// falls back to the unigram path so paraphrases/typos never lose recall).
+export function findBiblePairCandidateKeys(bible, queryText) {
+  const toks = bibleRawTokens(queryText);
+  if (toks.length < 2) return null;
+  const pairs = getBiblePairIndex(bible);
+  if (!pairs) return null;
+  const seen = new Set();
+  const pairList = [];
+  for (let i = 0; i + 1 < toks.length; i++) {
+    const key = `${toks[i]} ${toks[i + 1]}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      pairList.push(key);
+    }
+  }
+  pairList.sort((a, b) => (pairs.get(a)?.size ?? 0) - (pairs.get(b)?.size ?? 0));
+  let candidate = null;
+  for (const key of pairList) {
+    const postings = pairs.get(key);
+    if (!postings || postings.size === 0) return [];
+    if (candidate === null) {
+      candidate = new Set(postings);
+    } else if (postings.size < candidate.size) {
+      const next = new Set();
+      for (const packed of postings) {
+        if (candidate.has(packed)) next.add(packed);
+      }
+      candidate = next;
+    } else {
+      for (const packed of candidate) {
+        if (!postings.has(packed)) candidate.delete(packed);
+      }
+    }
+    if (candidate.size === 0) break;
+  }
+  return candidate ? [...candidate] : [];
+}
+
+// Fuzzy pair lookup: exact + morphological-variant + 1-edit-neighbor pairs
+// per position, intersected rarest-first. Preserves the ambiguity policy
+// (literal tops, fuzzy stays visible) that exact-only pair pruning would
+// break: love/loved inflections resolve via variants, word/world typos via
+// 1-edit pairs. Returns null on <2 tokens, oversize positions, or an
+// oversize intersect (the caller falls back to the union path), an empty
+// array when a position kills the phrase (also fall back), else packed keys.
+const BIBLE_PAIR_FAST_MAX = 1000;
+const BIBLE_PAIR_POS_MAX = 3000;
+
+function bibleEditNeighbors(term) {
+  const out = [];
+  if (!term || term.length < 4) return out;
+  for (let i = 0; i < term.length; i++) out.push(term.slice(0, i) + term.slice(i + 1));
+  for (let i = 0; i < term.length; i++) {
+    for (let c = 97; c <= 122; c++) {
+      const ch = String.fromCharCode(c);
+      if (ch === term[i]) continue;
+      out.push(term.slice(0, i) + ch + term.slice(i + 1));
+    }
+  }
+  for (let i = 0; i <= term.length; i++) {
+    for (let c = 97; c <= 122; c++) {
+      out.push(term.slice(0, i) + String.fromCharCode(c) + term.slice(i));
+    }
+  }
+  return out;
+}
+
+export function findBibleFuzzyPairKeys(bible, queryText) {
+  const toks = bibleRawTokens(queryText);
+  if (toks.length < 2) return null;
+  const pairs = getBiblePairIndex(bible);
+  if (!pairs) return null;
+  const positionSets = [];
+  for (let i = 0; i + 1 < toks.length; i++) {
+    const a = toks[i];
+    const b = toks[i + 1];
+    const union = new Set();
+    const seen = new Set();
+    const addPair = (key) => {
+      if (seen.has(key)) return true;
+      seen.add(key);
+      const postings = pairs.get(key);
+      if (!postings) return true;
+      for (const packed of postings) {
+        if (union.size >= BIBLE_PAIR_POS_MAX) return false;
+        union.add(packed);
+      }
+      return true;
+    };
+    const variantsA = [a, ...experimentalTermVariants(a)];
+    const variantsB = [b, ...experimentalTermVariants(b)];
+    let ok = true;
+    for (const va of variantsA) {
+      for (const vb of variantsB) {
+        if (!addPair(`${va} ${vb}`)) { ok = false; break; }
+      }
+      if (!ok) break;
+    }
+    if (ok) {
+      for (const na of bibleEditNeighbors(a)) {
+        if (!addPair(`${na} ${b}`)) { ok = false; break; }
+      }
+    }
+    if (ok) {
+      for (const nb of bibleEditNeighbors(b)) {
+        if (!addPair(`${a} ${nb}`)) { ok = false; break; }
+      }
+    }
+    if (!ok) return null; // position too common — fall back to union path
+    if (union.size === 0) return []; // position kills the phrase — fall back
+    positionSets.push(union);
+  }
+  positionSets.sort((x, y) => x.size - y.size);
+  let candidate = positionSets[0];
+  for (let i = 1; i < positionSets.length; i++) {
+    const s = positionSets[i];
+    if (s.size < candidate.size) {
+      const next = new Set();
+      for (const k of s) {
+        if (candidate.has(k)) next.add(k);
+      }
+      candidate = next;
+    } else {
+      for (const k of candidate) {
+        if (!s.has(k)) candidate.delete(k);
+      }
+    }
+    if (candidate.size === 0) return [];
+  }
+  if (candidate.size > BIBLE_PAIR_FAST_MAX) return null;
+  return [...candidate];
+}
+
+// Sorted vocabulary keys, cached per index object: the default path's
+// prefix lookup binary-searches this instead of scanning Object.keys per
+// term per keystroke (same recall, no per-query vocabulary scan).
+const bibleSortedKeysCache = new WeakMap();
+
+function bibleSortedIndexKeys(index) {
+  let keys = bibleSortedKeysCache.get(index);
+  if (!keys) {
+    keys = Object.keys(index).sort();
+    bibleSortedKeysCache.set(index, keys);
+  }
+  return keys;
+}
+
 export function getBibleVerseText(bible, reference, selectedVerses) {
   if (!bible || !reference) return '';
 
@@ -708,6 +913,10 @@ export function searchBible(currentBible, query, allBibles = {}, maxResults = 50
   const normalizedQuery = normalizeReference(searchTerm.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
   const queryTerms = normalizedQuery.split(/\s+/).map(normalizeSearchToken).filter((w) => w.length > 2);
   if (queryTerms.length === 0) return [];
+  // Phrase probe for the lyric-style phrase-first bonus below: a verse that
+  // contains the whole query phrase outranks verses that merely hold the
+  // same words scattered (the "for God so love the world" case).
+  const searchTermLower = searchTerm.toLowerCase();
 
   // Group: God fast+accurate — indexed lookup helpers (no per-verse
   // toLowerCase over the full corpus; only scored hits touch verse text).
@@ -751,9 +960,22 @@ export function searchBible(currentBible, query, allBibles = {}, maxResults = 50
       }).map((r) => ({ rec: r, tier: 200 })),
     ];
     if (tiered.length < cap) {
-      for (const key of Object.keys(index)) {
+      // Prefix range via binary search over cached sorted keys: same recall
+      // as the old Object.keys scan, but O(log vocab + matches) instead of
+      // O(vocab) per term per keystroke.
+      const keys = bibleSortedIndexKeys(index);
+      let lo = 0;
+      let hi = keys.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (keys[mid] < term) lo = mid + 1;
+        else hi = mid;
+      }
+      for (let i = lo; i < keys.length && tiered.length < cap; i++) {
+        const key = keys[i];
+        if (!key.startsWith(term)) break;
+        if (key.length <= term.length) continue;
         if (key === term || key === `${term}s` || key === term.slice(0, -1)) continue;
-        if (!key.startsWith(term) || key.length <= term.length) continue;
         for (const r of index[key]) {
           const k = `${r.b}-${r.c}-${r.v}`;
           if (seen.has(k)) continue;
@@ -761,7 +983,6 @@ export function searchBible(currentBible, query, allBibles = {}, maxResults = 50
           tiered.push({ rec: r, tier: 50 });
           if (tiered.length >= cap) break;
         }
-        if (tiered.length >= cap) break;
       }
     }
     return tiered;
@@ -794,6 +1015,13 @@ export function searchBible(currentBible, query, allBibles = {}, maxResults = 50
         if (bookFilterNumber != null && perBibleFilter == null && rec.b !== bookFilterNumber) return;
         const found = lookupVerseRecord(bible, rec.b, rec.c, rec.v);
         if (!found) return;
+        // Lyric phrase-first port: the whole-phrase holder dominates any
+        // scattered-word tie. Single-term queries skip it (the probe equals
+        // the term, so it would shift every hit equally).
+        const phraseBonus = queryTerms.length > 1
+          && String(found.verse.text || '').toLowerCase().includes(searchTermLower)
+          ? 1500
+          : 0;
         scored.push({
           book: found.book.number,
           bookName: found.book.name,
@@ -803,7 +1031,7 @@ export function searchBible(currentBible, query, allBibles = {}, maxResults = 50
           reference: `${found.book.name} ${found.chapter.number}:${found.verse.number}`,
           bibleId: bible.id,
           bibleName: bible.name,
-          score: 200 + tier + relevanceBonus(found.verse.text, queryTerms[0]) + priorityBoost
+          score: 200 + tier + phraseBonus + relevanceBonus(found.verse.text, queryTerms[0]) + priorityBoost
         });
       };
 
@@ -1055,12 +1283,80 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
       // provably identical: one shared weight shifts every score equally).
       const totalVerses = bible.books.reduce((t, bk) => t + (bk.chapters?.reduce((c, ch) => c + (ch.verses?.length || 0), 0) || 0), 0);
       const singleTerm = queryContent.length === 1;
-      const termSets = queryContent.map((term) => {
-        const set = new Set();
-        // Returns false ONLY when the single-term cap is hit (stop scanning
-        // entirely). Filtered-out and duplicate records return true so the
-        // scan continues past them — otherwise book-scoped queries would
-        // stop at the first out-of-scope posting and lose recall.
+      // PAIR-FIRST fast path (lyric hill-climb port): adjacent word-pair
+      // postings collapse quote candidates to just the phrase holders before
+      // any union/typo work runs. The fuzzy pair lookup (variants + 1-edit
+      // neighbors per position) keeps the ambiguity policy intact — literal
+      // tops, fuzzy stays visible — while exact quotes resolve here with no
+      // union scoring at all. Misses and oversize sets fall through to the
+      // fuzzy union path below with full recall. Bounded: huge/common pair
+      // sets fall through too.
+      let pairKeys = findBibleFuzzyPairKeys(bible, searchTerm);
+      if (pairKeys && pairKeys.length > 0 && pairKeys.length <= BIBLE_PAIR_FAST_MAX) {
+        // Book-scoped queries: an all-out-of-scope pair pool must fall
+        // through to the union path (which finds scattered in-scope words)
+        // instead of early-returning empty.
+        if (perBibleFilter != null || (bookFilterNumber != null && perBibleFilter == null)) {
+          pairKeys = pairKeys.filter((packed) => {
+            const pb = Math.floor(packed / 1000000);
+            if (perBibleFilter != null && pb !== perBibleFilter) return false;
+            if (bookFilterNumber != null && perBibleFilter == null && pb !== bookFilterNumber) return false;
+            return true;
+          });
+        }
+      }
+      if (pairKeys && pairKeys.length > 0) {
+        const pairWeights = queryContent.map((t) => Math.log(1 + totalVerses / (1 + (bible.searchIndex[t]?.length || 0))));
+        const pairScored = [];
+        for (const packed of pairKeys) {
+          const pb = Math.floor(packed / 1000000);
+          if (perBibleFilter != null && pb !== perBibleFilter) continue;
+          if (bookFilterNumber != null && perBibleFilter == null && pb !== bookFilterNumber) continue;
+          const pc = Math.floor((packed % 1000000) / 1000);
+          const pv = packed % 1000;
+          const pbook = bible.bookMap?.[pb] || bible.books.find((bk) => bk.number === pb);
+          if (!pbook) continue;
+          const pchapter = pbook.chapterMap?.[pc] || pbook.chapters.find((ch) => ch.number === pc);
+          if (!pchapter) continue;
+          const pverse = pchapter.verseMap?.[pv] || pchapter.verses.find((vx) => vx.number === pv);
+          if (!pverse) continue;
+          const ps = scoreSentenceVerse(queryNorm, queryContent, pverse.text || '', pairWeights);
+          if (!ps) continue;
+          pairScored.push({
+            book: pbook.number,
+            bookName: pbook.name,
+            chapter: pchapter.number,
+            verse: pverse.number,
+            text: pverse.text,
+            reference: `${pbook.name} ${pchapter.number}:${pverse.number}`,
+            bibleId: bible.id,
+            bibleName: bible.name,
+            score: ps.score + priorityBoost + (ps.phrase ? 500 : 0),
+            phrase: ps.phrase === true,
+          });
+        }
+        pairScored.sort((x, y) => y.score - x.score);
+        // Early-return ONLY on a literal win: some pooled verse must contain
+        // the whole query contiguously (phrase=true). Otherwise the pair pool
+        // may be holding a fuzzy lookalike while the true literal sits
+        // outside it (e.g. "so love the world that": pool={John 3:16},
+        // literal=1 John 2:15 "Love not the world" — love/world never
+        // adjacent there). Falling through preserves the ambiguity policy.
+        let pairHasPhrase = false;
+        for (const hit of pairScored) {
+          if (hit.phrase) { pairHasPhrase = true; break; }
+        }
+        if (pairHasPhrase) {
+          results.push(...pairScored.slice(0, perBibleCap).map(({ phrase, ...rest }) => rest));
+          continue;
+        }
+        // No literal in the pool — fall through to the union path.
+      }
+      // Phase 1 — cheap pass: exact + morphological variants only (O(1)
+      // lookups each). Mirrors the lyric two-tier flow: quote queries whose
+      // words are all literally present never pay for the ~250-hash
+      // typo-neighbor expansion per term below.
+      const makePush = (set) => {
         const push = (rec) => {
           if (perBibleFilter != null && rec.b !== perBibleFilter) return true;
           const k = rec.b * 1000000 + rec.c * 1000 + rec.v;
@@ -1075,62 +1371,88 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
           }
           return true;
         };
+        return { push, pushAll };
+      };
+      const termSets = queryContent.map((term) => {
+        const set = new Set();
+        const { pushAll } = makePush(set);
         for (const variant of experimentalTermVariants(term)) {
           if (!pushAll(bible.searchIndex[variant] || [])) break;
         }
-        // Typo neighbors via GENERATION, not vocabulary scan: all 1-edit
-        // insertions/deletions/substitutions are hashed directly (~250
-        // lookups vs a 12k-key scan). Runs only when the exact+variant set
-        // is small — when thousands of literal postings already fill the
-        // pool, neighbor expansion only adds cost, never recall the pool
-        // can use. Empty and rare terms always expand (typo recall).
-        if (term.length >= 4 && set.size < 500) {
-          const seen = new Set();
-          const tryKey = (key) => {
-            if (key.length < 4 || seen.has(key)) return true;
-            seen.add(key);
-            const postings = bible.searchIndex[key];
-            if (postings) return pushAll(postings);
-            return true;
-          };
-          let stop = false;
-          // Deletions (extra char typed: "worrld" -> "world").
-          for (let i = 0; i < term.length && !stop; i++) {
-            if (!tryKey(term.slice(0, i) + term.slice(i + 1))) stop = true;
-          }
-          // Substitutions (wrong char: "aginst" needs insert, "wird" -> "word").
-          for (let i = 0; i < term.length && !stop; i++) {
-            for (let c = 97; c <= 122 && !stop; c++) {
-              const v = term.slice(0, i) + String.fromCharCode(c) + term.slice(i + 1);
-              if (v === term) continue;
-              if (!tryKey(v)) stop = true;
-            }
-          }
-          // Insertions (missing char: "evrything" -> "everything",
-          // "word" -> "world", "aginst" -> "against").
-          for (let i = 0; i <= term.length && !stop; i++) {
-            for (let c = 97; c <= 122 && !stop; c++) {
-              if (!tryKey(term.slice(0, i) + String.fromCharCode(c) + term.slice(i))) stop = true;
-            }
-          }
-        }
-        // Compound splits for still-empty typo terms ("evrything" has no
-        // 1-edit neighbor that is a real word): all substrings len>=4 are
-        // hashed directly instead of scanning the vocabulary.
-        if (set.size === 0 && term.length >= 6) {
-          const seen = new Set();
-          for (let i = 0; i <= term.length - 4 && set.size < 2000; i++) {
-            for (let j = i + 4; j <= term.length && set.size < 2000; j++) {
-              const sub = term.slice(i, j);
-              if (sub === term || seen.has(sub)) continue;
-              seen.add(sub);
-              const postings = bible.searchIndex[sub];
-              if (postings) for (const rec of postings) push(rec);
-            }
-          }
-        }
         return { term, set };
       });
+      // Cheap intersect size decides the tier: any verse holding every
+      // content word literally means typo expansion can only add cost,
+      // never recall the pool can use.
+      let cheapHits = 0;
+      if (singleTerm) {
+        cheapHits = termSets[0]?.set.size || 0;
+      } else if (termSets.length > 0) {
+        const ordered = [...termSets].sort((a, b) => a.set.size - b.set.size);
+        const probe = new Set(ordered[0].set);
+        for (let i = 1; i < ordered.length && probe.size > 0; i++) {
+          for (const k of probe) {
+            if (!ordered[i].set.has(k)) probe.delete(k);
+          }
+        }
+        cheapHits = probe.size;
+      }
+      // Phase 2 — fuzzy tier, only on cheap miss (typo/paraphrase queries).
+      if (cheapHits === 0) {
+        for (const entry of termSets) {
+          const { term, set } = entry;
+          const { push, pushAll } = makePush(set);
+          // Typo neighbors via GENERATION, not vocabulary scan: all 1-edit
+          // insertions/deletions/substitutions are hashed directly (~250
+          // lookups vs a 12k-key scan). Empty and rare terms always expand
+          // (typo recall).
+          if (term.length >= 4 && set.size < 500) {
+            const seen = new Set();
+            const tryKey = (key) => {
+              if (key.length < 4 || seen.has(key)) return true;
+              seen.add(key);
+              const postings = bible.searchIndex[key];
+              if (postings) return pushAll(postings);
+              return true;
+            };
+            let stop = false;
+            // Deletions (extra char typed: "worrld" -> "world").
+            for (let i = 0; i < term.length && !stop; i++) {
+              if (!tryKey(term.slice(0, i) + term.slice(i + 1))) stop = true;
+            }
+            // Substitutions (wrong char: "aginst" needs insert, "wird" -> "word").
+            for (let i = 0; i < term.length && !stop; i++) {
+              for (let c = 97; c <= 122 && !stop; c++) {
+                const v = term.slice(0, i) + String.fromCharCode(c) + term.slice(i + 1);
+                if (v === term) continue;
+                if (!tryKey(v)) stop = true;
+              }
+            }
+            // Insertions (missing char: "evrything" -> "everything",
+            // "word" -> "world", "aginst" -> "against").
+            for (let i = 0; i <= term.length && !stop; i++) {
+              for (let c = 97; c <= 122 && !stop; c++) {
+                if (!tryKey(term.slice(0, i) + String.fromCharCode(c) + term.slice(i))) stop = true;
+              }
+            }
+          }
+          // Compound splits for still-empty typo terms ("evrything" has no
+          // 1-edit neighbor that is a real word): all substrings len>=4 are
+          // hashed directly instead of scanning the vocabulary.
+          if (set.size === 0 && term.length >= 6) {
+            const seen = new Set();
+            for (let i = 0; i <= term.length - 4 && set.size < 2000; i++) {
+              for (let j = i + 4; j <= term.length && set.size < 2000; j++) {
+                const sub = term.slice(i, j);
+                if (sub === term || seen.has(sub)) continue;
+                seen.add(sub);
+                const postings = bible.searchIndex[sub];
+                if (postings) for (const rec of postings) push(rec);
+              }
+            }
+          }
+        }
+      }
       const weightOf = new Map(termSets.map(({ term, set }) => [term, Math.log(1 + totalVerses / (1 + set.size))]));
       const termWeights = queryContent.map((t) => weightOf.get(t));
       termSets.sort((a, b) => a.set.size - b.set.size);
