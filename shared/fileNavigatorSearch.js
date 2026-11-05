@@ -47,6 +47,25 @@ export function parseFileNavigatorQuery(value = '') {
   return { input, terms, compactTerms, phrase, fileTypes: [...fileTypes] };
 }
 
+// Stopwords + single/double-char tokens carry no title signal on their own.
+// Without this guard, a snippet like "as we worship You" matches the title
+// "you are my strength when i am weak" via "we"->"weak" prefix and
+// "as"->includes, outscoring the file whose LYRICS contain the phrase.
+// Weak terms only count on exact word match, at low weight; the content
+// phrase bonus below decides snippet queries.
+const NAVIGATOR_STOPWORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'on', 'for', 'with',
+  'from', 'as', 'is', 'are', 'was', 'were', 'be', 'been', 'am', 'it',
+  'its', 'this', 'that', 'these', 'those', 'we', 'you', 'he', 'she',
+  'they', 'them', 'his', 'her', 'our', 'your', 'my', 'me', 'him', 'us',
+]);
+
+function isWeakNavigatorTerm(term) {
+  if (!term) return true;
+  if (term.length <= 2) return true;
+  return NAVIGATOR_STOPWORDS.has(term);
+}
+
 function isOrderedSubsequence(needle, haystack) {
   if (!needle || !haystack || needle.length < 3) return false;
   let needleIndex = 0;
@@ -96,10 +115,27 @@ function boundedEditDistance(left, right, maximum) {
   return prevRowBuffer[rightLen];
 }
 
-function cheapFieldMatch(term, record, compactTerm = null) {
+function cheapFieldMatch(term, record, compactTerm = null, allowFuzzy = true) {
   const stem = record.normalizedStem || '';
   const name = record.normalizedName || '';
   const relativePath = record.normalizedRelativePath || '';
+
+  // Weak terms (stopwords / <=2 chars): exact word match only, low weight.
+  // Prevents "we" matching "weak", "to" matching "into", "the"
+  // matching every title via substring — the top snippet-query failure mode.
+  if (isWeakNavigatorTerm(term)) {
+    const words = record.stemWords || stem.split(' ');
+    for (let i = 0; i < words.length; i++) {
+      if (words[i] === term) return { score: 120, field: 'name' };
+    }
+    if (name) {
+      const nameWords = name.split(' ');
+      for (let i = 0; i < nameWords.length; i++) {
+        if (nameWords[i] === term) return { score: 100, field: 'name' };
+      }
+    }
+    return null;
+  }
 
   if (stem === term) return { score: 1300, field: 'name' };
   if (stem.startsWith(term)) return { score: 980, field: 'name' };
@@ -110,6 +146,12 @@ function cheapFieldMatch(term, record, compactTerm = null) {
   if (stem.includes(term)) return { score: 700, field: 'name' };
   if (name.includes(term)) return { score: 640, field: 'name' };
   if (relativePath.includes(term)) return { score: 420, field: 'path' };
+
+  // Fuzzy title matching (subsequence + edit distance) is the most
+  // expensive part of scoring. Two-tier search runs a cheap pass first
+  // (allowFuzzy=false) and only pays for fuzzy when the cheap pass finds
+  // nothing — snippet/phrase queries never reach the slow path.
+  if (!allowFuzzy) return null;
 
   const cTerm = compactTerm ?? term.replace(/\s+/g, '');
   const cStem = record.compactStem ?? stem.replace(/\s+/g, '');
@@ -132,11 +174,25 @@ function cheapFieldMatch(term, record, compactTerm = null) {
   return null;
 }
 
+// Punctuation-flat normalization for lyric-snippet phrase matching.
+// normalizedContent keeps commas/periods ("is with me, God"), while query
+// phrases join punctuation-stripped terms ("is with me god") — a raw
+// includes() then misses. Flat form removes apostrophes and maps every
+// other non-alphanumeric to a space so both sides compare identically.
+export function flattenNavigatorSearchText(value = '') {
+  return String(value || '')
+    .replace(/['\u2019]/g, '')
+    .replace(/[^a-z0-9\s]/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function prepareNavigatorSearchRecord(record = {}) {
   const fileName = String(record.fileName || '');
   const extensionIndex = fileName.lastIndexOf('.');
   const stem = extensionIndex > 0 ? fileName.slice(0, extensionIndex) : fileName;
   const normalizedStem = normalizeNavigatorSearchText(stem);
+  const normalizedContent = normalizeNavigatorSearchText(record.contentText || '');
 
   return {
     ...record,
@@ -145,14 +201,19 @@ export function prepareNavigatorSearchRecord(record = {}) {
     stemWords: normalizedStem.split(' ').filter(Boolean),
     normalizedName: normalizeNavigatorSearchText(fileName),
     normalizedRelativePath: normalizeNavigatorSearchText(record.relativePath || record.filePath || ''),
-    normalizedContent: normalizeNavigatorSearchText(record.contentText || ''),
+    normalizedContent,
+    // Precomputed once at index time so per-keystroke phrase checks are a
+    // single substring scan instead of a regex + split per record per query.
+    normalizedStemFlat: flattenNavigatorSearchText(normalizedStem),
+    normalizedContentFlat: flattenNavigatorSearchText(normalizedContent),
   };
 }
 
-export function scoreNavigatorSearchRecord(record, parsedQuery) {
+export function scoreNavigatorSearchRecord(record, parsedQuery, options = {}) {
   const query = typeof parsedQuery === 'string'
     ? parseFileNavigatorQuery(parsedQuery)
     : (parsedQuery || { terms: [], fileTypes: [] });
+  const allowFuzzy = options.fuzzy !== false;
 
   if (query.fileTypes?.length > 0 && !query.fileTypes.includes(record.fileType)) {
     return null;
@@ -164,6 +225,53 @@ export function scoreNavigatorSearchRecord(record, parsedQuery) {
   let strongestScore = 0;
 
   const compactTerms = query.compactTerms || query.terms.map((t) => t.replace(/\s+/g, ''));
+  const contentAllowed = query.searchContent !== false;
+  const phrase = query.phrase ?? query.terms.join(' ');
+  const termCount = query.terms.length;
+
+  // FAST PATH — exact lyric-snippet phrase in content dominates everything.
+  // Flat (punctuation-insensitive) comparison so "is with me god" matches
+  // lyric "is with me, God". A single includes() replaces per-term
+  // subsequence + edit-distance work for the common snippet case, and the
+  // +1500 bonus outranks any title-partial sum (title partials are capped
+  // because weak terms now score <=120). Single/double-term queries skip
+  // this path so keystroke title ranking ("amazing" > content "wretch")
+  // is unchanged. Runs in both tiers (cheap + fuzzy) for consistent ranking.
+  if (contentAllowed && termCount >= 3 && phrase && phrase.length >= 8) {
+    const flatContent = record.normalizedContentFlat
+      ?? flattenNavigatorSearchText(record.normalizedContent || '');
+    if (flatContent) {
+      // Cache per parsed-query object: searchFileNavigator parses once then
+      // scores up to 100k records — recomputing this regex per record costs
+      // ~15% of snippet-query time for zero benefit.
+      let flatPhrase = query.flatPhrase;
+      if (flatPhrase === undefined) {
+        flatPhrase = flattenNavigatorSearchText(phrase);
+        try { query.flatPhrase = flatPhrase; } catch { /* frozen — recompute */ }
+      }
+      if (flatPhrase && flatContent.includes(flatPhrase)) {
+        const stem = record.normalizedStem || '';
+        // Small title kicker when the title also shares a strong (non-weak)
+        // term — breaks ties between duplicate lyric files deterministically
+        // toward the file whose title matches the snippet vocabulary.
+        let titleKicker = 0;
+        let titleField = 'content';
+        for (let i = 0; i < termCount; i++) {
+          const t = query.terms[i];
+          if (isWeakNavigatorTerm(t)) continue;
+          if (stem.includes(t)) { titleKicker = 200; titleField = 'both'; break; }
+        }
+        // Focus bonus: among files holding the same lyric line, prefer the
+        // focused song sheet over a multi-service compilation (e.g. the 60KB
+        // TPHB compilation holds every lyric). Length-norm is TF-IDF
+        // standard practice; the ~70pt spread only breaks ties between
+        // phrase holders, never outranks a phrase hit itself.
+        const contentLen = record.contentText?.length || flatContent.length || 1;
+        const focusBonus = Math.max(0, Math.round(120 - 25 * Math.log10(contentLen)));
+        return { score: 250 * termCount + 1500 + titleKicker + focusBonus, matchedField: titleField };
+      }
+    }
+  }
 
   // Two-phase scoring: name/path/subsequence fields are cheap and match the
   // vast majority of keystroke queries, so the expensive normalized-content
@@ -173,7 +281,7 @@ export function scoreNavigatorSearchRecord(record, parsedQuery) {
   const contentTerms = [];
   for (let i = 0; i < query.terms.length; i++) {
     const term = query.terms[i];
-    const match = cheapFieldMatch(term, record, compactTerms[i]);
+    const match = cheapFieldMatch(term, record, compactTerms[i], allowFuzzy);
     if (match) {
       score += match.score;
       if (match.score > strongestScore) {
@@ -200,7 +308,6 @@ export function scoreNavigatorSearchRecord(record, parsedQuery) {
     contentScanned = true;
   }
 
-  const phrase = query.phrase ?? query.terms.join(' ');
   if (phrase && record.normalizedStem === phrase) score += 1000;
   else if (phrase && record.normalizedStem.startsWith(phrase)) score += 600;
   else if (phrase && record.normalizedStem.includes(phrase)) score += 350;
@@ -315,6 +422,23 @@ export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
   const STOP = new Set(['the','a','an','and','or','of','to','in','on','for','with','from','as','is','are','was','were','be','been','am','it','its','this','that','these','those']);
   const contentTerms = query.terms.filter((t) => t && !STOP.has(t));
   const useTerms = contentTerms.length > 0 ? contentTerms : query.terms;
+  // Prefilter: the ordered walk below splits + scans the full lyric body.
+  // Unless at least two strong terms (or all, when <=2) appear as substrings
+  // anywhere in title/content, the walk cannot reach coverage — skip it and
+  // fall through to the title fallback. Same recall, ~5x less work on misses.
+  if (contentAllowed && useTerms.length >= 2) {
+    let subHits = 0;
+    for (const q of useTerms) {
+      if (normContent.includes(q) || normStem.includes(q)) subHits += 1;
+      if (subHits >= 2 && useTerms.length > 2) break;
+    }
+    const need = useTerms.length > 2 ? 2 : useTerms.length;
+    if (subHits < need) {
+      const titleHit = query.terms.some((t) => normStem.includes(t) || normPath.includes(t));
+      if (titleHit && useTerms.length <= 2) return { score: 500, matchedField: 'name', sentence: false };
+      return null;
+    }
+  }
   // Hay tokens shorter than 3 chars (or stopwords) carry no signal and only
   // create false substring hits (query "watre" matching lyric "at" via
   // q.includes(hay)). Skip them; the title fallback below still works.
