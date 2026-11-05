@@ -28,6 +28,7 @@
     "electron-pack:linux": "npm run build && electron-builder --linux",
     "version": "node scripts/update-version.js && git add README.md \"INSTALLATION.md\"",
     "release": "node scripts/release.js",
+    "release:mobile": "node scripts/mobile-release.js",
     "postinstall": "cd server && npm install",
     "test": "vitest run",
     "test:watch": "vitest"
