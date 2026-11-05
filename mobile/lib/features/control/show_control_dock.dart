@@ -381,10 +381,14 @@ class ShowControlDock extends ConsumerWidget {
                     disabled: dock.busy,
                     onSelect: (next) {
                       notifier.setBusy(true);
-                      commands
-                          .select(next)
-                          .catchError((_) {})
-                          .whenComplete(() => notifier.setBusy(false));
+                      commands.select(next).then((_) {}).catchError((Object e) {
+                        final msg = e is ApiException ? e.message : 'Could not reach the server';
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).clearSnackBars();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
+                        );
+                      }).whenComplete(() => notifier.setBusy(false));
                     },
                   ),
                   const SizedBox(height: 12),

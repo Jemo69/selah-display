@@ -1,6 +1,9 @@
 /// Control screen: live lyric preview, oversized prev/next pad, output
 /// toggles and blackout. On tablets it renders as a two-pane layout with
 /// the setlist sidebar on the left.
+///
+/// Every command surfaces failures as a snackbar (no more silent dead
+/// buttons) and disables while in flight so double-taps can't race.
 library;
 
 import 'package:flutter/material.dart';
@@ -8,30 +11,60 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme.dart';
 import '../../core/models.dart';
+import '../../core/server_api.dart';
 import '../../state/providers.dart';
 import '../setlist/setlist_screen.dart';
 import 'show_control_dock.dart';
 
-class ControlScreen extends ConsumerWidget {
+class ControlScreen extends ConsumerStatefulWidget {
   const ControlScreen({super.key});
 
-  Future<void> _sendNext(WidgetRef ref) async {
+  @override
+  ConsumerState<ControlScreen> createState() => _ControlScreenState();
+}
+
+class _ControlScreenState extends ConsumerState<ControlScreen> {
+  bool _navBusy = false;
+
+  void _fail(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+    );
+  }
+
+  Future<void> _sendNext() async {
     final api = ref.read(serverApiProvider);
-    if (api == null) return;
+    if (api == null || _navBusy) return;
+    setState(() => _navBusy = true);
     try {
       await api.lyricsNext();
-    } catch (_) {}
+    } on ApiException catch (e) {
+      _fail(e.authFailure ? 'Pairing expired — reconnect' : 'Next failed: ${e.message}');
+    } catch (_) {
+      _fail('Next failed — check connection');
+    } finally {
+      if (mounted) setState(() => _navBusy = false);
+    }
   }
 
-  Future<void> _sendPrev(WidgetRef ref) async {
+  Future<void> _sendPrev() async {
     final api = ref.read(serverApiProvider);
-    if (api == null) return;
+    if (api == null || _navBusy) return;
+    setState(() => _navBusy = true);
     try {
       await api.lyricsPrev();
-    } catch (_) {}
+    } on ApiException catch (e) {
+      _fail(e.authFailure ? 'Pairing expired — reconnect' : 'Previous failed: ${e.message}');
+    } catch (_) {
+      _fail('Previous failed — check connection');
+    } finally {
+      if (mounted) setState(() => _navBusy = false);
+    }
   }
 
-  void _showJumpSheet(BuildContext context, WidgetRef ref) {
+  void _showJumpSheet() {
     final state = ref.read(showStateProvider);
     showModalBottomSheet<void>(
       context: context,
@@ -39,26 +72,43 @@ class ControlScreen extends ConsumerWidget {
       builder: (context) => _LineJumpSheet(
         lyrics: state.lyrics,
         selectedLine: state.selectedLine,
-        onPick: (index) {
+        onPick: (index) async {
           Navigator.of(context).pop();
-          final api = ref.read(serverApiProvider);
-          api?.lyricsGoto(index).catchError((_) {});
+          try {
+            await ref.read(serverApiProvider)?.lyricsGoto(index);
+          } on ApiException catch (e) {
+            _fail('Jump failed: ${e.message}');
+          } catch (_) {
+            _fail('Jump failed — check connection');
+          }
         },
       ),
     );
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final show = ref.watch(showStateProvider);
+    final status = ref.watch(connectionStatusProvider);
     final wide = MediaQuery.sizeOf(context).width >= 600;
     final hasLyrics = show.hasLyrics;
 
+    // Surface async socket errors (permission / validation) once.
+    ref.listen<String?>(lastServerErrorProvider, (_, next) {
+      if (next != null && next.isNotEmpty) {
+        _fail(next);
+        Future.microtask(
+            () => ref.read(lastServerErrorProvider.notifier).state = null);
+      }
+    });
+
     final controlPad = _ControlPad(
       show: show,
-      onPrev: hasLyrics ? () => _sendPrev(ref) : null,
-      onNext: hasLyrics ? () => _sendNext(ref) : null,
-      onJump: hasLyrics ? () => _showJumpSheet(context, ref) : null,
+      navBusy: _navBusy,
+      offline: !status.isConnected,
+      onPrev: hasLyrics && !_navBusy ? _sendPrev : null,
+      onNext: hasLyrics && !_navBusy ? _sendNext : null,
+      onJump: hasLyrics && !_navBusy ? _showJumpSheet : null,
     );
 
     return Scaffold(
@@ -67,6 +117,17 @@ class ControlScreen extends ConsumerWidget {
           show.fileName.isEmpty ? 'No song loaded' : show.fileName,
           overflow: TextOverflow.ellipsis,
         ),
+        actions: [
+          if (!status.isConnected)
+            const Padding(
+              padding: EdgeInsets.only(right: 12),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+        ],
       ),
       body: SafeArea(
         child: wide
@@ -89,12 +150,16 @@ class _ControlPad extends StatelessWidget {
     this.onPrev,
     this.onNext,
     this.onJump,
+    this.navBusy = false,
+    this.offline = false,
   });
 
   final ShowState show;
   final VoidCallback? onPrev;
   final VoidCallback? onNext;
   final VoidCallback? onJump;
+  final bool navBusy;
+  final bool offline;
 
   @override
   Widget build(BuildContext context) {
@@ -102,6 +167,20 @@ class _ControlPad extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
+          if (offline)
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppTheme.surfaceAlt,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Text(
+                'Reconnecting — commands queue and send on reconnect',
+                style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+              ),
+            ),
           Expanded(
             flex: 3,
             child: _LivePreview(show: show),
@@ -113,7 +192,7 @@ class _ControlPad extends StatelessWidget {
                 Expanded(
                   child: _NavButton(
                     icon: Icons.skip_previous,
-                    label: 'PREV',
+                    label: navBusy ? '…' : 'PREV',
                     onPressed: onPrev,
                   ),
                 ),
@@ -128,7 +207,7 @@ class _ControlPad extends StatelessWidget {
                 Expanded(
                   child: _NavButton(
                     icon: Icons.skip_next,
-                    label: 'NEXT',
+                    label: navBusy ? '…' : 'NEXT',
                     onPressed: onNext,
                   ),
                 ),
@@ -258,9 +337,9 @@ class _OutputRow extends ConsumerWidget {
   const _OutputRow({required this.show});
   final ShowState show;
 
-  Future<void> _toggle(WidgetRef ref, String output, bool enabled) async {
-    final socket = ref.read(socketServiceProvider);
-    socket.emit('individualOutputToggle', {'output': output, 'enabled': enabled});
+  Future<void> _toggle(WidgetRef ref, BuildContext context, String output, bool enabled) async {
+    ref.read(socketServiceProvider).emit(
+        'individualOutputToggle', {'output': output, 'enabled': enabled});
   }
 
   @override
@@ -278,21 +357,21 @@ class _OutputRow extends ConsumerWidget {
             label: 'Output 1',
             value: show.output1Enabled && show.isOutputOn,
             onChanged: show.isOutputOn
-                ? (v) => _toggle(ref, 'output1', v)
+                ? (v) => _toggle(ref, context, 'output1', v)
                 : null,
           ),
           _OutputSwitch(
             label: 'Output 2',
             value: show.output2Enabled && show.isOutputOn,
             onChanged: show.isOutputOn
-                ? (v) => _toggle(ref, 'output2', v)
+                ? (v) => _toggle(ref, context, 'output2', v)
                 : null,
           ),
           _OutputSwitch(
             label: 'Stage',
             value: show.stageEnabled && show.isOutputOn,
             onChanged: show.isOutputOn
-                ? (v) => _toggle(ref, 'stage', v)
+                ? (v) => _toggle(ref, context, 'stage', v)
                 : null,
           ),
         ],

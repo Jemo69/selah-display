@@ -193,6 +193,18 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                   ),
                 ),
               ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: Card(
+                color: AppTheme.surfaceAlt,
+                child: ListTile(
+                  dense: true,
+                  leading: Icon(Icons.vpn_key, color: AppTheme.accent),
+                  title: Text('Off-site? Use Tailscale'),
+                  subtitle: Text('Type the desktop\u2019s 100.x IP or name.ts.net below — no port change needed.'),
+                ),
+              ),
+            ),
             Expanded(
               child: discovery.scanning && discovery.servers.isEmpty
                   ? const Center(child: CircularProgressIndicator())
@@ -232,7 +244,7 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                       keyboardType: TextInputType.url,
                       onSubmitted: (_) => _submitManual(),
                       decoration: const InputDecoration(
-                        hintText: 'Manual IP (e.g. 192.168.1.42)',
+                        hintText: 'IP, Tailscale 100.x, or name.ts.net',
                       ),
                     ),
                   ),

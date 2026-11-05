@@ -414,7 +414,7 @@ export default function FileNavigatorModal({ darkMode = false }) {
                   variant: next ? 'success' : 'info',
                 });
               }}
-              title={lyricSearchEnabled ? 'Full-Text Lyric Search is ON (Experimental) — Click to search titles only' : 'Full-Text Lyric Search is OFF — Click to search inside lyrics'}
+              title={lyricSearchEnabled ? 'Full-Text Lyric Search is ON — Click to search titles only' : 'Full-Text Lyric Search is OFF — Click to search inside lyrics'}
               aria-label="Toggle lyric content search"
               data-testid="file-navigator-content-search-toggle"
             >

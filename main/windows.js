@@ -2,6 +2,7 @@ import { BrowserWindow, shell } from 'electron';
 import path from 'path';
 import { isDev, resolveProductionPath, appRoot } from './paths.js';
 import createMainLogger from './logger.js';
+import { backendBaseUrl } from './utils.js';
 
 const log = createMainLogger('Windows');
 
@@ -84,6 +85,9 @@ export function createWindow(route = '/', options = {}) {
     return { action: 'deny' };
   });
 
+  // Honor PORT so custom-port boots (dogfood, side-by-side instances) load
+  // their own backend instead of whatever holds 4000.
+  const backendBase = backendBaseUrl();
   if (isDev) {
     const devUrl = `http://localhost:5174${route}`;
     // When launched as a built app (`npm run build` + `npm run electron`) the
@@ -94,16 +98,16 @@ export function createWindow(route = '/', options = {}) {
       if (!validatedURL.startsWith('http://localhost:5174')) {
         return;
       }
-      log.warn(`Dev server unreachable (${errorDescription}); falling back to backend UI on 127.0.0.1:4000`);
+      log.warn(`Dev server unreachable (${errorDescription}); falling back to backend UI on ${backendBase}`);
       const hashRoute = route === '/' ? '/' : `#${route}`;
-      try { win.loadURL(`http://127.0.0.1:4000${hashRoute}`); } catch (err) {
+      try { win.loadURL(`${backendBase}${hashRoute}`); } catch (err) {
         log.error('Fallback load failed:', err);
       }
     });
     win.loadURL(devUrl);
   } else {
     const hashRoute = route === '/' ? '/' : `#${route}`;
-    const baseUrl = 'http://127.0.0.1:4000';
+    const baseUrl = backendBase;
     win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
       log.error('Failed to load:', errorCode, errorDescription, validatedURL);
       setTimeout(() => {

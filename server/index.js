@@ -95,6 +95,19 @@ const uploadsRoot = path.join(dataRoot, 'uploads');
 const backgroundMediaDir = path.join(uploadsRoot, 'backgrounds');
 fs.mkdirSync(backgroundMediaDir, { recursive: true });
 
+const TAILSCALE_HOST_RE = /(^|\.)tail[a-z0-9-]*\.ts\.net$/i;
+const isTailnetOrigin = (origin = '') => {
+  try {
+    const host = new URL(origin).hostname.toLowerCase();
+    if (host.endsWith('.ts.net')) return true;
+    if (TAILSCALE_HOST_RE.test(host)) return true;
+    // Tailscale CGNAT range 100.64.0.0/10 — church phones on the tailnet
+    // reach the desktop via 100.x, which the old allow-list rejected.
+    if (/^100\.(6[4-9]|[7-9]\d|1[0-1]\d|12[0-7])\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
+    return false;
+  } catch { return false; }
+};
+
 const allowedMediaTypes = new Set([
   'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif',
   'video/mp4', 'video/webm', 'video/ogg', 'video/quicktime'
@@ -141,10 +154,13 @@ const corsMiddleware = (req, res, next) => {
   if (isDev) {
     res.setHeader('Access-Control-Allow-Origin', '*');
   } else if (origin) {
-    // In production, allow same-origin and local origins
-    const isLocal = origin.includes('localhost') || origin.includes('127.0.0.1') || origin.startsWith('http://192.168.') || origin.startsWith('http://10.') || origin.startsWith('http://172.');
+    // In production, allow same-origin, LAN, and Tailscale tailnet origins.
+    // Tailscale serves the desktop as 100.x and/or <name>.tail*.ts.net —
+    // phones off-site ("out of charge" hotspot + tailnet) must pass CORS.
+    const isLocal = origin.includes('localhost') || origin.includes('127.0.0.1') || origin.startsWith('http://192.168.') || origin.startsWith('http://10.') || origin.startsWith('http://172.') || isTailnetOrigin(origin);
     if (isLocal) {
       res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
     }
   }
 
@@ -160,7 +176,9 @@ const corsMiddleware = (req, res, next) => {
 
 // Middleware
 app.use(corsMiddleware);
-app.use(express.json({ limit: '1mb' }));
+// 3MB: route-level checks (setlist/files cap 2MB) produce clean 400s below
+// this ceiling; anything larger gets a clear 413 from the handler below.
+app.use(express.json({ limit: '3mb' }));
 app.use('/api/auth', tokenRateLimit);
 
 const localhostOnly = (req, res, next) => {
@@ -621,7 +639,7 @@ function getClientPermissions(clientType) {
     ],
     web: [
       'lyrics:read', 'lyrics:write', 'lyrics:draft',
-      'setlist:read',
+      'setlist:read', 'setlist:write',
       'output:control', 'settings:read', 'settings:write'
     ],
     output1: ['lyrics:read', 'settings:read'],
@@ -629,7 +647,7 @@ function getClientPermissions(clientType) {
     stage: ['lyrics:read', 'settings:read'],
     mobile: [
       'lyrics:read', 'lyrics:write', 'lyrics:draft',
-      'setlist:read',
+      'setlist:read', 'setlist:write',
       'output:control', 'settings:read', 'settings:write'
     ],
     api: [
@@ -693,7 +711,7 @@ const io = new Server(server, {
 const isDev = process.env.NODE_ENV === 'development';
       if (isDev) return callback(null, true);
       if (!origin) return callback(null, true); // allow non-browser clients
-      const isLocal = origin.includes('localhost') || origin.includes('127.0.0.1') || origin.startsWith('http://192.168.') || origin.startsWith('http://10.') || origin.startsWith('http://172.');
+      const isLocal = origin.includes('localhost') || origin.includes('127.0.0.1') || origin.startsWith('http://192.168.') || origin.startsWith('http://10.') || origin.startsWith('http://172.') || isTailnetOrigin(origin);
       if (isLocal) return callback(null, true);
       callback(new Error('CORS: origin not allowed'));
     },
@@ -809,6 +827,19 @@ function serveFrontend() {
     res.sendFile(path.join(frontendPath, 'index.html'));
   });
 }
+
+// Body-parser errors become clear client errors (not opaque 500s) so
+// phones can surface them: oversize -> 413, malformed JSON -> 400.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  if (err?.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Request too large (max 3MB). Split the file and retry.' });
+  }
+  if (err instanceof SyntaxError && 'body' in err) {
+    return res.status(400).json({ error: 'Invalid JSON request body' });
+  }
+  return next(err);
+});
 
 // Error handling middleware
 app.use((err, req, res, next) => {

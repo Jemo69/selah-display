@@ -5,6 +5,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/config.dart';
 import '../core/discovery_service.dart';
 import '../core/models.dart';
 import '../core/pairing_store.dart';
@@ -75,11 +76,27 @@ class SessionNotifier extends AsyncNotifier<SessionState> {
 
   Future<void> forget() async {
     ref.read(socketServiceProvider).disconnect();
+    ref.read(syncPollProvider.notifier).stop();
     await ref.read(pairingStoreProvider).clear();
     state = const AsyncData(SessionState());
   }
 
   Future<void> reconnect() => _startRealtime();
+
+  /// Persists a refreshed JWT without forcing a re-pair.
+  Future<void> persistRefreshedToken(String newToken) async {
+    final current = state.value?.connection;
+    if (current == null) return;
+    final updated = SavedConnection(
+      serverName: current.serverName,
+      host: current.host,
+      port: current.port,
+      token: newToken,
+      deviceId: current.deviceId,
+    );
+    await ref.read(pairingStoreProvider).save(updated);
+    state = AsyncData(state.value!.copyWith(connection: updated));
+  }
 
   Future<void> _startRealtime() async {
     final connection = state.value?.connection;
@@ -87,6 +104,7 @@ class SessionNotifier extends AsyncNotifier<SessionState> {
     state = AsyncData(state.value!.copyWith(clearConnectError: true));
     try {
       await ref.read(showStateProvider.notifier).attach(connection);
+      ref.read(syncPollProvider.notifier).start();
     } on SocketConnectFailure catch (e) {
       if (e.cancelled) return; // superseded by another connect/forget
       state = AsyncData(state.value!.copyWith(
@@ -103,6 +121,8 @@ final sessionProvider =
     AsyncNotifierProvider<SessionNotifier, SessionState>(SessionNotifier.new);
 
 /// Live mirror of the desktop show state, fed by the Socket.IO stream.
+/// The light fast-path (`requestLightState` / `syncState`) merges without
+/// wiping locally-held lyrics, so a 1KB song never blanks on a slow link.
 class ShowStateNotifier extends Notifier<ShowState> {
   StreamSubscription<SocketEvent>? _events;
 
@@ -134,9 +154,25 @@ class ShowStateNotifier extends Notifier<ShowState> {
       case 'currentState':
       case 'periodicStateSync':
         if (event.data is Map) {
-          state = ShowState.fromCurrentState(
-            Map<String, dynamic>.from(event.data as Map),
-          );
+          final data = Map<String, dynamic>.from(event.data as Map);
+          // Light snapshots (light:true) merge; full snapshots replace.
+          if (data['light'] == true) {
+            state = state.applyLight(data);
+          } else {
+            state = ShowState.fromCurrentState(data);
+          }
+        }
+        break;
+      case 'syncState':
+        if (event.data is Map) {
+          final data = Map<String, dynamic>.from(event.data as Map);
+          if (data['changed'] == true && data['state'] is Map) {
+            state = state.applyLight(
+                Map<String, dynamic>.from(data['state'] as Map));
+          } else if (data['fingerprint'] != null) {
+            state = state.copyWith(
+                fingerprint: data['fingerprint'].toString());
+          }
         }
         break;
       case 'lineUpdate':
@@ -145,6 +181,8 @@ class ShowStateNotifier extends Notifier<ShowState> {
           if (data['index'] is num) {
             state = state.copyWith(selectedLine: (data['index'] as num).toInt());
           }
+        } else if (event.data is num) {
+          state = state.copyWith(selectedLine: (event.data as num).toInt());
         }
         break;
       case 'lyricsLoad':
@@ -153,6 +191,15 @@ class ShowStateNotifier extends Notifier<ShowState> {
             lyrics: (event.data as List).map(lyricEntryText).toList(),
             clearSelectedLine: true,
           );
+        } else if (event.data is Map) {
+          final data = Map<String, dynamic>.from(event.data as Map);
+          final lines = data['lyrics'];
+          if (lines is List) {
+            state = state.copyWith(
+              lyrics: lines.map(lyricEntryText).toList(),
+              clearSelectedLine: true,
+            );
+          }
         }
         break;
       case 'fileNameUpdate':
@@ -190,6 +237,16 @@ class ShowStateNotifier extends Notifier<ShowState> {
           }
         }
         break;
+      case 'contentModeUpdate':
+      case 'contentLoaded':
+        if (event.data is Map) {
+          final data = Map<String, dynamic>.from(event.data as Map);
+          final file = data['fileName']?.toString();
+          if (file != null && file.isNotEmpty) {
+            state = state.copyWith(fileName: file);
+          }
+        }
+        break;
       case 'setlistUpdate':
         if (event.data is List) {
           state = state.copyWith(
@@ -199,25 +256,59 @@ class ShowStateNotifier extends Notifier<ShowState> {
                     SetlistItem.fromJson(Map<String, dynamic>.from(e)))
                 .toList(),
           );
+        } else if (event.data is Map) {
+          // Server sometimes wraps the list; accept both shapes.
+          final data = Map<String, dynamic>.from(event.data as Map);
+          final list = data['setlist'] ?? data['setlistFiles'];
+          if (list is List) {
+            state = state.copyWith(
+              setlist: list
+                  .whereType<Map>()
+                  .map((e) =>
+                      SetlistItem.fromJson(Map<String, dynamic>.from(e)))
+                  .toList(),
+            );
+          }
         }
         break;
       case 'outputToggle':
-        state = state.copyWith(isOutputOn: event.data == true);
+        if (event.data is bool) {
+          state = state.copyWith(
+              isOutputOn: event.data == true,
+              showControl: (event.data == true)
+                  ? ShowControlState.live
+                  : ShowControlState.blackout);
+        } else if (event.data is Map) {
+          final data = Map<String, dynamic>.from(event.data as Map);
+          if (data['state'] != null) {
+            final next = ShowControlState.fromWire(data['state']);
+            state = state.copyWith(showControl: next, isOutputOn: next.isMasterOn);
+          } else if (data['isOutputOn'] is bool) {
+            state = state.copyWith(isOutputOn: data['isOutputOn'] as bool);
+          }
+        }
         break;
       case 'showStateUpdate':
         if (event.data is Map) {
           final next =
               ShowControlState.fromWire((event.data as Map)['state']);
           state = state.copyWith(showControl: next, isOutputOn: next.isMasterOn);
+        } else if (event.data is String) {
+          final next = ShowControlState.fromWire(event.data);
+          state = state.copyWith(showControl: next, isOutputOn: next.isMasterOn);
         }
         break;
       case 'tickerUpdate':
         if (event.data is Map) {
           final data = Map<String, dynamic>.from(event.data as Map);
+          final queueData = data['queue'] ?? data['tickerQueue'] ?? data;
+          final queue = queueData is Map
+              ? ShowState.tickerQueueFrom(Map<String, dynamic>.from(queueData))
+              : ShowState.tickerQueueFrom(data);
           state = state.copyWith(
-            tickerQueue: ShowState.tickerQueueFrom(data),
-            tickerActiveId: data['activeId']?.toString(),
-            clearTickerActiveId: data['activeId'] == null,
+            tickerQueue: queue,
+            tickerActiveId: (data['activeId'] ?? data['tickerActiveId'])?.toString(),
+            clearTickerActiveId: (data['activeId'] ?? data['tickerActiveId']) == null,
           );
         }
         break;
@@ -238,6 +329,34 @@ class ShowStateNotifier extends Notifier<ShowState> {
           }
         }
         break;
+      case 'scheduleState':
+        if (event.data is Map) {
+          final snap = ScheduleSnapshot.fromJson(
+              Map<String, dynamic>.from(event.data as Map));
+          state = state.copyWith(
+            scheduleLoaded: snap.loaded,
+            scheduleStatus: snap.status,
+            scheduleName: snap.name,
+          );
+          ref.read(scheduleProvider.notifier).ingest(snap);
+        }
+        break;
+      case 'setlistError':
+      case 'tickerError':
+      case 'scheduleError':
+      case 'permissionError':
+      case 'authError':
+      case 'draftError':
+        ref.read(lastServerErrorProvider.notifier).state =
+            event.data?.toString() ?? event.name;
+        break;
+      case 'draftApproved':
+      case 'draftSubmitted':
+      case 'setlistAddSuccess':
+      case 'tickerAddSuccess':
+        ref.read(lastServerNoticeProvider.notifier).state =
+            event.name == 'draftApproved' ? 'Draft approved' : null;
+        break;
     }
   }
 
@@ -251,6 +370,93 @@ class ShowStateNotifier extends Notifier<ShowState> {
 
 final showStateProvider =
     NotifierProvider<ShowStateNotifier, ShowState>(ShowStateNotifier.new);
+
+/// Latest async server error for snackbars (permission / validation).
+final lastServerErrorProvider = StateProvider<String?>((ref) => null);
+final lastServerNoticeProvider = StateProvider<String?>((ref) => null);
+
+/// Authoritative scheduler snapshot (full detail for the Schedule tab).
+class ScheduleNotifier extends Notifier<ScheduleSnapshot> {
+  @override
+  ScheduleSnapshot build() => const ScheduleSnapshot();
+
+  void ingest(ScheduleSnapshot snap) => state = snap;
+
+  Future<String?> control(String action, {Map<String, dynamic>? extra}) async {
+    final api = ref.read(serverApiProvider);
+    if (api == null) return 'Not paired to a server';
+    try {
+      state = await api.scheduleControl(action, extra: extra);
+      return null;
+    } on ApiException catch (e) {
+      return e.message;
+    } catch (_) {
+      return 'Could not reach the server';
+    }
+  }
+
+  Future<String?> refresh() async {
+    final api = ref.read(serverApiProvider);
+    if (api == null) return 'Not paired';
+    try {
+      state = await api.scheduleGet();
+      return null;
+    } on ApiException catch (e) {
+      return e.message;
+    } catch (_) {
+      return 'Could not reach the server';
+    }
+  }
+}
+
+final scheduleProvider =
+    NotifierProvider<ScheduleNotifier, ScheduleSnapshot>(ScheduleNotifier.new);
+
+/// REST fallback poll: when the socket drops, poll /api/v1/sync every few
+/// seconds so NEXT/PREV and line highlights keep working on Tailscale.
+class SyncPollNotifier extends Notifier<bool> {
+  Timer? _timer;
+
+  @override
+  bool build() {
+    ref.onDispose(() => _timer?.cancel());
+    return false;
+  }
+
+  void start() {
+    stop();
+    state = true;
+    _timer = Timer.periodic(AppConfig.syncPollInterval, (_) => _tick());
+  }
+
+  void stop() {
+    _timer?.cancel();
+    _timer = null;
+    state = false;
+  }
+
+  Future<void> _tick() async {
+    final socket = ref.read(socketServiceProvider);
+    if (socket.status.isConnected) return; // socket is live — no polling
+    final api = ref.read(serverApiProvider);
+    if (api == null) return;
+    try {
+      final fingerprint = ref.read(showStateProvider).fingerprint;
+      final res = await api.sync(since: fingerprint.isEmpty ? null : fingerprint);
+      if (res.changed && res.state != null) {
+        ref.read(showStateProvider.notifier).state =
+            ref.read(showStateProvider).applyLight(res.state!.toSyncMap());
+      } else if (res.fingerprint.isNotEmpty) {
+        ref.read(showStateProvider.notifier).state =
+            ref.read(showStateProvider).copyWith(fingerprint: res.fingerprint);
+      }
+    } catch (_) {
+      // Best-effort background sync — the shell banner owns the error UI.
+    }
+  }
+}
+
+final syncPollProvider = NotifierProvider<SyncPollNotifier, bool>(SyncPollNotifier.new);
 
 /// Push-based connection status. The SocketService listener pattern means a
 /// subscriber added at any moment immediately receives the current status,
@@ -271,10 +477,17 @@ class ConnectionStatusNotifier extends Notifier<ConnectionStatus> {
   }
 }
 
-/// REST command helper built from the current pairing.
+/// REST command helper built from the current pairing. Persists refreshed
+/// JWTs so a 24h expiry or a desktop restart never forces a re-pair.
 final serverApiProvider = Provider<ServerApi?>((ref) {
   final connection =
       ref.watch(sessionProvider).valueOrNull?.connection;
   if (connection == null) return null;
-  return ServerApi(baseUrl: connection.baseUrl, token: connection.token);
+  return ServerApi(
+    baseUrl: connection.baseUrl,
+    token: connection.token,
+    onTokenRefresh: (fresh) {
+      ref.read(sessionProvider.notifier).persistRefreshedToken(fresh);
+    },
+  );
 });

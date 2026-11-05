@@ -14,7 +14,7 @@ function defaultSetlistsPath(userHome, separator) {
   } catch { }
   return `${documents}${separator}Selah${separator}Setlists`;
 }
-import { getLocalIPAddress } from './utils.js';
+import { getLocalIPAddress, getAllLocalIPAddresses, backendBaseUrl } from './utils.js';
 import * as secureTokenStore from './secureTokenStore.js';
 import updaterPkg from 'electron-updater';
 import { saveTextFileAtomically } from './atomicFileSave.js';
@@ -353,6 +353,10 @@ function cacheBibleParsed(filePath, entry) {
   });
 
   ipcMain.handle('get-local-ip', () => getLocalIPAddress());
+  ipcMain.handle('get-local-ips', () => {
+    try { return { success: true, ...getAllLocalIPAddresses() }; }
+    catch (e) { return { success: false, error: e?.message || String(e), lan: [], tailnet: [], all: [] }; }
+  });
 
   ipcMain.handle('open-in-app-browser', (_event, url) => {
     if (!isTrustedIpcSender(_event)) return untrustedIpcResponse('open-in-app-browser');
@@ -445,7 +449,7 @@ function cacheBibleParsed(filePath, entry) {
     if (!isTrustedIpcSender(_event)) { log.warn('Blocked untrusted IPC sender for get-desktop-jwt'); return null; }
     try {
       const adminKey = await getAdminKey();
-      const resp = await fetch('http://127.0.0.1:4000/api/auth/token', {
+      const resp = await fetch(`${backendBaseUrl()}/api/auth/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -586,7 +590,7 @@ function cacheBibleParsed(filePath, entry) {
 
   ipcMain.handle('get-join-code', async () => {
     try {
-      const response = await fetch('http://127.0.0.1:4000/api/auth/join-code');
+      const response = await fetch(`${backendBaseUrl()}/api/auth/join-code`);
       if (!response.ok) {
         throw new Error(`Join code request failed: ${response.status}`);
       }

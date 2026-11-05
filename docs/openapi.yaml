@@ -19,6 +19,96 @@ security:
   - BearerAuth: []
 
 paths:
+  /api/v1/state/light:
+    get:
+      summary: Tiny mobile snapshot (no setlist file contents)
+      responses:
+        '200':
+          description: Light state with fingerprint
+  /api/v1/sync:
+    get:
+      summary: Delta sync for mobile (changed flag + light state)
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Sync result
+  /api/v1/setlist/search:
+    get:
+      summary: Setlist search with optional sentence-first ranking
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: experimental
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Ranked setlist hits
+  /api/v1/bible/search:
+    get:
+      summary: Bible search (experimental=true enables sentence-first ranking)
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: searchAll
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: experimental
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Bible search results
+  /api/v1/schedule:
+    get:
+      summary: Run-sheet clock snapshot
+      responses:
+        '200':
+          description: Schedule snapshot
+  /api/v1/schedule/control:
+    post:
+      summary: Control the run-sheet clock (start/pause/resume/stop/next/prev)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - action
+              properties:
+                action:
+                  type: string
+      responses:
+        '200':
+          description: Updated schedule snapshot
   /api/auth/token:
     post:
       summary: Generate an authentication token

@@ -44,6 +44,17 @@ curl -H "Authorization: Bearer <token>" http://192.168.1.100:4000/api/v1/status
 
 Valid `clientType` values: `desktop`, `web`, `output1`, `output2`, `stage`, `mobile`, `api`.
 
+### Tailscale (off-site controllers)
+The server binds `0.0.0.0` and allows the Tailscale CGNAT range (`100.64.0.0/10`)
+plus `*.ts.net` origins through REST and Socket.IO CORS. To drive the show
+from outside the church Wi-Fi:
+1. Put the desktop and the phone on the same tailnet.
+2. On the desktop: **File > Connect Mobile Controller** — the QR dialog lists
+   LAN and Tailscale (`100.x`) addresses; pick the Tailscale one for off-site.
+3. On the phone: type the `100.x` IP or `<name>.tail*.ts.net` MagicDNS name in
+   the manual field (mDNS does not cross a tailnet, and the `/24` sweep only
+   finds same-subnet LAN peers). Pair with the 6-digit join code as usual.
+
 Permissions by client type (`server/index.js`):
 
 | clientType | permissions |
@@ -342,6 +353,9 @@ Query params:
 - `q` (required; alias `query`): search query or reference (e.g., "John 3:16" or "love")
 - `limit` (optional): max results, default 20, max 100
 - `searchAll=true` (optional): search all loaded bibles
+- `experimental=true` (optional): sentence-first ranking (same wins as the
+  desktop Experimental flag — a sentence query ranks the verse containing the
+  whole sentence first instead of OR-matching words)
 
 Response example:
 
@@ -382,6 +396,49 @@ List loaded bibles.
   "activeBible": { "id": "bible_kjv", "name": "KJV", "bookCount": 66 }
 }
 ```
+
+## Mobile fast path (light state + delta sync)
+Phones on church Wi-Fi or a Tailscale relay use these instead of the full
+`currentState` (which ships every setlist file's *content* and can be 100KB+
+for a 1KB lyric).
+
+### GET /api/v1/state/light
+Tiny snapshot for phones (no file contents, ~2-4KB): `lyrics`,
+`selectedLine`, `lyricsFileName`, `isOutputOn`, `showState`, `ticker`,
+per-output enables, `setlist` (metadata only), schedule summary
+(`scheduleLoaded`, `scheduleStatus`, `scheduleName`), and `fingerprint`.
+
+### GET /api/v1/sync?since=<fingerprint>
+Delta sync. `{ "changed": false, "fingerprint" }` (~100 bytes) when nothing
+changed; otherwise `{ "changed": true, "fingerprint", "state": { …light… } }`.
+The Flutter app polls this every 3s only while the socket is down.
+
+Socket equivalents: emit `requestLightState` (replies `currentState` with
+`light: true`) or `requestSync` `{ since }` (replies `syncState`).
+
+## Setlist search (sentence-first)
+
+### GET /api/v1/setlist/search?q=...&experimental=true&limit=20
+Ports the desktop file-navigator ranking to mobile. `experimental=true`
+(default on in the app) ranks whole-sentence matches first. Response:
+`{ "success": true, "query", "count", "results": [{ "file": { "id",
+"displayName", "originalName", "fileType" }, "score", "matchedField",
+"sentence" }], "experimental", "totalSetlist" }`.
+
+## Scheduler (run-sheet clock)
+
+### GET /api/v1/schedule
+Authoritative snapshot: `{ "success": true, "loaded", "status",
+"schedule": { "name", "items": […] }, "itemIndex", … }`.
+
+### POST /api/v1/schedule/control
+Body: `{ "action": "start" | "pause" | "resume" | "stop" | "next" | "prev" |
+"replan" | "reconcile", …extra }`. `replan` takes `startEpochMs`;
+`reconcile` takes `actualStartEpochMs` + `strategy` (`shift`|`compress`).
+`POST /api/v1/schedule/load` accepts a full schedule document. The Flutter
+Schedule tab uses these over REST so it works even while the socket is
+reconnecting. Socket equivalents (`scheduleLoad`, `scheduleControl`,
+`requestSchedule` → `scheduleState`) are unchanged.
 
 ## Background Media
 

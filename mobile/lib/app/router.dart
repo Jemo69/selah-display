@@ -1,4 +1,4 @@
-/// App navigation: /connect → /pair → shell (control, setlist, bible, settings).
+/// App navigation: /connect → /pair → shell (control, setlist, bible, schedule, settings).
 library;
 
 import 'package:go_router/go_router.dart';
@@ -8,6 +8,7 @@ import '../features/bible/bible_screen.dart';
 import '../features/control/control_screen.dart';
 import '../features/discovery/discovery_screen.dart';
 import '../features/pairing/pairing_screen.dart';
+import '../features/schedule/schedule_screen.dart';
 import '../features/setlist/setlist_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/shell/app_shell.dart';
@@ -41,6 +42,10 @@ final appRouter = GoRouter(
         GoRoute(
           path: '/bible',
           pageBuilder: (_, _) => const NoTransitionPage(child: BibleScreen()),
+        ),
+        GoRoute(
+          path: '/schedule',
+          pageBuilder: (_, _) => const NoTransitionPage(child: ScheduleScreen()),
         ),
         GoRoute(
           path: '/settings',
