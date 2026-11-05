@@ -51,11 +51,53 @@ jobs:
 
       - run: flutter test
 
-      - name: Build release APK
+      - name: Resolve version
+        id: version
+        run: |
+          VER=$(grep '^version:' pubspec.yaml | sed 's/version: //;s/+.*//')
+          echo "name=$VER" >> "$GITHUB_OUTPUT"
+          echo "Version: $VER"
+
+      - name: Warn on debug signing
+        if: env.KEYSTORE_BASE64 == ''
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          echo '::warning::No KEYSTORE secrets — release artifacts will carry DEBUG signing. Sideload-only; do not upload the AAB to Play.'
+
+      - name: Build release APK (sideload)
         run: flutter build apk --release
 
-      - name: Attach APK to GitHub Release
+      - name: Build app bundle (Play Store)
+        run: flutter build appbundle --release
+
+      - name: Rename artifacts with version
+        run: |
+          VER='${{ steps.version.outputs.name }}'
+          cp build/app/outputs/flutter-apk/app-release.apk "selah-mobile-${VER}.apk"
+          cp build/app/outputs/bundle/release/app-release.aab "selah-mobile-${VER}.aab"
+          ls -la selah-mobile-*
+
+      - name: Attach artifacts to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: mobile/build/app/outputs/flutter-apk/app-release.apk
+          files: |
+            mobile/selah-mobile-*.apk
+            mobile/selah-mobile-*.aab
+
+  validate-ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      # Unsigned: proves the iOS build stays green without certs.
+      # Store/TestFlight distribution still needs Apple hardware + certs.
+      - run: flutter build ios --release --no-codesign

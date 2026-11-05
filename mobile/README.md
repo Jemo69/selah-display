@@ -7,8 +7,19 @@ and Bible quick-load.
 
 ## Download
 
-Signed release APKs are attached to GitHub Releases
-(`mobile-v*` tags build automatically via `.github/workflows/mobile-release.yml`).
+Release builds are attached to GitHub Releases as versioned artifacts:
+`selah-mobile-<version>.apk` (sideload) and `selah-mobile-<version>.aab`
+(Google Play upload). They build automatically from `mobile-v*` tags via
+`.github/workflows/mobile-release.yml`.
+
+### Cutting a release
+
+```sh
+npm run release:mobile   # bump pubspec, commit, tag mobile-vX.Y.Z, push — CI builds APK + AAB
+```
+
+Or tag manually: `git tag -a mobile-v1.2.0 -m "..." && git push origin mobile-v1.2.0`.
+`workflow_dispatch` also works (builds + validates without attaching).
 
 ## Pairing
 
