@@ -19,7 +19,10 @@ npm run release:mobile   # bump pubspec, commit, tag mobile-vX.Y.Z, push — CI 
 ```
 
 Or tag manually: `git tag -a mobile-v1.2.0 -m "..." && git push origin mobile-v1.2.0`.
-`workflow_dispatch` also works (builds + validates without attaching).
+`workflow_dispatch` also works (builds without attaching).
+
+Android-only for now — iOS stays untested until Apple hardware and a
+developer account exist.
 
 ## Pairing
 

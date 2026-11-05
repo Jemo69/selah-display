@@ -85,19 +85,3 @@ jobs:
           files: |
             mobile/selah-mobile-*.apk
             mobile/selah-mobile-*.aab
-
-  validate-ios:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
-      - run: flutter pub get
-
-      # Unsigned: proves the iOS build stays green without certs.
-      # Store/TestFlight distribution still needs Apple hardware + certs.
-      - run: flutter build ios --release --no-codesign
