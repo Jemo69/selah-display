@@ -4,7 +4,7 @@ openapi: 3.0.0
 
 info:
   title: Selah App REST API
-  version: 6.16.1
+  version: 6.17.0
   description: >
     API documentation for the Selah App's Express REST API. JWTs minted here
     are required for Socket.IO connections (`auth.token`). Desktop tokens in production

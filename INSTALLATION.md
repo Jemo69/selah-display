@@ -2,7 +2,7 @@
 
 Lyrics, Scripture, and sermon assist for streaming, church services and other live events
 
-Version: 6.16.1 | Windows 10/11 (64-bit)
+Version: 6.17.0 | Windows 10/11 (64-bit)
 
 
 ###### **What is Selah?**
@@ -51,14 +51,14 @@ Selah is a free desktop app that provides perfectly clear, sharp and transparent
 **1. Download Latest Release**
 
 **Windows:**
-&nbsp;  [​Click here to download for Windows​](https://github.com/Jemo69/selah-display/releases/download/v6.16.1/Selah-6.16.1-Windows-Setup.exe)
+&nbsp;  [​Click here to download for Windows​](https://github.com/Jemo69/selah-display/releases/download/v6.17.0/Selah-6.17.0-Windows-Setup.exe)
 
 **MacOS:**
-&nbsp;  [​Click here to download for Apple Silicon (M1/M2/M3, etc.)​](https://github.com/Jemo69/selah-display/releases/download/v6.16.1/Selah-6.16.1-macOS-arm64.dmg)
-&nbsp;  [​Click here to download for Intel Mac​](https://github.com/Jemo69/selah-display/releases/download/v6.16.1/Selah-6.16.1-macOS-x64.dmg)
+&nbsp;  [​Click here to download for Apple Silicon (M1/M2/M3, etc.)​](https://github.com/Jemo69/selah-display/releases/download/v6.17.0/Selah-6.17.0-macOS-arm64.dmg)
+&nbsp;  [​Click here to download for Intel Mac​](https://github.com/Jemo69/selah-display/releases/download/v6.17.0/Selah-6.17.0-macOS-x64.dmg)
 
 **Linux:**
-&nbsp;  [​Click here to download for Linux​](https://github.com/Jemo69/selah-display/releases/download/v6.16.1/Selah-6.16.1-Linux.AppImage)
+&nbsp;  [​Click here to download for Linux​](https://github.com/Jemo69/selah-display/releases/download/v6.17.0/Selah-6.17.0-Linux.AppImage)
 
 ---
 
