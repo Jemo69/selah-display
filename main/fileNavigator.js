@@ -1080,7 +1080,7 @@ export async function rebuildFileNavigatorIndex() {
   return getFileNavigatorState();
 }
 
-export async function searchFileNavigator({ query = '', fileTypes = [], limit = 80, searchContent = true, experimental = false } = {}) {
+export async function searchFileNavigator({ query = '', fileTypes = [], limit = 80, searchContent = true, experimental = true } = {}) {
   await ensureInitialized();
   const parsed = parseFileNavigatorQuery(query);
   parsed.searchContent = searchContent !== false;
@@ -1108,12 +1108,12 @@ export async function searchFileNavigator({ query = '', fileTypes = [], limit = 
     //    keystroke queries resolve here. Fuzzy pass only when cheap finds
     //    nothing (typo queries). Full-index fallback only when candidates
     //    are empty or both tiers miss, preserving R1 typo recall.
-    // Phrase-first pruning for snippet queries (>=3 terms, default scorer):
+    // Phrase-first pruning for snippet queries (>=3 terms, both scorers):
     // pair-posting intersection collapses ~21 unigram candidates to just
     // the phrase holders. Falls back to unigram intersection when a pair
     // is missing (typos, stopword-only gaps) — same recall, less scoring.
     let candidateKeys = null;
-    if (experimental !== true && parsed.terms.length >= 3) {
+    if (parsed.terms.length >= 3) {
       candidateKeys = navigatorTokenIndex.findPhraseCandidateKeys(parsed.terms);
     }
     if (!candidateKeys || candidateKeys.size === 0) {
@@ -1124,7 +1124,7 @@ export async function searchFileNavigator({ query = '', fileTypes = [], limit = 
       for (const key of keys) {
         const record = records.get(key);
         if (!record) continue;
-        const match = experimental === true
+        const match = experimental !== false
           ? scoreNavigatorSearchRecordExperimental(record, parsed)
           : scoreNavigatorSearchRecord(record, parsed, { fuzzy });
         if (!match) continue;
@@ -1143,7 +1143,7 @@ export async function searchFileNavigator({ query = '', fileTypes = [], limit = 
     // 3. R1 Fallback: if candidates were empty or scored 0 results (typo query, fuzzy, edit-distance)
     if (scored.length === 0) {
       for (const record of records.values()) {
-        const match = experimental === true
+        const match = experimental !== false
           ? scoreNavigatorSearchRecordExperimental(record, parsed)
           : scoreNavigatorSearchRecord(record, parsed);
         if (!match) continue;

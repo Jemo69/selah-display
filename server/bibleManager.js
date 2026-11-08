@@ -135,7 +135,7 @@ export function removeBible(id) {
   log.info(`Bible removed: ${id}`);
 }
 
-export function search(query, limit = 50, searchAll = false, experimental = false) {
+export function search(query, limit = 50, searchAll = false, experimental = true) {
   const current = getActiveBible();
   if (!current) return [];
   try {
@@ -145,7 +145,7 @@ export function search(query, limit = 50, searchAll = false, experimental = fals
         attachSearchIndex(bible);
       }
     }
-    const results = experimental === true
+    const results = experimental !== false
       ? searchBibleExperimental(current, query, bibles, limit, defaultBibleId, searchAll)
       : searchBible(current, query, bibles, limit, defaultBibleId, searchAll);
     return results || [];

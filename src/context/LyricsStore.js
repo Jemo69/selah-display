@@ -303,8 +303,8 @@ const useLyricsStore = create(
       schedulerEnabled: false,
       previewMultiview: defaultPreviewMultiview(),
       bibleVerseEditorEnabled: false,
-      // Sentence-first search ranking (Experimental) — default OFF.
-      sentenceSearchExperimental: false,
+      // Sentence-first search ranking — default ON (graduated from Experimental).
+      sentenceSearchExperimental: true,
       // Metronome (ported from FreeShow). Config only — the live beat clock
       // lives in the engine module so it survives remounts without persisting.
       metronomeSettings: defaultMetronomeSettings(),
@@ -870,7 +870,7 @@ const useLyricsStore = create(
         schedulerEnabled: state.schedulerEnabled ?? false,
         previewMultiview: normalizePreviewMultiview(state.previewMultiview),
         bibleVerseEditorEnabled: state.bibleVerseEditorEnabled ?? false,
-        sentenceSearchExperimental: state.sentenceSearchExperimental ?? false,
+        sentenceSearchExperimental: state.sentenceSearchExperimental ?? true,
         modeTemplates: state.modeTemplates || {
           output1: { enabled: false, song: null, bible: null, freenote: null },
           output2: { enabled: false, song: null, bible: null, freenote: null },
@@ -950,7 +950,7 @@ const useLyricsStore = create(
           if (state.hotReloadEnabled === undefined) state.hotReloadEnabled = true;
           if (state.autoGroupLines === undefined) state.autoGroupLines = true;
           if (state.bibleVerseEditorEnabled === undefined) state.bibleVerseEditorEnabled = false;
-          if (state.sentenceSearchExperimental === undefined) state.sentenceSearchExperimental = false;
+          if (state.sentenceSearchExperimental === undefined) state.sentenceSearchExperimental = true;
           if (!Array.isArray(state.httpActionButtons)) state.httpActionButtons = [];
           // Buttons saved before dynamic input existed have no `variables` key.
           state.httpActionButtons = state.httpActionButtons.map((b) => (

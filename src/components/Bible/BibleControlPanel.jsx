@@ -88,7 +88,7 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
 
   const output1Settings = useLyricsStore((s) => s.output1Settings) || {};
   const bibleVerseEditorEnabled = useLyricsStore((s) => s.bibleVerseEditorEnabled ?? false);
-  const sentenceExperimental = useLyricsStore((s) => s.sentenceSearchExperimental === true);
+  const sentenceExperimental = useLyricsStore((s) => s.sentenceSearchExperimental ?? true);
   const isOutputOn = useLyricsStore((s) => s.isOutputOn);
   const setIsOutputOn = useLyricsStore((s) => s.setIsOutputOn);
   const controlSocket = useControlSocket?.() || null;

@@ -151,10 +151,22 @@ describe('bibleSearch.worker experimental flag', () => {
     expect(list[0].reference).toBe('John 3:16');
   });
 
-  it('omitted flag keeps the default per-word ranking path', async () => {
+  it('omitted flag defaults to sentence-first ranking (typo query finds John 3:16)', async () => {
     const handler = await loadHandler();
     const bible = sentenceBible();
     handler({ data: { query: 'for God so love the word', currentBible: bible, allBibles: {}, maxResults: 10, qid: 1 } });
+    const results = postMessage.mock.calls[0][0];
+    const list = Array.isArray(results) ? results : results.results;
+    // Sentence-first is default ON: omitted flag finds John 3:16.
+    expect(Array.isArray(list)).toBe(true);
+    expect(list.length).toBeGreaterThan(0);
+    expect(list[0].reference).toBe('John 3:16');
+  });
+
+  it('experimental:false opts out to the per-word ranking path', async () => {
+    const handler = await loadHandler();
+    const bible = sentenceBible();
+    handler({ data: { query: 'for God so love the word', currentBible: bible, allBibles: {}, maxResults: 10, qid: 1, experimental: false } });
     const results = postMessage.mock.calls[0][0];
     const list = Array.isArray(results) ? results : results.results;
     // Default indexed path misses the typo query entirely (capped-posting

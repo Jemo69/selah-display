@@ -351,10 +351,8 @@ router.get('/bible/search', (req, res) => {
     const q = req.query.q || req.query.query;
     const limit = parseInt(req.query.limit || '20', 10);
     const searchAll = String(req.query.searchAll || '').toLowerCase() === 'true';
-    // Sentence-first ranking (Experimental on desktop: User Preferences >
-    // Experimental > Sentence Search Ranking). Mobile passes
-    // ?experimental=true to get the same "hear whole sentences first" wins.
-    const experimental = ['true', '1', 'sentence'].includes(String(req.query.experimental || '').toLowerCase());
+    // Sentence-first ranking (default ON desktop + mobile; pass ?experimental=false to opt out).
+    const experimental = !['false', '0', 'no', 'off'].includes(String(req.query.experimental ?? 'true').toLowerCase());
 
     if (!q) return res.status(400).json({ success: false, error: 'q query param required' });
 
@@ -432,7 +430,7 @@ router.get('/setlist/search', (req, res) => {
   try {
     const q = String(req.query.q || req.query.query || '');
     const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
-    const experimental = ['true', '1', 'sentence'].includes(String(req.query.experimental || '').toLowerCase());
+    const experimental = !['false', '0', 'no', 'off'].includes(String(req.query.experimental ?? 'true').toLowerCase());
     if (!q.trim()) return res.status(400).json({ success: false, error: 'q query param required' });
     const parsed = parseFileNavigatorQuery(q);
     const files = getSetlistFiles();
@@ -444,7 +442,7 @@ router.get('/setlist/search', (req, res) => {
         fileType: f.fileType || 'txt',
         contentText: typeof f.content === 'string' ? f.content.slice(0, 20000) : '',
       });
-      const hit = experimental
+      const hit = experimental !== false
         ? scoreNavigatorRecordSentence(record, parsed)
         : scoreNavigatorSearchRecord(record, parsed);
       if (hit) scored.push({ file: { id: f.id, displayName: f.displayName, originalName: f.originalName, fileType: f.fileType }, score: hit.score, matchedField: hit.matchedField, sentence: Boolean(hit.sentence) });

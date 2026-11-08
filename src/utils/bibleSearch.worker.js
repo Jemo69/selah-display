@@ -7,7 +7,7 @@ let cachedCurrentBible = null;
 const queryCache = new Map();
 const QUERY_CACHE_LIMIT = 100;
 
-function cacheKey(query, maxResults, defaultBibleId, searchAll, experimental = false) {
+function cacheKey(query, maxResults, defaultBibleId, searchAll, experimental = true) {
   const ids = Object.keys(cachedBibles).sort().join(',');
   const cur = cachedCurrentBible?.id || '';
   return `${cur}|${ids}|${String(query).toLowerCase()}|${maxResults}|${defaultBibleId}|${searchAll}|exp:${experimental ? 1 : 0}`;
@@ -30,7 +30,7 @@ function cacheSet(key, value) {
 }
 
 self.onmessage = function(e) {
-  const { currentBible, query, allBibles, maxResults, defaultBibleId, searchAll, refreshBibles, pruneBibles, qid, experimental } = e.data; // experimental: sentence-first ranking (Experimental flag)
+  const { currentBible, query, allBibles, maxResults, defaultBibleId, searchAll, refreshBibles, pruneBibles, qid, experimental } = e.data; // sentence-first ranking (default ON)
 
   if (refreshBibles && allBibles && typeof allBibles === 'object') {
     cachedBibles = allBibles;
@@ -50,7 +50,7 @@ self.onmessage = function(e) {
 
   const activeCurrent = currentBible || cachedCurrentBible;
   if (typeof query === 'string' && query.trim().length > 0) {
-    const useExp = experimental === true;
+    const useExp = experimental !== false;
     const key = cacheKey(query, maxResults, defaultBibleId, searchAll, useExp);
     const cached = cacheGet(key);
     if (cached) {

@@ -52,7 +52,7 @@ export default function BibleSearchModal({ isOpen, onClose, onSelectVerses, dark
   } = useBibleStore();
 
   const { showToast } = useToast();
-  const sentenceExperimental = useLyricsStore((s) => s.sentenceSearchExperimental === true);
+  const sentenceExperimental = useLyricsStore((s) => s.sentenceSearchExperimental ?? true);
 
   useEffect(() => {
     if (!isOpen) {

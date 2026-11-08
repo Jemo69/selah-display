@@ -1219,8 +1219,8 @@ const ExperimentalSection = ({ darkMode }) => {
     showToast({
       title: checked ? 'Sentence search enabled' : 'Sentence search disabled',
       message: checked
-        ? 'Bible + file search now rank whole sentences first (experimental). Reference lookups like isa 44 5 keep working.'
-        : 'Bible + file search use the default per-word ranking.',
+        ? 'Bible + file search now rank whole sentences first (on by default). Reference lookups like isa 44 5 keep working.'
+        : 'Bible + file search use the per-word ranking.',
       variant: checked ? 'success' : 'info'
     });
   };
@@ -1246,10 +1246,10 @@ const ExperimentalSection = ({ darkMode }) => {
               </span>
               <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
                 darkMode
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                  : 'bg-amber-100 text-amber-800 border border-amber-300'
+                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                  : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
               }`}>
-                Experimental
+                Default ON
               </span>
               <span className={`text-[10px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded ${
                 sentenceSearchEnabled
@@ -1260,7 +1260,7 @@ const ExperimentalSection = ({ darkMode }) => {
               </span>
             </div>
             <p className={`text-xs leading-relaxed ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-              Rank whole sentences first: “for God so love the world” puts John 3:16 first, “water to into wine” ranks the sentence above single-word hits. Reference lookups like “isa 44 5” keep working.
+              Rank whole sentences first (on by default): “for God so love the world” puts John 3:16 first, “water to into wine” ranks the sentence above single-word hits. Reference lookups like “isa 44 5” keep working.
             </p>
           </div>
           <Switch checked={sentenceSearchEnabled} onCheckedChange={handleToggleSentenceSearch} aria-label="Toggle Sentence Search Ranking" />

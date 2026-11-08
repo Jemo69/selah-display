@@ -32,7 +32,7 @@ export default function BibleBrowser({
     [bibleMetadata, defaultBibleId]
   );
 
-  const sentenceExperimental = useLyricsStore((s) => s.sentenceSearchExperimental === true);
+  const sentenceExperimental = useLyricsStore((s) => s.sentenceSearchExperimental ?? true);
 
   useEffect(() => {
     if (!activeBibleId || !currentBible) {

@@ -117,9 +117,7 @@ export default function FileNavigatorModal({ darkMode = false }) {
       if (!lyricSearchEnabled) {
         payload.searchContent = false;
       }
-      if (sentenceExperimental) {
-        payload.experimental = true;
-      }
+      payload.experimental = sentenceExperimental !== false;
       const result = await window.electronAPI.fileNavigator.search(payload);
       if (searchId !== searchCounterRef.current) return;
       const nextResults = result?.success ? result.results : [];

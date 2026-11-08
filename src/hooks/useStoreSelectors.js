@@ -370,7 +370,7 @@ export const useSentenceSearchExperimental = () =>
     useStoreWithEqualityFn(
         useLyricsStore,
         (state) => ({
-            enabled: state.sentenceSearchExperimental ?? false,
+            enabled: state.sentenceSearchExperimental ?? true,
             setEnabled: state.setSentenceSearchExperimental,
         }),
         shallow
