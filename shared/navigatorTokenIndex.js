@@ -19,7 +19,11 @@ const defaultNormalizeKey = (value) => (
  */
 export function extractNavigatorSearchTokens(text = '', normalizeTextFn = normalizeNavigatorSearchText) {
   if (!text) return [];
-  const normalized = normalizeTextFn(text);
+  // Fast path: already-normalized query terms (lowercase alphanumerics +
+  // spaces) skip the NFKD/lowercase pass — normalization is a no-op on
+  // them, and this runs per term per keystroke. Raw content still takes
+  // the full path. Token output is identical either way.
+  const normalized = /^[a-z0-9 ]+$/.test(text) ? text : normalizeTextFn(text);
   return normalized
     .replace(/[^a-z0-9\s]/gi, ' ')
     .split(/\s+/)
@@ -47,17 +51,43 @@ export function createNavigatorTokenIndex({
   const fileTokens = new Map();
   const tokenPairs = new Map();
   const filePairs = new Map();
+  // Title-word postings (stem tokens only): single-weak-term queries
+  // ("you", "th") resolve title matches with one Map get instead of
+  // scanning every record. Exact tokens only — the scorer's weak path is
+  // exact-word title matching, so this is recall-identical for stems.
+  const stemTokenIndex = new Map();
+  const fileStemTokens = new Map();
+  // Lazily sorted vocabulary for prefix-range lookup (binary search +
+  // bounded scan instead of a per-keystroke full-vocabulary scan).
+  // Invalidated on every index mutation; rebuilt on next typo-query use.
+  let sortedTokens = null;
+  const VARIANT_PREFIX_CAP = 2000;
 
   function clearIndex() {
     tokenIndex.clear();
     fileTokens.clear();
     tokenPairs.clear();
     filePairs.clear();
+    stemTokenIndex.clear();
+    fileStemTokens.clear();
+    sortedTokens = null;
   }
 
   function dropRecordTokens(filePath) {
     if (!filePath) return;
     const key = normalizeKeyFn(filePath);
+    sortedTokens = null;
+    const existingStemTokens = fileStemTokens.get(key);
+    if (existingStemTokens) {
+      for (const token of existingStemTokens) {
+        const keySet = stemTokenIndex.get(token);
+        if (keySet) {
+          keySet.delete(key);
+          if (keySet.size === 0) stemTokenIndex.delete(token);
+        }
+      }
+      fileStemTokens.delete(key);
+    }
     const existingTokens = fileTokens.get(key);
     if (existingTokens) {
       for (const token of existingTokens) {
@@ -105,6 +135,7 @@ export function createNavigatorTokenIndex({
 
     // F1: Index normalizedStem (or stem derived from fileName), avoiding raw extension pollution
     const stem = record.normalizedStem || (record.fileName ? String(record.fileName).replace(/\.[^/.\\]+$/, '') : '');
+    const stemTokens = new Set(extractNavigatorSearchTokens(stem, normalizeTextFn));
     addFromText(stem);
 
     // Index full normalized content text
@@ -112,6 +143,7 @@ export function createNavigatorTokenIndex({
     addFromText(content);
 
     if (tokens.size === 0) return;
+    sortedTokens = null;
 
     fileTokens.set(key, tokens);
     for (const token of tokens) {
@@ -121,6 +153,17 @@ export function createNavigatorTokenIndex({
         tokenIndex.set(token, keySet);
       }
       keySet.add(key);
+    }
+    if (stemTokens.size > 0) {
+      fileStemTokens.set(key, stemTokens);
+      for (const token of stemTokens) {
+        let keySet = stemTokenIndex.get(token);
+        if (!keySet) {
+          keySet = new Set();
+          stemTokenIndex.set(token, keySet);
+        }
+        keySet.add(key);
+      }
     }
     if (pairs.size > 0) {
       filePairs.set(key, pairs);
@@ -248,15 +291,282 @@ export function createNavigatorTokenIndex({
     return candidateKeys;
   }
 
+  /**
+   * Typo-term resolution for terms with NO exact posting.
+   * Covers the scorer walk's match space without scanning records:
+   * edit-1 neighbors (deletions/substitutions/insertions — the typo
+   * case) plus a bounded prefix range over the sorted vocabulary
+   * (inflections and longer words — the "loving" → "lovingkindness"
+   * case the walk's prefix branch would otherwise only reach via a
+   * full-corpus fallback scan). Hash lookups + one binary search, so a
+   * typo query meets dozens of candidates instead of all 445+ records.
+   * Returns a Set, or null when unresolvable (caller keeps full-scan
+   * fallback — recall never regresses). Only called for missing terms
+   * (length >= 4); exact postings never pay this cost.
+   */
+  function editOneVariants(term) {
+    const out = new Set();
+    const t = String(term || '');
+    if (!t || t.length < 4) return out;
+    for (let i = 0; i < t.length; i++) out.add(t.slice(0, i) + t.slice(i + 1));
+    for (let i = 0; i < t.length; i++) {
+      for (let c = 97; c <= 122; c++) {
+        const ch = String.fromCharCode(c);
+        if (ch !== t[i]) out.add(t.slice(0, i) + ch + t.slice(i + 1));
+      }
+    }
+    for (let i = 0; i <= t.length; i++) {
+      for (let c = 97; c <= 122; c++) out.add(t.slice(0, i) + String.fromCharCode(c) + t.slice(i));
+    }
+    out.delete(t);
+    return out;
+  }
+
+  function expandMissingTermKeys(term) {
+    const t = String(term || '');
+    if (!t || t.length < 4) return null;
+    const union = new Set();
+    for (const v of editOneVariants(t)) {
+      const postings = tokenIndex.get(v);
+      if (postings) {
+        for (const k of postings) union.add(k);
+      }
+    }
+    if (!sortedTokens) sortedTokens = [...tokenIndex.keys()].sort();
+    let lo = 0;
+    let hi = sortedTokens.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (sortedTokens[mid] < t) lo = mid + 1;
+      else hi = mid;
+    }
+    for (let i = lo; i < sortedTokens.length; i++) {
+      const key = sortedTokens[i];
+      if (!key.startsWith(t)) break;
+      if (key === t) continue;
+      const postings = tokenIndex.get(key);
+      if (postings) {
+        for (const k of postings) {
+          union.add(k);
+          if (union.size >= VARIANT_PREFIX_CAP) break;
+        }
+      }
+      if (union.size >= VARIANT_PREFIX_CAP) break;
+    }
+    return union.size > 0 ? union : null;
+  }
+
+  /**
+   * Variant TOKENS for a missing term (sibling of expandMissingTermKeys,
+   * which returns holder keys). Edit-1 neighbors with postings first;
+   * the bounded prefix range only runs when no variant hits — same recall
+   * signal, but the caller (per-query fuzzy map) avoids re-deriving it
+   * per record. Returns an array (possibly empty), capped.
+   */
+  const VARIANT_TOKEN_CAP = 64;
+  function expandMissingTermVariants(term) {
+    const t = String(term || '');
+    if (!t || t.length < 4) return [];
+    const out = [];
+    const seen = new Set();
+    for (const v of editOneVariants(t)) {
+      if (seen.has(v)) continue;
+      seen.add(v);
+      if (tokenIndex.has(v)) {
+        out.push(v);
+        if (out.length >= VARIANT_TOKEN_CAP) return out;
+      }
+    }
+    if (out.length > 0) return out;
+    if (!sortedTokens) sortedTokens = [...tokenIndex.keys()].sort();
+    let lo = 0;
+    let hi = sortedTokens.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (sortedTokens[mid] < t) lo = mid + 1;
+      else hi = mid;
+    }
+    for (let i = lo; i < sortedTokens.length && out.length < VARIANT_TOKEN_CAP; i++) {
+      const key = sortedTokens[i];
+      if (!key.startsWith(t) || key === t) {
+        if (!key.startsWith(t)) break;
+        continue;
+      }
+      out.push(key);
+    }
+    return out;
+  }
+
+  /**
+   * Rarest-seeded unigram INTERSECTION (not just the rarest posting):
+   * start from the smallest exact posting (≤ cap holders) and require
+   * every other term's exact posting too — Set gets only, no pair
+   * merges. Same top results as the pair path (the walk filters and
+   * ranks identically; extras the pair path would miss are title-only
+   * or looser-span files ranked below holders), and an empty score
+   * falls back to the pair path as usual. Returns a fresh Set, or null.
+   */
+  function findRarestUnigramKeys(terms = [], cap = 12) {
+    const seen = new Set();
+    const validTerms = [];
+    for (const t of (Array.isArray(terms) ? terms : [])) {
+      for (const tok of extractNavigatorSearchTokens(t, normalizeTextFn)) {
+        if (tok && !seen.has(tok)) { seen.add(tok); validTerms.push(tok); }
+      }
+    }
+    if (validTerms.length === 0) return null;
+    validTerms.sort((a, b) => (tokenIndex.get(a)?.size ?? Infinity) - (tokenIndex.get(b)?.size ?? Infinity));
+    const first = tokenIndex.get(validTerms[0]);
+    if (!first || first.size === 0 || first.size > cap) return null;
+    const out = new Set();
+    outer: for (const k of first) {
+      for (let i = 1; i < validTerms.length; i++) {
+        const s = tokenIndex.get(validTerms[i]);
+        if (!s || !s.has(k)) continue outer;
+      }
+      out.add(k);
+    }
+    return out.size > 0 ? out : null;
+  }
+
+  /**
+   * Title-word holders: files whose stem (filename) holds the exact token.
+   * Powers the single-weak-term fast path ("you" matches titles only).
+   * Returns a fresh Set, or null.
+   */
+  function findStemKeys(term) {
+    const toks = extractNavigatorSearchTokens(term, normalizeTextFn);
+    if (toks.length === 0) return null;
+    const postings = stemTokenIndex.get(toks[0]);
+    if (!postings || postings.size === 0) return null;
+    return new Set(postings);
+  }
+
+  /**
+   * Candidate intersection that ALSO reports the variant tokens used
+   * for missing terms (edit-1 neighbors, prefix range on miss). The
+   * caller attaches `variants` to the parsed query so per-record scoring
+   * resolves fuzzy terms with Map gets instead of scanning every unique
+   * lyric token per record. Same holder sets as findCandidateKeysExpanded.
+   * Returns { keys, variants } — keys is an (often empty) Set; empty
+   * means unresolvable and the caller falls back. Dead terms are
+   * recorded as empty variant arrays so scoring skips them instantly.
+   */
+  function findCandidatesWithVariants(terms = []) {
+    const seen = new Set();
+    const validTerms = [];
+    for (const t of (Array.isArray(terms) ? terms : [])) {
+      for (const tok of extractNavigatorSearchTokens(t, normalizeTextFn)) {
+        if (tok && !seen.has(tok)) { seen.add(tok); validTerms.push(tok); }
+      }
+    }
+    if (validTerms.length === 0) return { keys: null, variants: {} };
+    const variants = {};
+    const termSets = [];
+    let unresolvable = false;
+    for (const term of validTerms) {
+      const exact = tokenIndex.get(term);
+      if (exact && exact.size > 0) {
+        termSets.push(exact);
+        continue;
+      }
+      const varTokens = expandMissingTermVariants(term);
+      // Empty array = known-dead term (no exact posting, no variants):
+      // the scorer treats it as an instant miss, skipping per-record
+      // unique-key scans. Keys stay empty so the caller still falls back.
+      variants[term] = varTokens;
+      if (varTokens.length === 0) {
+        unresolvable = true;
+        continue;
+      }
+      const union = new Set();
+      for (const v of varTokens) {
+        const postings = tokenIndex.get(v);
+        if (postings) for (const k of postings) union.add(k);
+      }
+      if (union.size === 0) {
+        unresolvable = true;
+        continue;
+      }
+      termSets.push(union);
+    }
+    if (unresolvable || termSets.length === 0) return { keys: new Set(), variants };
+    termSets.sort((a, b) => a.size - b.size);
+    let candidateKeys = new Set(termSets[0]);
+    for (let i = 1; i < termSets.length; i++) {
+      const s = termSets[i];
+      if (s.size < candidateKeys.size) {
+        const next = new Set();
+        for (const k of s) {
+          if (candidateKeys.has(k)) next.add(k);
+        }
+        candidateKeys = next;
+      } else {
+        for (const k of candidateKeys) {
+          if (!s.has(k)) candidateKeys.delete(k);
+        }
+      }
+      if (candidateKeys.size === 0) break;
+    }
+    return { keys: candidateKeys, variants };
+  }
+
+  function findCandidateKeysExpanded(terms = []) {
+    const seen = new Set();
+    const validTerms = [];
+    for (const t of (Array.isArray(terms) ? terms : [])) {
+      for (const tok of extractNavigatorSearchTokens(t, normalizeTextFn)) {
+        if (tok && !seen.has(tok)) { seen.add(tok); validTerms.push(tok); }
+      }
+    }
+    if (validTerms.length === 0) return null;
+    const termSets = [];
+    for (const term of validTerms) {
+      const exact = tokenIndex.get(term);
+      if (exact && exact.size > 0) {
+        termSets.push(exact);
+        continue;
+      }
+      const expanded = expandMissingTermKeys(term);
+      if (!expanded) return null;
+      termSets.push(expanded);
+    }
+    termSets.sort((a, b) => a.size - b.size);
+    let candidateKeys = new Set(termSets[0]);
+    for (let i = 1; i < termSets.length; i++) {
+      const s = termSets[i];
+      if (s.size < candidateKeys.size) {
+        const next = new Set();
+        for (const k of s) {
+          if (candidateKeys.has(k)) next.add(k);
+        }
+        candidateKeys = next;
+      } else {
+        for (const k of candidateKeys) {
+          if (!s.has(k)) candidateKeys.delete(k);
+        }
+      }
+      if (candidateKeys.size === 0) break;
+    }
+    return candidateKeys;
+  }
+
   return {
     tokenIndex,
     fileTokens,
     tokenPairs,
     filePairs,
+    stemTokenIndex,
     clearIndex,
     dropRecordTokens,
     indexRecordTokens,
     findCandidateKeys,
+    findCandidateKeysExpanded,
+    expandMissingTermKeys,
+    expandMissingTermVariants,
+    findCandidatesWithVariants,
     findPhraseCandidateKeys,
+    findRarestUnigramKeys,
+    findStemKeys,
   };
 }

@@ -9,8 +9,13 @@ import {
   createHighlightedSnippet,
   createNavigatorMatchSnippet,
   createNavigatorPreview,
+  createNavigatorSnippetFromLines,
+  extractQueryFlatTerms,
+  highlightNavigatorSnippetText,
+  isWeakNavigatorTerm,
   normalizeNavigatorSearchText,
   parseFileNavigatorQuery,
+  parseFileNavigatorQueryCached,
   prepareNavigatorSearchRecord,
   scoreNavigatorSearchRecord,
   scoreNavigatorSearchRecordExperimental,
@@ -685,6 +690,7 @@ async function performRebuild() {
       .filter(Boolean)
       .map((record) => [normalizeComparisonPath(record.filePath), record]));
     records = nextRecords;
+    invalidateFileNavigatorSearchCache();
     persistRecords(nextRecords);
     watchDirectories(availableRoots, directories);
     status = {
@@ -743,9 +749,20 @@ function publicRecord(record, { query = '', matchedField = null, searchContent =
   let matchSnippet = '';
   let matchSnippetHtml = '';
   if (searchContent && query && (record.fileType === 'txt' || record.fileType === 'lrc')) {
-    matchSnippet = createNavigatorMatchSnippet(record.contentText, query, record.fileType);
-    if (matchSnippet) {
-      matchSnippetHtml = createHighlightedSnippet(record.contentText, query, record.fileType);
+    // Lyric v3 fast path: precomputed snippet lines skip re-normalizing
+    // the full lyric body per result per keystroke. Falls back to the
+    // pure-function path for oversized files without precomputed lines.
+    const fastSnippet = createNavigatorSnippetFromLines(record, query);
+    if (fastSnippet !== null) {
+      matchSnippet = fastSnippet;
+      if (matchSnippet) {
+        matchSnippetHtml = highlightNavigatorSnippetText(matchSnippet, query);
+      }
+    } else {
+      matchSnippet = createNavigatorMatchSnippet(record.contentText, query, record.fileType);
+      if (matchSnippet) {
+        matchSnippetHtml = createHighlightedSnippet(record.contentText, query, record.fileType);
+      }
     }
   }
 
@@ -976,6 +993,9 @@ async function addFileNavigatorRootsUnlocked(rootPaths) {
       for (const addedPath of addedPaths) {
         rootIssues.delete(normalizeComparisonPath(addedPath));
       }
+      // F1: same stale-window concern as removal — invalidate now;
+      // queueRebuild invalidates again on completion.
+      invalidateFileNavigatorSearchCache();
       await persistConfig();
       await queueRebuild();
     } else if (rebuildPromise) {
@@ -1063,6 +1083,10 @@ export async function removeFileNavigatorRoot(rootPath) {
         }
       }
       records = survivingRecords;
+      // F1: invalidate synchronously — queueRebuild is async and a search
+      // landing between root removal and rebuild completion must not serve
+      // cached payloads holding deleted-root files.
+      invalidateFileNavigatorSearchCache();
       await persistConfig();
       await queueRebuild();
       releaseIndexingHold();
@@ -1080,20 +1104,84 @@ export async function rebuildFileNavigatorIndex() {
   return getFileNavigatorState();
 }
 
+// Lyric v3 keystroke cache: typing "amazing grace" fires a search per
+// keystroke ("a", "am", "ama", ...). Scoring is pure over (records
+// generation, query, flags), so cache the final public payloads. LRU-100
+// keeps memory bounded; rebuilds bump generation and invalidate.
+const searchCache = new Map();
+const SEARCH_CACHE_MAX = 100;
+let searchCacheGeneration = 0;
+
+function searchCacheKey(parsed, { limit, searchContent, experimental, requestedTypes }) {
+  // F4: key on the PARSED query (sorted terms + sorted type filters),
+  // not the raw string — whitespace/case variants of ext: filters that
+  // parse identically must share one entry. requestedTypes narrow the
+  // parsed filters, so they are keyed separately. Terms serialize as JSON
+  // (not join(' ')): quoted parses like `["amazing grace"]` and split
+  // parses like `["amazing","grace"]` join to the same string but score
+  // differently, so the join collided two parses into one cache entry.
+  return [
+    searchCacheGeneration,
+    JSON.stringify(parsed.terms || []),
+    [...(parsed.fileTypes || [])].sort().join(','),
+    [...(requestedTypes || [])].sort().join(','),
+    Number(limit) || 0,
+    searchContent !== false ? 'c1' : 'c0',
+    experimental !== false ? 'e1' : 'e0',
+  ].join('|');
+}
+
+// F2: cached payloads are shared across IPC calls — return a shallow copy
+// on hit (and store a copy) so no caller can mutate the cached array.
+function searchCacheGet(key) {
+  const hit = searchCache.get(key);
+  if (!hit) return null;
+  searchCache.delete(key);
+  searchCache.set(key, hit);
+  return hit.slice();
+}
+
+function searchCacheSet(key, value) {
+  const stored = Array.isArray(value) ? value.slice() : value;
+  if (searchCache.has(key)) searchCache.delete(key);
+  searchCache.set(key, stored);
+  while (searchCache.size > SEARCH_CACHE_MAX) {
+    const oldest = searchCache.keys().next().value;
+    searchCache.delete(oldest);
+  }
+  return stored.slice();
+}
+
+export function invalidateFileNavigatorSearchCache() {
+  searchCacheGeneration += 1;
+  searchCache.clear();
+}
+
 export async function searchFileNavigator({ query = '', fileTypes = [], limit = 80, searchContent = true, experimental = true } = {}) {
   await ensureInitialized();
-  const parsed = parseFileNavigatorQuery(query);
+  // Cached parse (hot: every keystroke + 2x per result); cloned because
+  // per-search state (searchContent, flatPhrase memo, narrowed fileTypes)
+  // must never leak into the shared cached object.
+  const fresh = parseFileNavigatorQueryCached(query);
+  const parsed = { ...fresh, terms: [...fresh.terms], fileTypes: [...fresh.fileTypes] };
   parsed.searchContent = searchContent !== false;
-  const queryHadTypeFilters = parsed.fileTypes.length > 0;
   const requestedTypes = [...new Set((Array.isArray(fileTypes) ? fileTypes : [])
     .map((value) => String(value || '').toLowerCase())
     .filter((value) => ['txt', 'lrc', 'md', 'rtf', 'docx'].includes(value)))];
+  const cacheKey = searchCacheKey(parsed, { limit, searchContent, experimental, requestedTypes });
+  const cached = searchCacheGet(cacheKey);
+  if (cached) return cached;
+  const queryHadTypeFilters = parsed.fileTypes.length > 0;
   if (requestedTypes.length > 0) {
     parsed.fileTypes = parsed.fileTypes.length > 0
       ? parsed.fileTypes.filter((value) => requestedTypes.includes(value))
       : requestedTypes;
   }
-  if (queryHadTypeFilters && requestedTypes.length > 0 && parsed.fileTypes.length === 0) return [];
+  if (queryHadTypeFilters && requestedTypes.length > 0 && parsed.fileTypes.length === 0) {
+    // F4: the empty-intersection path is deterministic — cache it too.
+    searchCacheSet(cacheKey, []);
+    return [];
+  }
 
   const scored = [];
   if (!parsed.terms.length) {
@@ -1103,21 +1191,47 @@ export async function searchFileNavigator({ query = '', fileTypes = [], limit = 
     }
   } else {
     // 1. Fast candidate lookup via inverted token index (rarest-first).
-    // 2. Two-tier scoring: cheap pass (exact/prefix/includes + content
-    //    phrase fast-path, no subsequence/edit-distance) first — snippet and
-    //    keystroke queries resolve here. Fuzzy pass only when cheap finds
-    //    nothing (typo queries). Full-index fallback only when candidates
-    //    are empty or both tiers miss, preserving R1 typo recall.
-    // Phrase-first pruning for snippet queries (>=3 terms, both scorers):
-    // pair-posting intersection collapses ~21 unigram candidates to just
-    // the phrase holders. Falls back to unigram intersection when a pair
-    // is missing (typos, stopword-only gaps) — same recall, less scoring.
+    // 2. Two-tier scoring: phrase-contiguity tier first (exact ordered
+    //    run via position lists, no full-content scan), sentence walk
+    //    second (position-ordered, typo-tolerant). Full-index fallback
+    //    only when candidates are empty or score nothing (R1 recall).
+    // Candidate priority: single weak keystroke → stem-word holders;
+    // tiny rarest posting (<=12) → score directly, skipping pair merges;
+    // else phrase-pair intersection; else typo-expanded unigram
+    // intersection (missing terms resolve via edit-1/prefix variants,
+    // whose tokens ride along on the parsed query for per-record fuzzy
+    // matching without per-record vocabulary scans).
     let candidateKeys = null;
-    if (parsed.terms.length >= 3) {
-      candidateKeys = navigatorTokenIndex.findPhraseCandidateKeys(parsed.terms);
+    // Single weak keystroke ("you", "th"): title holders only via the
+    // stem-word index — one Map get instead of a full-corpus walk. Null
+    // (no stem holds the term) falls through below; only a full scan can
+    // still surface path-only matches, exactly like the scorer fallback.
+    let singleWeakStem = false;
+    if (parsed.terms.length === 1 && isWeakNavigatorTerm(parsed.terms[0])) {
+      singleWeakStem = true;
+      candidateKeys = navigatorTokenIndex.findStemKeys(parsed.terms[0]);
     }
-    if (!candidateKeys || candidateKeys.size === 0) {
-      candidateKeys = navigatorTokenIndex.findCandidateKeys(parsed.terms);
+    if (!candidateKeys) {
+      if (parsed.terms.length >= 3 && !singleWeakStem) {
+        // Rarest-unigram shortcut: a tiny exact posting (<=12 holders)
+        // scores directly — same top results as pair intersection (the
+        // walk filters identically), skipping big pair-posting merges.
+        // Empty scores fall through to the pair path as usual.
+        candidateKeys = navigatorTokenIndex.findRarestUnigramKeys(parsed.terms, 12);
+      }
+      if ((!candidateKeys || candidateKeys.size === 0) && parsed.terms.length >= 3) {
+        candidateKeys = navigatorTokenIndex.findPhraseCandidateKeys(parsed.terms);
+      }
+    }
+    if ((!candidateKeys || candidateKeys.size === 0) && !singleWeakStem) {
+      const withVariants = navigatorTokenIndex.findCandidatesWithVariants(parsed.terms);
+      candidateKeys = withVariants.keys;
+      if (withVariants.variants && Object.keys(withVariants.variants).length > 0) {
+        // Per-query fuzzy map: per-record scoring resolves typo terms
+        // with Map gets instead of scanning every unique lyric token.
+        // Attached to the per-search clone — never the shared cached parse.
+        parsed.fuzzyVariants = withVariants.variants;
+      }
     }
     const scoreCandidates = (keys, fuzzy) => {
       const out = [];
@@ -1158,9 +1272,11 @@ export async function searchFileNavigator({ query = '', fileTypes = [], limit = 
   ));
   const requestedLimit = Number(limit);
   const safeLimit = Math.max(0, Math.min(MAX_SEARCH_RESULTS, Number.isFinite(requestedLimit) ? requestedLimit : 80));
-  return scored.slice(0, safeLimit).map(({ record, matchedField }) => (
+  const results = scored.slice(0, safeLimit).map(({ record, matchedField }) => (
     publicRecord(record, { query, matchedField, searchContent: parsed.searchContent })
   ));
+  // Return the stored copy so no caller can mutate the cached array.
+  return searchCacheSet(cacheKey, results);
 }
 
 async function resolveDirectoryWithinRoots(directoryPath) {
@@ -1352,6 +1468,7 @@ export async function refreshFileInNavigator(filePath) {
     if (!next) return false;
     records.set(key, next);
     persistSingleRecord(next);
+    invalidateFileNavigatorSearchCache();
     status = {
       ...status,
       indexedFiles: records.size,
@@ -1362,6 +1479,7 @@ export async function refreshFileInNavigator(filePath) {
   } catch {
     records.delete(key);
     navigatorTokenIndex.dropRecordTokens(key);
+    invalidateFileNavigatorSearchCache();
     try { database?.prepare('DELETE FROM navigator_files WHERE filePath = ?').run(normalized); } catch { }
     status = { ...status, indexedFiles: records.size };
     broadcast({ changedFilePath: normalized });
