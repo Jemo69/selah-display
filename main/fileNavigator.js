@@ -9,6 +9,8 @@ import {
   createHighlightedSnippet,
   createNavigatorMatchSnippet,
   createNavigatorPreview,
+  createNavigatorSnippetFromLines,
+  highlightNavigatorSnippetText,
   normalizeNavigatorSearchText,
   parseFileNavigatorQuery,
   prepareNavigatorSearchRecord,
@@ -685,6 +687,7 @@ async function performRebuild() {
       .filter(Boolean)
       .map((record) => [normalizeComparisonPath(record.filePath), record]));
     records = nextRecords;
+    invalidateFileNavigatorSearchCache();
     persistRecords(nextRecords);
     watchDirectories(availableRoots, directories);
     status = {
@@ -743,9 +746,20 @@ function publicRecord(record, { query = '', matchedField = null, searchContent =
   let matchSnippet = '';
   let matchSnippetHtml = '';
   if (searchContent && query && (record.fileType === 'txt' || record.fileType === 'lrc')) {
-    matchSnippet = createNavigatorMatchSnippet(record.contentText, query, record.fileType);
-    if (matchSnippet) {
-      matchSnippetHtml = createHighlightedSnippet(record.contentText, query, record.fileType);
+    // Lyric v3 fast path: precomputed snippet lines skip re-normalizing
+    // the full lyric body per result per keystroke. Falls back to the
+    // pure-function path for oversized files without precomputed lines.
+    const fastSnippet = createNavigatorSnippetFromLines(record, query);
+    if (fastSnippet !== null) {
+      matchSnippet = fastSnippet;
+      if (matchSnippet) {
+        matchSnippetHtml = highlightNavigatorSnippetText(matchSnippet, query);
+      }
+    } else {
+      matchSnippet = createNavigatorMatchSnippet(record.contentText, query, record.fileType);
+      if (matchSnippet) {
+        matchSnippetHtml = createHighlightedSnippet(record.contentText, query, record.fileType);
+      }
     }
   }
 
@@ -976,6 +990,9 @@ async function addFileNavigatorRootsUnlocked(rootPaths) {
       for (const addedPath of addedPaths) {
         rootIssues.delete(normalizeComparisonPath(addedPath));
       }
+      // F1: same stale-window concern as removal — invalidate now;
+      // queueRebuild invalidates again on completion.
+      invalidateFileNavigatorSearchCache();
       await persistConfig();
       await queueRebuild();
     } else if (rebuildPromise) {
@@ -1063,6 +1080,10 @@ export async function removeFileNavigatorRoot(rootPath) {
         }
       }
       records = survivingRecords;
+      // F1: invalidate synchronously — queueRebuild is async and a search
+      // landing between root removal and rebuild completion must not serve
+      // cached payloads holding deleted-root files.
+      invalidateFileNavigatorSearchCache();
       await persistConfig();
       await queueRebuild();
       releaseIndexingHold();
@@ -1080,20 +1101,77 @@ export async function rebuildFileNavigatorIndex() {
   return getFileNavigatorState();
 }
 
+// Lyric v3 keystroke cache: typing "amazing grace" fires a search per
+// keystroke ("a", "am", "ama", ...). Scoring is pure over (records
+// generation, query, flags), so cache the final public payloads. LRU-100
+// keeps memory bounded; rebuilds bump generation and invalidate.
+const searchCache = new Map();
+const SEARCH_CACHE_MAX = 100;
+let searchCacheGeneration = 0;
+
+function searchCacheKey(parsed, { limit, searchContent, experimental, requestedTypes }) {
+  // F4: key on the PARSED query (sorted terms + sorted type filters),
+  // not the raw string — whitespace/case variants of ext: filters that
+  // parse identically must share one entry. requestedTypes narrow the
+  // parsed filters, so they are keyed separately.
+  return [
+    searchCacheGeneration,
+    [...(parsed.terms || [])].join(' '),
+    [...(parsed.fileTypes || [])].sort().join(','),
+    [...(requestedTypes || [])].sort().join(','),
+    Number(limit) || 0,
+    searchContent !== false ? 'c1' : 'c0',
+    experimental !== false ? 'e1' : 'e0',
+  ].join('|');
+}
+
+// F2: cached payloads are shared across IPC calls — return a shallow copy
+// on hit (and store a copy) so no caller can mutate the cached array.
+function searchCacheGet(key) {
+  const hit = searchCache.get(key);
+  if (!hit) return null;
+  searchCache.delete(key);
+  searchCache.set(key, hit);
+  return hit.slice();
+}
+
+function searchCacheSet(key, value) {
+  const stored = Array.isArray(value) ? value.slice() : value;
+  if (searchCache.has(key)) searchCache.delete(key);
+  searchCache.set(key, stored);
+  while (searchCache.size > SEARCH_CACHE_MAX) {
+    const oldest = searchCache.keys().next().value;
+    searchCache.delete(oldest);
+  }
+  return stored.slice();
+}
+
+export function invalidateFileNavigatorSearchCache() {
+  searchCacheGeneration += 1;
+  searchCache.clear();
+}
+
 export async function searchFileNavigator({ query = '', fileTypes = [], limit = 80, searchContent = true, experimental = true } = {}) {
   await ensureInitialized();
   const parsed = parseFileNavigatorQuery(query);
   parsed.searchContent = searchContent !== false;
-  const queryHadTypeFilters = parsed.fileTypes.length > 0;
   const requestedTypes = [...new Set((Array.isArray(fileTypes) ? fileTypes : [])
     .map((value) => String(value || '').toLowerCase())
     .filter((value) => ['txt', 'lrc', 'md', 'rtf', 'docx'].includes(value)))];
+  const cacheKey = searchCacheKey(parsed, { limit, searchContent, experimental, requestedTypes });
+  const cached = searchCacheGet(cacheKey);
+  if (cached) return cached;
+  const queryHadTypeFilters = parsed.fileTypes.length > 0;
   if (requestedTypes.length > 0) {
     parsed.fileTypes = parsed.fileTypes.length > 0
       ? parsed.fileTypes.filter((value) => requestedTypes.includes(value))
       : requestedTypes;
   }
-  if (queryHadTypeFilters && requestedTypes.length > 0 && parsed.fileTypes.length === 0) return [];
+  if (queryHadTypeFilters && requestedTypes.length > 0 && parsed.fileTypes.length === 0) {
+    // F4: the empty-intersection path is deterministic — cache it too.
+    searchCacheSet(cacheKey, []);
+    return [];
+  }
 
   const scored = [];
   if (!parsed.terms.length) {
@@ -1158,9 +1236,11 @@ export async function searchFileNavigator({ query = '', fileTypes = [], limit = 
   ));
   const requestedLimit = Number(limit);
   const safeLimit = Math.max(0, Math.min(MAX_SEARCH_RESULTS, Number.isFinite(requestedLimit) ? requestedLimit : 80));
-  return scored.slice(0, safeLimit).map(({ record, matchedField }) => (
+  const results = scored.slice(0, safeLimit).map(({ record, matchedField }) => (
     publicRecord(record, { query, matchedField, searchContent: parsed.searchContent })
   ));
+  // Return the stored copy so no caller can mutate the cached array.
+  return searchCacheSet(cacheKey, results);
 }
 
 async function resolveDirectoryWithinRoots(directoryPath) {
@@ -1352,6 +1432,7 @@ export async function refreshFileInNavigator(filePath) {
     if (!next) return false;
     records.set(key, next);
     persistSingleRecord(next);
+    invalidateFileNavigatorSearchCache();
     status = {
       ...status,
       indexedFiles: records.size,
@@ -1362,6 +1443,7 @@ export async function refreshFileInNavigator(filePath) {
   } catch {
     records.delete(key);
     navigatorTokenIndex.dropRecordTokens(key);
+    invalidateFileNavigatorSearchCache();
     try { database?.prepare('DELETE FROM navigator_files WHERE filePath = ?').run(normalized); } catch { }
     status = { ...status, indexedFiles: records.size };
     broadcast({ changedFilePath: normalized });

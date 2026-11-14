@@ -4,6 +4,8 @@
 // Rules: exact phrase wins; else require ordered proximity with tight span;
 // single-word scattered hits are filtered for 3+ term queries.
 // Faster than default: phrase hit short-circuits before edit-distance fuzzy.
+// Token matching reuses matchNavigatorToken (F3: one gate, no divergent copy).
+import { matchNavigatorToken } from './fileNavigatorSearch.js';
 
 const normalizeNavigatorSentenceText = (value = '') => String(value || '')
   .normalize('NFKD')
@@ -23,14 +25,6 @@ function contentTermsOf(terms) {
   return c.length > 0 ? c : (terms || []).filter(Boolean);
 }
 
-function tokenPositions(hayTokens, needle) {
-  const out = [];
-  for (let i = 0; i < hayTokens.length; i++) {
-    if (hayTokens[i].includes(needle) || needle.includes(hayTokens[i])) out.push(i);
-  }
-  return out;
-}
-
 export function scoreSentenceField(queryTerms, hayText) {
   const hay = normalizeNavigatorSentenceText(hayText || '');
   if (!hay || queryTerms.length === 0) return null;
@@ -48,7 +42,7 @@ export function scoreSentenceField(queryTerms, hayText) {
   for (const q of content) {
     let found = -1;
     for (let i = cursor; i < hayTokens.length; i++) {
-      if (hayTokens[i].includes(q) || q.includes(hayTokens[i])) { found = i; break; }
+      if (matchNavigatorToken(q, hayTokens[i])) { found = i; break; }
     }
     if (found === -1) continue;
     if (first === -1) first = found;
