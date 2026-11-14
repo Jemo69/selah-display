@@ -21,6 +21,24 @@ export function normalizeNavigatorSearchText(value = '') {
     .trim();
 }
 
+// Parsed-query cache: every search re-parses the same string many times
+// (once to score, twice per result for snippet + highlight = ~161 parses
+// for 80 results). The parse is pure over the raw string, so cache it.
+// Cloned by callers that attach per-search state (searchContent,
+// flatPhrase memo). Bounded FIFO — same-query repeats are the hot case.
+const PARSED_QUERY_CACHE_MAX = 50;
+const parsedQueryCache = new Map();
+
+export function parseFileNavigatorQueryCached(value = '') {
+  const key = String(value || '');
+  const hit = parsedQueryCache.get(key);
+  if (hit) return hit;
+  const parsed = parseFileNavigatorQuery(key);
+  if (parsedQueryCache.size >= PARSED_QUERY_CACHE_MAX) parsedQueryCache.clear();
+  parsedQueryCache.set(key, parsed);
+  return parsed;
+}
+
 export function parseFileNavigatorQuery(value = '') {
   const terms = [];
   const fileTypes = new Set();
@@ -225,15 +243,16 @@ export function tokenizeNavigatorFlatText(value = '') {
 // EITHER direction (q.includes(hay)), so query "heart" matched lyric
 // "art" ("heart".includes("art")) — a false early anchor that inflated
 // the span past the sentence gate and filtered the owning file. v3 only:
-// exact, prefix either-way (length-guarded, covers love/loved/wine/wines),
-// or 1-edit distance (length-guarded, covers word/world typos). Suffix /
-// infix substring is never a match.
+// exact, prefix either-way (length-guarded, covers love/loved/wine/wines,
+// lov/love keystroke completion), or 1-edit distance (length-guarded,
+// covers word/world typos). Suffix / infix substring is never a match, so
+// query heart still never anchors on lyric art (neither is a prefix).
 export function matchNavigatorToken(queryTok = '', hayTok = '') {
   if (!queryTok || !hayTok) return false;
   if (queryTok === hayTok) return true;
   const qLen = queryTok.length;
   const hLen = hayTok.length;
-  if (qLen >= 4 && hLen >= 4) {
+  if (qLen >= 3 && hLen >= 3) {
     if (hayTok.startsWith(queryTok) || queryTok.startsWith(hayTok)) return true;
   }
   // 1-edit tolerance (word/world, aginst/against): length-guarded like the
@@ -318,7 +337,7 @@ export function buildNavigatorSnippetLines(content = '') {
 export function createNavigatorSnippetFromLines(record, query = '', maxCharacters = 360) {
   const lines = record?.searchSnippetLines;
   if (!lines || !Array.isArray(lines.raw) || !Array.isArray(lines.norm)) return null;
-  const { terms } = parseFileNavigatorQuery(query);
+  const { terms } = typeof query === 'string' ? parseFileNavigatorQueryCached(query) : query;
   if (!terms.length) return null;
   let lineIndex = -1;
   for (let i = 0; i < lines.norm.length; i++) {
@@ -344,7 +363,7 @@ export function createNavigatorSnippetFromLines(record, query = '', maxCharacter
 // mark query terms longest-first. Same markup as createHighlightedSnippet.
 export function highlightNavigatorSnippetText(plainSnippet = '', query = '') {
   if (!plainSnippet) return '';
-  const { terms } = parseFileNavigatorQuery(query);
+  const { terms } = typeof query === 'string' ? parseFileNavigatorQueryCached(query) : query;
   const escaped = escapeHtml(plainSnippet);
   const sortedTerms = [...terms].filter(Boolean).sort((a, b) => b.length - a.length);
   if (sortedTerms.length === 0) return escaped;

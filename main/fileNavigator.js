@@ -13,6 +13,7 @@ import {
   highlightNavigatorSnippetText,
   normalizeNavigatorSearchText,
   parseFileNavigatorQuery,
+  parseFileNavigatorQueryCached,
   prepareNavigatorSearchRecord,
   scoreNavigatorSearchRecord,
   scoreNavigatorSearchRecordExperimental,
@@ -1153,7 +1154,11 @@ export function invalidateFileNavigatorSearchCache() {
 
 export async function searchFileNavigator({ query = '', fileTypes = [], limit = 80, searchContent = true, experimental = true } = {}) {
   await ensureInitialized();
-  const parsed = parseFileNavigatorQuery(query);
+  // Cached parse (hot: every keystroke + 2x per result); cloned because
+  // per-search state (searchContent, flatPhrase memo, narrowed fileTypes)
+  // must never leak into the shared cached object.
+  const fresh = parseFileNavigatorQueryCached(query);
+  const parsed = { ...fresh, terms: [...fresh.terms], fileTypes: [...fresh.fileTypes] };
   parsed.searchContent = searchContent !== false;
   const requestedTypes = [...new Set((Array.isArray(fileTypes) ? fileTypes : [])
     .map((value) => String(value || '').toLowerCase())
@@ -1188,14 +1193,17 @@ export async function searchFileNavigator({ query = '', fileTypes = [], limit = 
     //    are empty or both tiers miss, preserving R1 typo recall.
     // Phrase-first pruning for snippet queries (>=3 terms, both scorers):
     // pair-posting intersection collapses ~21 unigram candidates to just
-    // the phrase holders. Falls back to unigram intersection when a pair
-    // is missing (typos, stopword-only gaps) — same recall, less scoring.
+    // the phrase holders. Falls back to the expanded unigram path when a
+    // pair is missing (typos, stopword-only gaps) — same recall, less scoring.
+    // Typo terms (no exact posting) resolve via edit-1/prefix expansion
+    // inside the index: dozens of candidates instead of a 445-record
+    // fallback walk. Null = unresolvable term → full-scan fallback below.
     let candidateKeys = null;
     if (parsed.terms.length >= 3) {
       candidateKeys = navigatorTokenIndex.findPhraseCandidateKeys(parsed.terms);
     }
     if (!candidateKeys || candidateKeys.size === 0) {
-      candidateKeys = navigatorTokenIndex.findCandidateKeys(parsed.terms);
+      candidateKeys = navigatorTokenIndex.findCandidateKeysExpanded(parsed.terms);
     }
     const scoreCandidates = (keys, fuzzy) => {
       const out = [];

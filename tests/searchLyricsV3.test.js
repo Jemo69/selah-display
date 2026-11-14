@@ -130,7 +130,7 @@ describe('lyric v3 unit fixes (no corpus needed)', () => {
     expect(matchNavigatorToken('love', 'live')).toBe(false);
     expect(matchNavigatorToken('come', 'came')).toBe(false);
     expect(matchNavigatorToken('word', 'world')).toBe(true);
-    expect(matchNavigatorToken('lov', 'love')).toBe(false);
+    expect(matchNavigatorToken('lov', 'love')).toBe(true); // keystroke prefix completion
     expect(matchNavigatorToken('tests', 'test')).toBe(true);
     expect(matchNavigatorToken('anonting', 'anointing')).toBe(true);
     expect(matchNavigatorToken('betlehem', 'bethlehem')).toBe(true);
