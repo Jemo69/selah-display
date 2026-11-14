@@ -714,6 +714,20 @@ export async function scoreNavigatorSearchRecordExperimentalAsync(record, parsed
   return mod.scoreNavigatorRecordSentence(record, parsedQuery);
 }
 
+// Ordered score bands (experimental ranker): a title that IS the query
+// must outrank any lyric body merely containing the words — operators
+// typing a title want that song, not a compilation holding the phrase.
+// Bands never overlap: title-exact > title-prefix > content-phrase
+// (capped) > title-contains > sentence walk > title-word fallback.
+// Content-phrase outranks title-contains so a pasted lyric line ranks
+// its owning sheet above a different song whose title merely holds the
+// same words ("the blood of Jesus" lyric vs title).
+const TITLE_EXACT_SCORE = 5200;
+const TITLE_PREFIX_SCORE = 4600;
+const TITLE_INCLUDES_SCORE = 3200;
+const contentPhraseScore = (termCount, titleKicker, focusBonus) =>
+  3000 + 100 * Math.min(termCount, 10) + titleKicker + focusBonus;
+
 export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
   const query = typeof parsedQuery === 'string'
     ? parseFileNavigatorQuery(parsedQuery)
@@ -736,7 +750,7 @@ export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
     // F6: compare normalized forms — an exact title match with differing
     // case/punctuation must still take the 2200 fast path.
     const weakNorm = normalizeNavigatorSearchText(phrase);
-    if (weakNorm && normStem === weakNorm) return { score: 2200, matchedField: 'name', sentence: true, phrase: true };
+    if (weakNorm && normStem === weakNorm) return { score: TITLE_EXACT_SCORE, matchedField: 'name', sentence: true, phrase: true };
     const weakFlat = flattenNavigatorSearchText(query.terms[0]);
     if (weakFlat) {
       const stemWords = record.stemWords || normStem.split(' ');
@@ -747,8 +761,9 @@ export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
     }
     return null;
   }
-  if (phrase && normStem === phrase) return { score: 2200, matchedField: 'name', sentence: true, phrase: true };
-  if (phrase && normStem.includes(phrase)) return { score: 1800, matchedField: 'name', sentence: true, phrase: true };
+  if (phrase && normStem === phrase) return { score: TITLE_EXACT_SCORE, matchedField: 'name', sentence: true, phrase: true };
+  if (phrase && normStem.startsWith(phrase)) return { score: TITLE_PREFIX_SCORE, matchedField: 'name', sentence: true, phrase: true };
+  if (phrase && normStem.includes(phrase)) return { score: TITLE_INCLUDES_SCORE, matchedField: 'name', sentence: true, phrase: true };
   // Phrase tier via walk contiguity (no flat full-content scan): an exact
   // ordered walk whose every flat term lands on consecutive positions is
   // byte-equivalent to the old flat-substring hit (token-aligned), minus
@@ -763,28 +778,6 @@ export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
   const posMap = contentAllowed
     ? (record.contentTokenPositions || buildNavigatorTokenPositions(record.normalizedContent || ''))
     : null;
-  // Single exact term: contiguity is vacuous and coverage is 1 by
-  // construction — score the phrase tier directly from one Map get
-  // instead of running prefilter + run check + walk. Broad queries like
-  // "hallelujah" (145 holders) pay ~0.3us/record instead of ~2us.
-  if (contentAllowed && posMap && useTerms.length === 1) {
-    const only = useTerms[0];
-    const plist = posMap[only];
-    if (plist && plist.length > 0) {
-      const flatStem = record.normalizedStemFlat ?? flattenNavigatorSearchText(normStem);
-      let titleKicker = 0;
-      let titleField = 'content';
-      for (let i = 0; i < query.terms.length; i++) {
-        const t = query.terms[i];
-        if (isWeakNavigatorTerm(t)) continue;
-        const flatT = flattenNavigatorSearchText(t);
-        if (flatT && flatStem.includes(flatT)) { titleKicker = 200; titleField = 'both'; break; }
-      }
-      const contentLen = record.contentText?.length || 1;
-      const focusBonus = Math.max(0, Math.round(120 - 25 * Math.log10(contentLen)));
-      return { score: 250 * query.terms.length + 1500 + titleKicker + focusBonus, matchedField: titleField, sentence: true, phrase: true };
-    }
-  }
   const variantMap = (contentAllowed && query.fuzzyVariants) || null;
   // Resolve one term to its sorted occurrence positions: exact Map get,
   // else per-query variant tokens (attached where the token index lives),
@@ -914,7 +907,7 @@ export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
         }
         const contentLen = record.contentText?.length || 1;
         const focusBonus = Math.max(0, Math.round(120 - 25 * Math.log10(contentLen)));
-        return { score: 250 * query.terms.length + 1500 + titleKicker + focusBonus, matchedField: titleField, sentence: true, phrase: true };
+        return { score: contentPhraseScore(query.terms.length, titleKicker, focusBonus), matchedField: titleField, sentence: true, phrase: true };
       }
     }
   }

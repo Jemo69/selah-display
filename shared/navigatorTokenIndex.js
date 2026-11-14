@@ -460,7 +460,7 @@ export function createNavigatorTokenIndex({
         if (tok && !seen.has(tok)) { seen.add(tok); validTerms.push(tok); }
       }
     }
-    if (validTerms.length === 0) return { keys: new Set(), variants };
+    if (validTerms.length === 0) return { keys: new Set(), variants: {} };
     const variants = {};
     const termSets = [];
     let unresolvable = false;
