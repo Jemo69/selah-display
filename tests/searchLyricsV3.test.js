@@ -28,6 +28,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import path from 'path';
 import {
+  extractSubstantiveFlatTerms,
   flattenNavigatorSearchText,
   isWeakNavigatorTerm,
   matchNavigatorToken,
@@ -83,23 +84,26 @@ function buildFixtures() {
 
 // Mirrors main/fileNavigator.js searchFileNavigator (experimental path):
 // single-weak stem holders → rarest-unigram shortcut → phrase pairs →
-// typo-expanded unigram (variants attached) → full fallback.
+// typo-expanded unigram (variants attached) → score → inflection second
+// pass when nothing scored phrase-tier → full fallback.
 function indexedSearch(snippet, limit = 5) {
   const parsed = parseFileNavigatorQuery(snippet);
   parsed.searchContent = true;
   let candidateKeys = null;
+  let singleWeakStem = false;
   if (parsed.terms.length === 1 && isWeakNavigatorTerm(parsed.terms[0])) {
+    singleWeakStem = true;
     candidateKeys = index.findStemKeys(parsed.terms[0]);
   }
   if (!candidateKeys) {
-    if (parsed.terms.length >= 3) {
+    if (parsed.terms.length >= 3 && !singleWeakStem) {
       candidateKeys = index.findRarestUnigramKeys(parsed.terms, 12);
     }
     if ((!candidateKeys || candidateKeys.size === 0) && parsed.terms.length >= 3) {
       candidateKeys = index.findPhraseCandidateKeys(parsed.terms);
     }
   }
-  if (!candidateKeys || candidateKeys.size === 0) {
+  if ((!candidateKeys || candidateKeys.size === 0) && !singleWeakStem) {
     const withVariants = index.findCandidatesWithVariants(parsed.terms);
     candidateKeys = withVariants.keys;
     if (withVariants.variants && Object.keys(withVariants.variants).length > 0) {
@@ -107,12 +111,45 @@ function indexedSearch(snippet, limit = 5) {
     }
   }
   const scored = [];
+  const seenPaths = new Set();
   if (candidateKeys && candidateKeys.size > 0) {
     for (const key of candidateKeys) {
       const rec = byKey.get(key);
       if (!rec) continue;
       const m = scoreNavigatorSearchRecordExperimental(rec, parsed);
-      if (m) scored.push({ rec, score: m.score });
+      if (m) {
+        scored.push({ rec, score: m.score, phrase: m.phrase === true });
+        seenPaths.add(rec.filePath);
+      }
+    }
+  }
+  if (parsed.terms.length >= 2 && !singleWeakStem && !scored.some((s) => s.phrase)) {
+    const substantive = extractSubstantiveFlatTerms(parsed);
+    const { keys: inflectionKeys, variants: inflectionVariants } =
+      index.findInflectionExpandedKeys(substantive, { exclude: seenPaths });
+    if (inflectionVariants && Object.keys(inflectionVariants).length > 0) {
+      const merged = { ...(parsed.fuzzyVariants || {}) };
+      for (const term of Object.keys(inflectionVariants)) {
+        const incoming = inflectionVariants[term] || [];
+        const existing = merged[term];
+        if (incoming.length > 0) {
+          merged[term] = [...new Set([...(existing || []), ...incoming])];
+        } else if (!(term in merged)) {
+          merged[term] = [];
+        }
+      }
+      parsed.fuzzyVariants = merged;
+    }
+    if (inflectionKeys && inflectionKeys.size > 0) {
+      for (const key of inflectionKeys) {
+        const rec = byKey.get(key);
+        if (!rec || seenPaths.has(rec.filePath)) continue;
+        const m = scoreNavigatorSearchRecordExperimental(rec, parsed);
+        if (m) {
+          scored.push({ rec, score: m.score, phrase: m.phrase === true });
+          seenPaths.add(rec.filePath);
+        }
+      }
     }
   }
   if (scored.length === 0) {
@@ -170,6 +207,40 @@ describe('lyric v3 unit fixes (no corpus needed)', () => {
       contentText: 'unrelated filler words here',
     });
     expect(scoreNavigatorSearchRecordExperimental(titled, parsed)).not.toBeNull();
+  });
+
+  it('inflection index unit: turn/turned both directions, dead terms, exclude', () => {
+    const song = prepareNavigatorSearchRecord({
+      filePath: '/songs/water-song.txt',
+      fileName: 'water-song.txt',
+      relativePath: 'songs/water-song.txt',
+      contentText: 'Jesus turned water into wine for you at Cana',
+    });
+    const compilation = prepareNavigatorSearchRecord({
+      filePath: '/songs/tphb.txt',
+      fileName: 'TPHB lyrics compiled.txt',
+      relativePath: 'songs/tphb.txt',
+      contentText: '... filler ... water you turn into ... more filler ...',
+    });
+    const tinyIndex = createNavigatorTokenIndex();
+    tinyIndex.indexRecordTokens(song);
+    tinyIndex.indexRecordTokens(compilation);
+    // Longer direction: query "turn" reaches lyric "turned".
+    const fwd = tinyIndex.findInflectionExpandedKeys(['water', 'you', 'turn', 'into'], {});
+    expect(fwd.keys.has('/songs/water-song.txt')).toBe(true);
+    expect(fwd.keys.has('/songs/tphb.txt')).toBe(true);
+    expect(fwd.variants.turn).toContain('turned');
+    // Shorter direction: query "turned" reaches lyric "turn".
+    const back = tinyIndex.findInflectionExpandedKeys(['water', 'you', 'turned', 'into'], {});
+    expect(back.keys.has('/songs/tphb.txt')).toBe(true);
+    expect(back.variants.turned).toContain('turn');
+    // Dead term recorded explicitly (scorer instant-miss, no key scan).
+    const dead = tinyIndex.findInflectionExpandedKeys(['water', 'xyzzy'], {});
+    expect(dead.variants.xyzzy).toEqual([]);
+    // Exclude set is honored (already-scored files are not re-walked).
+    const excl = tinyIndex.findInflectionExpandedKeys(['water', 'you', 'turn', 'into'], { exclude: new Set(['/songs/water-song.txt']) });
+    expect(excl.keys.has('/songs/water-song.txt')).toBe(false);
+    expect(excl.keys.has('/songs/tphb.txt')).toBe(true);
   });
 
   it('two-term typo query recalls via fuzzy walk (Anonting fall on me)', () => {
@@ -303,6 +374,29 @@ describe.skipIf(!HAS_CORPUS)('lyric v3 corpus gates (hill-climb folder)', () => 
     // The file holds the words across a [Verse] divider: stripped flat
     // content is contiguous, so the owner must score (old code: null).
     expect(scoreNavigatorSearchRecordExperimental(owner, parsed)).not.toBeNull();
+  });
+
+  it('inflection query surfaces turned-holders the exact path misses (screenshot case)', () => {
+    // Operator query "water you turn into": the owning songs hold
+    // "turned", so exact-token candidates + TPHB win and the songs
+    // never score. The inflection second pass must surface a turned-only
+    // holder (SONGS 31724 holds turned, not turn) in the top 5.
+    const res = indexedSearch('water you turn into', 10);
+    expect(res.length).toBeGreaterThan(0);
+    const turnedOnly = res.slice(0, 5).filter((s) => {
+      const flat = s.rec.normalizedContentFlat || '';
+      return flat.includes('turned') && !flat.includes(' turn ');
+    });
+    const names = res.slice(0, 5).map((s) => s.rec.fileName);
+    expect(
+      turnedOnly.length,
+      `top-5 for "water you turn into" should include a turned-only song sheet, got: ${names.join(' | ')}`
+    ).toBeGreaterThan(0);
+    // The fuller sentence ("...into wine at the wedding") must return
+    // holders at all — the old engine returned zero results for it.
+    const full = indexedSearch('water you turn into wine at the wedding', 10);
+    expect(full.length).toBeGreaterThan(0);
+    expect(full[0].rec.normalizedContentFlat).toContain('turned');
   });
 
   it('true consecutive-line stanza pastes rank a holder first, 100%', () => {

@@ -96,6 +96,21 @@ export function extractQueryFlatTerms(parsedQuery) {
   return flatTerms;
 }
 
+// Content-bearing query tokens: length >= 3 and not a function word.
+// Shared by the scorer (coverage denominator) and the index (inflection
+// expansion skips stopwords so "the"* never fans out to hundreds of
+// longer tokens).
+export const NAVIGATOR_CONTENT_STOPWORDS = new Set([
+  'the','a','an','and','or','of','to','in','on','for','with','from','as','is',
+  'are','was','were','be','been','am','it','its','this','that','these','those',
+]);
+
+export function extractSubstantiveFlatTerms(parsedQuery) {
+  const flatTerms = extractQueryFlatTerms(parsedQuery);
+  const substantive = flatTerms.filter((t) => t.length >= 3 && !NAVIGATOR_CONTENT_STOPWORDS.has(t));
+  return substantive.length > 0 ? substantive : flatTerms;
+}
+
 function isOrderedSubsequence(needle, haystack) {
   if (!needle || !haystack || needle.length < 3) return false;
   let needleIndex = 0;
@@ -721,7 +736,7 @@ export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
     // F6: compare normalized forms — an exact title match with differing
     // case/punctuation must still take the 2200 fast path.
     const weakNorm = normalizeNavigatorSearchText(phrase);
-    if (weakNorm && normStem === weakNorm) return { score: 2200, matchedField: 'name', sentence: true };
+    if (weakNorm && normStem === weakNorm) return { score: 2200, matchedField: 'name', sentence: true, phrase: true };
     const weakFlat = flattenNavigatorSearchText(query.terms[0]);
     if (weakFlat) {
       const stemWords = record.stemWords || normStem.split(' ');
@@ -732,19 +747,17 @@ export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
     }
     return null;
   }
-  if (phrase && normStem === phrase) return { score: 2200, matchedField: 'name', sentence: true };
-  if (phrase && normStem.includes(phrase)) return { score: 1800, matchedField: 'name', sentence: true };
+  if (phrase && normStem === phrase) return { score: 2200, matchedField: 'name', sentence: true, phrase: true };
+  if (phrase && normStem.includes(phrase)) return { score: 1800, matchedField: 'name', sentence: true, phrase: true };
   // Phrase tier via walk contiguity (no flat full-content scan): an exact
   // ordered walk whose every flat term lands on consecutive positions is
   // byte-equivalent to the old flat-substring hit (token-aligned), minus
   // mid-word false positives ("art thou" in "heart thous"). Short sung
   // syllables ride along exactly — they occupy real positions.
   // Sentence tier uses substantive terms with the same positions.
-  const STOP = new Set(['the','a','an','and','or','of','to','in','on','for','with','from','as','is','are','was','were','be','been','am','it','its','this','that','these','those']);
   const flatTerms = extractQueryFlatTerms(query);
-  const substantive = flatTerms.filter((t) => t.length >= 3 && !STOP.has(t));
-  const shortTerms = flatTerms.filter((t) => !(t.length >= 3 && !STOP.has(t)));
-  const useTerms = substantive.length > 0 ? substantive : flatTerms;
+  const useTerms = extractSubstantiveFlatTerms(query);
+  const shortTerms = flatTerms.filter((t) => !(t.length >= 3 && !NAVIGATOR_CONTENT_STOPWORDS.has(t)));
   // Position map (built once at index time); ad-hoc fallback keeps older
   // prepared records and the no-index setlist path working identically.
   const posMap = contentAllowed
@@ -769,39 +782,72 @@ export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
       }
       const contentLen = record.contentText?.length || 1;
       const focusBonus = Math.max(0, Math.round(120 - 25 * Math.log10(contentLen)));
-      return { score: 250 * query.terms.length + 1500 + titleKicker + focusBonus, matchedField: titleField, sentence: true };
+      return { score: 250 * query.terms.length + 1500 + titleKicker + focusBonus, matchedField: titleField, sentence: true, phrase: true };
     }
   }
   const variantMap = (contentAllowed && query.fuzzyVariants) || null;
   // Resolve one term to its sorted occurrence positions: exact Map get,
   // else per-query variant tokens (attached where the token index lives),
-  // else a unique-key scan (back-compat fallback only).
+  // else a unique-key scan (back-compat fallback only). Memoized per
+  // scorer call — prefilter, phrase run-check, and sentence walk resolve
+  // the same terms, and repeats dominate on repeated-word queries.
+  const resolvedCache = new Map();
   const resolvePositions = (term) => {
-    if (!posMap) return { list: [], exact: false };
-    const exact = posMap[term];
-    if (exact && exact.length > 0) return { list: exact, exact: true };
-    if (variantMap && Object.prototype.hasOwnProperty.call(variantMap, term)) {
-      const merged = [];
-      for (const v of variantMap[term]) {
-        const l = posMap[v];
-        if (l) for (let i = 0; i < l.length; i++) merged.push(l[i]);
+    const hit = resolvedCache.get(term);
+    if (hit) return hit;
+    let out;
+    if (!posMap) out = { list: [], exact: false };
+    else {
+      const exact = posMap[term];
+      if (exact && exact.length > 0) out = { list: exact, exact: true };
+      // Short tokens match exactly or not at all: matchNavigatorToken
+      // only returns true for len<3 on exact equality, which the get
+      // above already checked — so a key scan could never find anything
+      // new here. Instant miss (also skips the scan for stopword-heavy
+      // queries on every record).
+      else if (term.length < 3) out = { list: [], exact: false };
+      else if (variantMap && Object.prototype.hasOwnProperty.call(variantMap, term)) {
+        // Single-source lists are already sorted — reuse them directly
+        // instead of merging + re-sorting (the dominant cost on large
+        // files with common variants). Never mutated downstream.
+        const vlist = variantMap[term];
+        let single = null;
+        let multi = false;
+        for (const v of vlist) {
+          const l = posMap[v];
+          if (!l) continue;
+          if (single) { multi = true; break; }
+          single = l;
+        }
+        if (single && !multi) out = { list: single, exact: false };
+        else {
+          const merged = [];
+          for (const v of vlist) {
+            const l = posMap[v];
+            if (l) for (let i = 0; i < l.length; i++) merged.push(l[i]);
+          }
+          if (merged.length > 0) {
+            merged.sort((a, b) => a - b);
+            out = { list: merged, exact: false };
+          } else out = { list: [], exact: false };
+        }
+      } else {
+        const hits = [];
+        for (const key in posMap) {
+          if (matchNavigatorToken(term, key)) hits.push(posMap[key]);
+        }
+        if (hits.length === 0) out = { list: [], exact: false };
+        else if (hits.length === 1) out = { list: hits[0], exact: false };
+        else {
+          const merged = [];
+          for (const l of hits) for (let i = 0; i < l.length; i++) merged.push(l[i]);
+          merged.sort((a, b) => a - b);
+          out = { list: merged, exact: false };
+        }
       }
-      if (merged.length > 0) {
-        merged.sort((a, b) => a - b);
-        return { list: merged, exact: false };
-      }
-      return { list: [], exact: false };
     }
-    const merged = [];
-    for (const key in posMap) {
-      if (matchNavigatorToken(term, key)) {
-        const l = posMap[key];
-        for (let i = 0; i < l.length; i++) merged.push(l[i]);
-      }
-    }
-    if (merged.length === 0) return { list: [], exact: false };
-    merged.sort((a, b) => a - b);
-    return { list: merged, exact: false };
+    resolvedCache.set(term, out);
+    return out;
   };
   // Prefilter without any full-content scan: count terms with at least
   // one occurrence (exact or variant). Same gates as before (≤2 terms
@@ -868,7 +914,7 @@ export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
         }
         const contentLen = record.contentText?.length || 1;
         const focusBonus = Math.max(0, Math.round(120 - 25 * Math.log10(contentLen)));
-        return { score: 250 * query.terms.length + 1500 + titleKicker + focusBonus, matchedField: titleField, sentence: true };
+        return { score: 250 * query.terms.length + 1500 + titleKicker + focusBonus, matchedField: titleField, sentence: true, phrase: true };
       }
     }
   }
@@ -888,7 +934,6 @@ export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
   const matched = w.matched;
   const first = w.first;
   const last = w.last;
-  const hayLen = contentAllowed && posMap ? Object.keys(posMap).length : 0;
   if (matched === 0) {
     // Title fallback: any single title term still matches (keeps file-title search usable).
     const titleHit = query.terms.some((t) => normStem.includes(t) || normPath.includes(t));
@@ -902,7 +947,7 @@ export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
     if (!titleOrdered) return null;
   }
   if (useTerms.length === 2 && matched < 2) return null;
-  const span = first === -1 ? hayLen : last - first + 1;
+  const span = last - first + 1;
   if (query.terms.length >= 3 && span > 12 && coverage < 1) return null;
   const spanBonus = span <= 6 ? 500 : span <= 10 ? 250 : 80;
   // Short sung syllables: exact token presence is a small bonus, never a

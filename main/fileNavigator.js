@@ -11,6 +11,7 @@ import {
   createNavigatorPreview,
   createNavigatorSnippetFromLines,
   extractQueryFlatTerms,
+  extractSubstantiveFlatTerms,
   highlightNavigatorSnippetText,
   isWeakNavigatorTerm,
   normalizeNavigatorSearchText,
@@ -1251,6 +1252,41 @@ export async function searchFileNavigator({ query = '', fileTypes = [], limit = 
       // Fuzzy tier only on cheap miss (typo queries like "amzing").
       if (scored.length === 0) {
         scored.push(...scoreCandidates(candidateKeys, true));
+      }
+    }
+
+    // Inflection second pass (experimental only): when nothing scored a
+    // phrase-tier hit (no exact contiguous holder), inflection holders
+    // get their chance — "turn" must find lyric "turned" and vice
+    // versa, instead of losing to a compilation that happens to hold the
+    // exact words. Skipped on phrase hits (the common exact-paste case
+    // keeps its fast path with zero extra work) and for the default
+    // scorer (unchanged behavior). Merges, never replaces.
+    if (experimental !== false && parsed.terms.length >= 2 && !singleWeakStem) {
+      const hasPhraseHit = scored.some((s) => s.phrase === true);
+      if (!hasPhraseHit) {
+        const seenPaths = new Set(scored.map((s) => normalizeComparisonPath(s.record.filePath)));
+        const substantive = extractSubstantiveFlatTerms(parsed);
+        const { keys: inflectionKeys, variants: inflectionVariants } =
+          navigatorTokenIndex.findInflectionExpandedKeys(substantive, { exclude: seenPaths });
+        if (inflectionVariants && Object.keys(inflectionVariants).length > 0) {
+          // Merge with typo variants already attached: union per term,
+          // never clobber a resolved entry with an empty one.
+          const merged = { ...(parsed.fuzzyVariants || {}) };
+          for (const term of Object.keys(inflectionVariants)) {
+            const incoming = inflectionVariants[term] || [];
+            const existing = merged[term];
+            if (incoming.length > 0) {
+              merged[term] = [...new Set([...(existing || []), ...incoming])];
+            } else if (!(term in merged)) {
+              merged[term] = [];
+            }
+          }
+          parsed.fuzzyVariants = merged;
+        }
+        if (inflectionKeys && inflectionKeys.size > 0) {
+          scored.push(...scoreCandidates(inflectionKeys, false));
+        }
       }
     }
 

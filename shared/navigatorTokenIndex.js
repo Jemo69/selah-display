@@ -460,7 +460,7 @@ export function createNavigatorTokenIndex({
         if (tok && !seen.has(tok)) { seen.add(tok); validTerms.push(tok); }
       }
     }
-    if (validTerms.length === 0) return { keys: null, variants: {} };
+    if (validTerms.length === 0) return { keys: new Set(), variants };
     const variants = {};
     const termSets = [];
     let unresolvable = false;
@@ -491,6 +491,99 @@ export function createNavigatorTokenIndex({
       termSets.push(union);
     }
     if (unresolvable || termSets.length === 0) return { keys: new Set(), variants };
+    termSets.sort((a, b) => a.size - b.size);
+    let candidateKeys = new Set(termSets[0]);
+    for (let i = 1; i < termSets.length; i++) {
+      const s = termSets[i];
+      if (s.size < candidateKeys.size) {
+        const next = new Set();
+        for (const k of s) {
+          if (candidateKeys.has(k)) next.add(k);
+        }
+        candidateKeys = next;
+      } else {
+        for (const k of candidateKeys) {
+          if (!s.has(k)) candidateKeys.delete(k);
+        }
+      }
+      if (candidateKeys.size === 0) break;
+    }
+    return { keys: candidateKeys, variants };
+  }
+
+  /**
+   * Inflection-tolerant holders for terms the walk can match but the
+   * exact postings miss ("turn" vs lyric "turned", "loved" vs "love").
+   * Per term (caller passes substantive flat tokens, len>=3): exact
+   * holders, plus LONGER tokens with the term as prefix (bounded sorted-
+   * vocabulary range scan), plus SHORTER tokens the term starts with
+   * (direct gets of term prefixes — covers turned→turn, loved→love).
+   * Intersected rarest-first, minus `exclude` keys, union capped so one
+   * mega-common family cannot explode the scoring set. Returns
+   * { keys, variants } where variants[term] lists the holder tokens used
+   * (empty array = dead term: scorer instant-miss, no per-record scans).
+   */
+  function findInflectionExpandedKeys(terms = [], { exclude = null, tokenCap = 48, keyCap = 750 } = {}) {
+    const seen = new Set();
+    const validTerms = [];
+    for (const t of (Array.isArray(terms) ? terms : [])) {
+      const tok = String(t || '');
+      if (tok && tok.length >= 3 && !seen.has(tok)) { seen.add(tok); validTerms.push(tok); }
+    }
+    if (validTerms.length === 0) return { keys: new Set(), variants: {} };
+    if (!sortedTokens) sortedTokens = [...tokenIndex.keys()].sort();
+    const variants = {};
+    const termSets = [];
+    for (const term of validTerms) {
+      const holderTokens = [];
+      const seenTok = new Set();
+      const consider = (tok) => {
+        if (!tok || seenTok.has(tok) || holderTokens.length >= tokenCap) return;
+        if (!tokenIndex.has(tok)) return;
+        seenTok.add(tok);
+        holderTokens.push(tok);
+      };
+      consider(term);
+      // Shorter inflections: query "turned" must reach lyric "turn".
+      for (let i = 3; i < term.length && holderTokens.length < tokenCap; i++) {
+        consider(term.slice(0, i));
+      }
+      // Longer inflections: query "turn" must reach lyric "turned".
+      // Bounded binary-search range over the sorted vocabulary.
+      if (holderTokens.length < tokenCap) {
+        let lo = 0;
+        let hi = sortedTokens.length;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (sortedTokens[mid] < term) lo = mid + 1;
+          else hi = mid;
+        }
+        for (let i = lo; i < sortedTokens.length && holderTokens.length < tokenCap; i++) {
+          const key = sortedTokens[i];
+          if (!key.startsWith(term)) break;
+          if (key !== term) consider(key);
+        }
+      }
+      if (holderTokens.length === 0) {
+        variants[term] = [];
+        continue;
+      }
+      variants[term] = holderTokens;
+      const union = new Set();
+      for (const v of holderTokens) {
+        const postings = tokenIndex.get(v);
+        if (!postings) continue;
+        for (const k of postings) {
+          if (exclude && exclude.has(k)) continue;
+          union.add(k);
+          if (union.size >= keyCap) break;
+        }
+        if (union.size >= keyCap) break;
+      }
+      if (union.size === 0) continue;
+      termSets.push(union);
+    }
+    if (termSets.length === 0) return { keys: new Set(), variants };
     termSets.sort((a, b) => a.size - b.size);
     let candidateKeys = new Set(termSets[0]);
     for (let i = 1; i < termSets.length; i++) {
@@ -565,6 +658,7 @@ export function createNavigatorTokenIndex({
     expandMissingTermKeys,
     expandMissingTermVariants,
     findCandidatesWithVariants,
+    findInflectionExpandedKeys,
     findPhraseCandidateKeys,
     findRarestUnigramKeys,
     findStemKeys,
