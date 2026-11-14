@@ -1116,10 +1116,13 @@ function searchCacheKey(parsed, { limit, searchContent, experimental, requestedT
   // F4: key on the PARSED query (sorted terms + sorted type filters),
   // not the raw string — whitespace/case variants of ext: filters that
   // parse identically must share one entry. requestedTypes narrow the
-  // parsed filters, so they are keyed separately.
+  // parsed filters, so they are keyed separately. Terms serialize as JSON
+  // (not join(' ')): quoted parses like `["amazing grace"]` and split
+  // parses like `["amazing","grace"]` join to the same string but score
+  // differently, so the join collided two parses into one cache entry.
   return [
     searchCacheGeneration,
-    [...(parsed.terms || [])].join(' '),
+    JSON.stringify(parsed.terms || []),
     [...(parsed.fileTypes || [])].sort().join(','),
     [...(requestedTypes || [])].sort().join(','),
     Number(limit) || 0,

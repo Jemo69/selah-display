@@ -510,3 +510,45 @@ describe.skipIf(!HAS_CORPUS)('lyric v3 corpus gates (hill-climb folder)', () => 
     expect(indexedMs / queries.length).toBeLessThan(1);
   });
 });
+
+describe('keystroke cache key contract (main/fileNavigator.js searchCacheKey)', () => {
+  // B1 regression: the old key joined terms with a space, so the quoted
+  // parse ["amazing grace"] (1 term) and the split parse ["amazing","grace"]
+  // (2 terms) collided into ONE cache entry while scoring differently
+  // (measured 1600/content vs 1900/both) — first-query-wins served the
+  // wrong ranking to the other parse.
+  it('quoted and split parses score differently and MUST NOT share a cache key', () => {
+    const rec = prepareNavigatorSearchRecord({
+      filePath: '/songs/sunday service.txt',
+      fileName: 'sunday service.txt',
+      relativePath: 'songs/sunday service.txt',
+      contentText: 'Amazing grace how sweet the sound that saved a wretch like me',
+    });
+    const split = parseFileNavigatorQuery('amazing grace');
+    const quoted = parseFileNavigatorQuery('"amazing grace"');
+    split.searchContent = true;
+    quoted.searchContent = true;
+    expect(split.terms).toHaveLength(2);
+    expect(quoted.terms).toHaveLength(1);
+    const splitScore = scoreNavigatorSearchRecordExperimental(rec, split);
+    const quotedScore = scoreNavigatorSearchRecordExperimental(rec, quoted);
+    expect(splitScore).not.toBeNull();
+    expect(quotedScore).not.toBeNull();
+    // Both match the same file, but the parses rank it differently
+    // (measured 2075 vs 1825 here) — first-query-wins caching would
+    // serve the wrong payload to the other parse if keys collided.
+    expect(splitScore.score).not.toBe(quotedScore.score);
+    // JSON.stringify separates arrays of strings injectively: these two
+    // term sets must serialize to different cache-key components.
+    expect(JSON.stringify(split.terms)).not.toBe(JSON.stringify(quoted.terms));
+  });
+
+  // Source contract (the function lives behind an electron import, so the
+  // parse+scorer divergence above plus this binding check guard it).
+  it('searchCacheKey serializes terms via JSON.stringify, never join()', () => {
+    const src = readFileSync(path.resolve(process.cwd(), 'main/fileNavigator.js'), 'utf8');
+    const keyFn = src.slice(src.indexOf('function searchCacheKey'), src.indexOf('function searchCacheGet'));
+    expect(keyFn).toMatch(/JSON\.stringify\(\s*parsed\.terms\s*\|\|\s*\[\]\s*\)/);
+    expect(keyFn).not.toMatch(/parsed\.terms\s*\|\|\s*\[\]\s*\]\s*\)\s*\.join\(/);
+  });
+});
