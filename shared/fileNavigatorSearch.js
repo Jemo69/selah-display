@@ -78,10 +78,22 @@ const NAVIGATOR_STOPWORDS = new Set([
   'they', 'them', 'his', 'her', 'our', 'your', 'my', 'me', 'him', 'us',
 ]);
 
-function isWeakNavigatorTerm(term) {
+export function isWeakNavigatorTerm(term) {
   if (!term) return true;
   if (term.length <= 2) return true;
   return NAVIGATOR_STOPWORDS.has(term);
+}
+
+// Flat query tokens shared by the scorer and the index layer: each parsed
+// term flattened (punctuation-insensitive) and split. Memoized on the
+// parsed object — the scorer, snippet builders, and variant lookup all
+// reuse one computation per search.
+export function extractQueryFlatTerms(parsedQuery) {
+  const query = parsedQuery || { terms: [] };
+  if (Array.isArray(query.flatTerms)) return query.flatTerms;
+  const flatTerms = (query.terms || []).flatMap((t) => flattenNavigatorSearchText(t).split(' ').filter(Boolean));
+  try { query.flatTerms = flatTerms; } catch { /* frozen — recompute */ }
+  return flatTerms;
 }
 
 function isOrderedSubsequence(needle, haystack) {
@@ -292,6 +304,14 @@ export function prepareNavigatorSearchRecord(record = {}) {
     // keystroke (the dominant cost of the old experimental scorer).
     stemFlatTokens: tokenizeNavigatorFlatText(normalizedStem),
     contentFlatTokens: tokenizeNavigatorFlatText(normalizedContent),
+    // 100x: token -> sorted position lists + parallel line numbers, built
+    // once. The ordered walk resolves each query term with Map gets
+    // (exact) instead of scanning thousands of tokens per record per
+    // keystroke; fuzzy terms merge variant positions (attached per query
+    // when the token index is available) or scan unique keys as a
+    // back-compat fallback. Line numbers let snippet generation anchor
+    // directly on a matched position instead of re-scanning lines.
+    ...buildNavigatorSearchPositionFields(searchableContent, normalizedContent),
     // v3: pre-split snippet lines (stripped raw + normalized) so
     // per-result match snippets reuse them instead of re-normalizing the
     // full lyric body per result per keystroke (the dominant end-to-end
@@ -302,6 +322,100 @@ export function prepareNavigatorSearchRecord(record = {}) {
 }
 
 const SNIPPET_LINE_CAP = 4000;
+
+// Token -> sorted occurrence indices over the flat token stream.
+// Plain object (not Map) so structured-clone/JSON persistence keeps
+// working for index snapshots; keys are flat alphanumeric tokens.
+export function buildNavigatorTokenPositions(normalizedContent = '') {
+  const positions = Object.create(null);
+  const tokens = tokenizeNavigatorFlatText(normalizedContent);
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    const list = positions[t];
+    if (list) list.push(i);
+    else positions[t] = [i];
+  }
+  return positions;
+}
+
+// Builds positions + line numbers in ONE per-line pass so the two streams
+// can never diverge (same normalization, same token order as tokenizing
+// the whole normalized content — every op is character-local except
+// whitespace squeeze, which only drops empty slots).
+export function buildNavigatorSearchPositionFields(searchableContent = '', normalizedContent = '') {
+  void normalizedContent;
+  const positions = Object.create(null);
+  const lines = [];
+  const text = String(searchableContent || '');
+  if (text) {
+    const rawLines = text.split('\n');
+    let idx = 0;
+    for (let li = 0; li < rawLines.length; li++) {
+      const toks = tokenizeNavigatorFlatText(normalizeNavigatorSearchText(rawLines[li]));
+      for (let i = 0; i < toks.length; i++) {
+        const t = toks[i];
+        const list = positions[t];
+        if (list) list.push(idx);
+        else positions[t] = [idx];
+        lines.push(li);
+        idx += 1;
+      }
+    }
+  }
+  return { contentTokenPositions: positions, contentTokenLines: lines };
+}
+
+// Parallel to the flat token stream: line index per token, built from the
+// same per-line normalization the snippet builder displays. Lets snippet
+// generation anchor directly on a matched token position (binary search
+// over line starts) instead of re-scanning every line per result — the
+// dominant cost on multi-result queries over large files. Plain Array
+// (JSON/clone-safe). Must stay token-identical to tokenizing the whole
+// normalized content: per-line normalize + concat yields the same stream
+// because every normalization op is character-local except whitespace
+// squeeze, which only removes (never reorders) empty slots.
+export function buildNavigatorTokenLines(searchableContent = '') {
+  const lines = [];
+  const text = String(searchableContent || '');
+  if (!text) return lines;
+  const rawLines = text.split('\n');
+  for (let li = 0; li < rawLines.length; li++) {
+    const toks = tokenizeNavigatorFlatText(normalizeNavigatorSearchText(rawLines[li]));
+    for (let i = 0; i < toks.length; i++) lines.push(li);
+  }
+  return lines;
+}
+
+// Ordered walk over position lists: greedy earliest occurrence at/after
+// the cursor per query term (lists are sorted by construction).
+// Returns { matched, first, last, allExact }.
+function walkTokenPositions(lists, exactFlags) {
+  let cursor = -1;
+  let first = -1;
+  let last = -1;
+  let matched = 0;
+  let allExact = true;
+  for (let q = 0; q < lists.length; q++) {
+    const list = lists[q];
+    let found = -1;
+    // Binary search: lists are ascending.
+    let lo = 0;
+    let hi = list.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (list[mid] <= cursor) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo < list.length) found = list[lo];
+    if (found === -1) continue;
+    if (first === -1) first = found;
+    last = found;
+    cursor = found;
+    matched += 1;
+    if (!exactFlags[q]) allExact = false;
+  }
+  return { matched, first, last, allExact };
+}
 // F5: snippet lines duplicate the lyric text (raw + normalized). Cap the
 // precompute so one giant compilation cannot bloat the index: files over
 // 256KB keep tokens/flat (the recall path) but skip line arrays — the
@@ -340,13 +454,41 @@ export function createNavigatorSnippetFromLines(record, query = '', maxCharacter
   const { terms } = typeof query === 'string' ? parseFileNavigatorQueryCached(query) : query;
   if (!terms.length) return null;
   let lineIndex = -1;
-  for (let i = 0; i < lines.norm.length; i++) {
-    const normalized = lines.norm[i];
-    if (!normalized) continue;
+  // Position anchor: earliest display line holding any query token.
+  // O(terms) Map gets instead of scanning every normalized line — the
+  // dominant snippet cost on large files. Falls back to the line scan
+  // when positions are absent (older prepared records, oversized files).
+  const posMap = record?.contentTokenPositions;
+  const lineOf = record?.contentTokenLines;
+  if (posMap && Array.isArray(lineOf) && lineOf.length > 0) {
+    let best = Infinity;
+    const seenTerms = new Set();
     for (let t = 0; t < terms.length; t++) {
-      if (normalized.includes(terms[t])) { lineIndex = i; break; }
+      const flats = flattenNavigatorSearchText(terms[t]).split(' ').filter(Boolean);
+      for (let f = 0; f < flats.length; f++) {
+        const ft = flats[f];
+        if (seenTerms.has(ft)) continue;
+        seenTerms.add(ft);
+        const list = posMap[ft];
+        if (list && list.length > 0) {
+          const ln = lineOf[list[0]];
+          if (ln < best) best = ln;
+          if (best === 0) break;
+        }
+      }
+      if (best === 0) break;
     }
-    if (lineIndex >= 0) break;
+    if (best !== Infinity) lineIndex = best;
+  }
+  if (lineIndex < 0) {
+    for (let i = 0; i < lines.norm.length; i++) {
+      const normalized = lines.norm[i];
+      if (!normalized) continue;
+      for (let t = 0; t < terms.length; t++) {
+        if (normalized.includes(terms[t])) { lineIndex = i; break; }
+      }
+      if (lineIndex >= 0) break;
+    }
   }
   const start = lineIndex >= 0 ? Math.max(0, lineIndex - 1) : 0;
   const end = lineIndex >= 0
@@ -592,60 +734,83 @@ export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
   }
   if (phrase && normStem === phrase) return { score: 2200, matchedField: 'name', sentence: true };
   if (phrase && normStem.includes(phrase)) return { score: 1800, matchedField: 'name', sentence: true };
-  // v3 flat-phrase fast path (tag-stripped, punctuation-insensitive): the
-  // common case — a pasted lyric line or stanza — resolves with one C-level
-  // substring scan, no token walk. Structure tags are stripped at index
-  // time so stanzas spanning [Verse] dividers stay contiguous.
-  let flatContent = '';
-  if (contentAllowed) {
-    flatContent = record.normalizedContentFlat
-      ?? flattenNavigatorSearchText(record.normalizedContent || '');
-    if (flatContent) {
-      let flatPhrase = query.flatPhrase;
-      if (flatPhrase === undefined) {
-        flatPhrase = flattenNavigatorSearchText(phrase);
-        try { query.flatPhrase = flatPhrase; } catch { /* frozen — recompute */ }
-      }
-      if (flatPhrase && flatContent.includes(flatPhrase)) {
-        const flatStem = record.normalizedStemFlat ?? flattenNavigatorSearchText(normStem);
-        let titleKicker = 0;
-        let titleField = 'content';
-        for (let i = 0; i < query.terms.length; i++) {
-          const t = query.terms[i];
-          if (isWeakNavigatorTerm(t)) continue;
-          const flatT = flattenNavigatorSearchText(t);
-          if (flatT && flatStem.includes(flatT)) { titleKicker = 200; titleField = 'both'; break; }
-        }
-        const contentLen = record.contentText?.length || flatContent.length || 1;
-        const focusBonus = Math.max(0, Math.round(120 - 25 * Math.log10(contentLen)));
-        return { score: 250 * query.terms.length + 1500 + titleKicker + focusBonus, matchedField: titleField, sentence: true };
-      }
-    }
-  }
-  // v3 ordered walk over PRECOMPUTED flat tokens (no per-record split).
-  // Coverage is measured on substantive terms only (len>=3, non-stop):
-  // short sung syllables ("oh", "my", "eh") are real lyrics but carry
-  // no pruning signal — counting them as misses capped stanza coverage at
-  // 0.6 and filtered owning files. They now contribute a small exact bonus.
+  // Phrase tier via walk contiguity (no flat full-content scan): an exact
+  // ordered walk whose every flat term lands on consecutive positions is
+  // byte-equivalent to the old flat-substring hit (token-aligned), minus
+  // mid-word false positives ("art thou" in "heart thous"). Short sung
+  // syllables ride along exactly — they occupy real positions.
+  // Sentence tier uses substantive terms with the same positions.
   const STOP = new Set(['the','a','an','and','or','of','to','in','on','for','with','from','as','is','are','was','were','be','been','am','it','its','this','that','these','those']);
-  const flatTerms = query.terms.flatMap((t) => flattenNavigatorSearchText(t).split(' ').filter(Boolean));
+  const flatTerms = extractQueryFlatTerms(query);
   const substantive = flatTerms.filter((t) => t.length >= 3 && !STOP.has(t));
   const shortTerms = flatTerms.filter((t) => !(t.length >= 3 && !STOP.has(t)));
   const useTerms = substantive.length > 0 ? substantive : flatTerms;
-  const hayTokens = contentAllowed
-    ? (record.contentFlatTokens || tokenizeNavigatorFlatText(record.normalizedContent || ''))
-    : [];
-  // Prefilter on flat includes (punctuation-insensitive): unless at least
-  // two substantive terms (or one, when <=2) appear anywhere in the lyric
-  // body, the walk cannot reach coverage — skip it. Same recall, far less
-  // work on misses. Note <=2 needs only ONE hit: the walk itself
-  // fuzzy-matches (typo "betlehem"~"bethlehem") and its coverage gate
-  // still requires both terms, so a single exact hit must enter the walk
-  // for typo'd 2-term queries ("Anonting fall on me") to recall.
-  if (contentAllowed && useTerms.length >= 1 && flatContent) {
+  // Position map (built once at index time); ad-hoc fallback keeps older
+  // prepared records and the no-index setlist path working identically.
+  const posMap = contentAllowed
+    ? (record.contentTokenPositions || buildNavigatorTokenPositions(record.normalizedContent || ''))
+    : null;
+  // Single exact term: contiguity is vacuous and coverage is 1 by
+  // construction — score the phrase tier directly from one Map get
+  // instead of running prefilter + run check + walk. Broad queries like
+  // "hallelujah" (145 holders) pay ~0.3us/record instead of ~2us.
+  if (contentAllowed && posMap && useTerms.length === 1) {
+    const only = useTerms[0];
+    const plist = posMap[only];
+    if (plist && plist.length > 0) {
+      const flatStem = record.normalizedStemFlat ?? flattenNavigatorSearchText(normStem);
+      let titleKicker = 0;
+      let titleField = 'content';
+      for (let i = 0; i < query.terms.length; i++) {
+        const t = query.terms[i];
+        if (isWeakNavigatorTerm(t)) continue;
+        const flatT = flattenNavigatorSearchText(t);
+        if (flatT && flatStem.includes(flatT)) { titleKicker = 200; titleField = 'both'; break; }
+      }
+      const contentLen = record.contentText?.length || 1;
+      const focusBonus = Math.max(0, Math.round(120 - 25 * Math.log10(contentLen)));
+      return { score: 250 * query.terms.length + 1500 + titleKicker + focusBonus, matchedField: titleField, sentence: true };
+    }
+  }
+  const variantMap = (contentAllowed && query.fuzzyVariants) || null;
+  // Resolve one term to its sorted occurrence positions: exact Map get,
+  // else per-query variant tokens (attached where the token index lives),
+  // else a unique-key scan (back-compat fallback only).
+  const resolvePositions = (term) => {
+    if (!posMap) return { list: [], exact: false };
+    const exact = posMap[term];
+    if (exact && exact.length > 0) return { list: exact, exact: true };
+    if (variantMap && Object.prototype.hasOwnProperty.call(variantMap, term)) {
+      const merged = [];
+      for (const v of variantMap[term]) {
+        const l = posMap[v];
+        if (l) for (let i = 0; i < l.length; i++) merged.push(l[i]);
+      }
+      if (merged.length > 0) {
+        merged.sort((a, b) => a - b);
+        return { list: merged, exact: false };
+      }
+      return { list: [], exact: false };
+    }
+    const merged = [];
+    for (const key in posMap) {
+      if (matchNavigatorToken(term, key)) {
+        const l = posMap[key];
+        for (let i = 0; i < l.length; i++) merged.push(l[i]);
+      }
+    }
+    if (merged.length === 0) return { list: [], exact: false };
+    merged.sort((a, b) => a - b);
+    return { list: merged, exact: false };
+  };
+  // Prefilter without any full-content scan: count terms with at least
+  // one occurrence (exact or variant). Same gates as before (≤2 terms
+  // need one hit so typo'd pairs still enter the walk; the walk's
+  // coverage gate does the precise filtering).
+  if (contentAllowed && posMap && useTerms.length >= 1) {
     let subHits = 0;
     for (const q of useTerms) {
-      if (flatContent.includes(q)) subHits += 1;
+      if (resolvePositions(q).list.length > 0) subHits += 1;
       if (subHits >= 2 && useTerms.length > 2) break;
     }
     const need = useTerms.length > 2 ? 2 : 1;
@@ -655,23 +820,75 @@ export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
       return null;
     }
   }
-  let cursor = 0;
-  let first = -1;
-  let last = -1;
-  let matched = 0;
-  if (contentAllowed && hayTokens.length > 0) {
-    for (const q of useTerms) {
-      let found = -1;
-      for (let i = cursor; i < hayTokens.length; i++) {
-        if (matchNavigatorToken(q, hayTokens[i])) { found = i; break; }
+  // Exact-phrase walk over ALL flat terms (shorts included, exact only).
+  // Run check, not greedy-first: every occurrence start of term 0 is
+  // tried, so a short early token run ("Halle Halle" ... later
+  // "Halle x6") cannot shadow the true contiguous run the way a greedy
+  // first-occurrence walk does. Token-contiguity replaces the old
+  // flat-substring hit (byte-equivalent on token-aligned phrases, minus
+  // mid-word false positives like "art thou" in "heart thous").
+  if (contentAllowed && posMap && flatTerms.length > 0) {
+    const exactLists = [];
+    let allExact = true;
+    for (const t of flatTerms) {
+      const { list, exact } = resolvePositions(t);
+      if (list.length === 0 || !exact) { allExact = false; break; }
+      exactLists.push(list);
+    }
+    if (allExact) {
+      let runFound = false;
+      const starts = exactLists[0];
+      outer: for (let s = 0; s < starts.length; s++) {
+        const p = starts[s];
+        for (let i = 1; i < exactLists.length; i++) {
+          const list = exactLists[i];
+          // Binary search for p + i.
+          const want = p + i;
+          let lo = 0;
+          let hi = list.length;
+          while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (list[mid] < want) lo = mid + 1;
+            else hi = mid;
+          }
+          if (lo >= list.length || list[lo] !== want) continue outer;
+        }
+        runFound = true;
+        break;
       }
-      if (found === -1) continue;
-      if (first === -1) first = found;
-      last = found;
-      cursor = found + 1;
-      matched += 1;
+      if (runFound) {
+        const flatStem = record.normalizedStemFlat ?? flattenNavigatorSearchText(normStem);
+        let titleKicker = 0;
+        let titleField = 'content';
+        for (let i = 0; i < query.terms.length; i++) {
+          const t = query.terms[i];
+          if (isWeakNavigatorTerm(t)) continue;
+          const flatT = flattenNavigatorSearchText(t);
+          if (flatT && flatStem.includes(flatT)) { titleKicker = 200; titleField = 'both'; break; }
+        }
+        const contentLen = record.contentText?.length || 1;
+        const focusBonus = Math.max(0, Math.round(120 - 25 * Math.log10(contentLen)));
+        return { score: 250 * query.terms.length + 1500 + titleKicker + focusBonus, matchedField: titleField, sentence: true };
+      }
     }
   }
+  // Sentence walk over substantive terms via position lists (no token
+  // scan, no flat full-content scan anywhere on this path).
+  const sentenceLists = [];
+  const sentenceExact = [];
+  if (contentAllowed && posMap) {
+    for (const q of useTerms) {
+      const { list, exact } = resolvePositions(q);
+      if (list.length === 0) continue;
+      sentenceLists.push(list);
+      sentenceExact.push(exact);
+    }
+  }
+  const w = walkTokenPositions(sentenceLists, sentenceExact);
+  const matched = w.matched;
+  const first = w.first;
+  const last = w.last;
+  const hayLen = contentAllowed && posMap ? Object.keys(posMap).length : 0;
   if (matched === 0) {
     // Title fallback: any single title term still matches (keeps file-title search usable).
     const titleHit = query.terms.some((t) => normStem.includes(t) || normPath.includes(t));
@@ -685,15 +902,17 @@ export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
     if (!titleOrdered) return null;
   }
   if (useTerms.length === 2 && matched < 2) return null;
-  const span = first === -1 ? hayTokens.length : last - first + 1;
+  const span = first === -1 ? hayLen : last - first + 1;
   if (query.terms.length >= 3 && span > 12 && coverage < 1) return null;
   const spanBonus = span <= 6 ? 500 : span <= 10 ? 250 : 80;
-  // Short sung syllables: exact presence is a small bonus, never a miss.
+  // Short sung syllables: exact token presence is a small bonus, never a
+  // miss (posMap key lookup replaces the old flat-substring boundary
+  // checks with identical semantics — tokens are space-split flat text).
   let shortBonus = 0;
-  if (contentAllowed && shortTerms.length > 0 && flatContent) {
+  if (contentAllowed && shortTerms.length > 0 && posMap) {
     for (const s of shortTerms) {
       if (!s) continue;
-      if (flatContent.includes(` ${s} `) || flatContent.startsWith(`${s} `) || flatContent.endsWith(` ${s}`)) shortBonus += 15;
+      if (Object.prototype.hasOwnProperty.call(posMap, s)) shortBonus += 15;
     }
     shortBonus = Math.min(60, shortBonus);
   }
@@ -701,8 +920,8 @@ export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
   // among files holding the same lyric words, prefer the focused song
   // sheet over a multi-service compilation.
   const titleBonus = query.terms.some((t) => normStem.includes(t)) ? 300 : 0;
-  const focusLen = record.contentText?.length || (flatContent ? flatContent.length : 0) || 1;
+  const focusLen = record.contentText?.length || 1;
   const focusBonus = Math.max(0, Math.round(60 - 12 * Math.log10(focusLen)));
-  const strongest = titleBonus > 0 && flatContent ? 'both' : (titleBonus > 0 ? 'name' : 'content');
+  const strongest = titleBonus > 0 && contentAllowed ? 'both' : (titleBonus > 0 ? 'name' : 'content');
   return { score: 700 + spanBonus + coverage * 200 + titleBonus + shortBonus + focusBonus, matchedField: strongest, sentence: true };
 }

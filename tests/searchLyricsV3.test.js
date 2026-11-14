@@ -29,6 +29,7 @@ import { existsSync, readdirSync, readFileSync } from 'fs';
 import path from 'path';
 import {
   flattenNavigatorSearchText,
+  isWeakNavigatorTerm,
   matchNavigatorToken,
   parseFileNavigatorQuery,
   prepareNavigatorSearchRecord,
@@ -80,16 +81,30 @@ function buildFixtures() {
   for (const r of records) index.indexRecordTokens(r);
 }
 
-// Mirrors main/fileNavigator.js searchFileNavigator (experimental path).
+// Mirrors main/fileNavigator.js searchFileNavigator (experimental path):
+// single-weak stem holders → rarest-unigram shortcut → phrase pairs →
+// typo-expanded unigram (variants attached) → full fallback.
 function indexedSearch(snippet, limit = 5) {
   const parsed = parseFileNavigatorQuery(snippet);
   parsed.searchContent = true;
   let candidateKeys = null;
-  if (parsed.terms.length >= 3) {
-    candidateKeys = index.findPhraseCandidateKeys(parsed.terms);
+  if (parsed.terms.length === 1 && isWeakNavigatorTerm(parsed.terms[0])) {
+    candidateKeys = index.findStemKeys(parsed.terms[0]);
+  }
+  if (!candidateKeys) {
+    if (parsed.terms.length >= 3) {
+      candidateKeys = index.findRarestUnigramKeys(parsed.terms, 12);
+    }
+    if ((!candidateKeys || candidateKeys.size === 0) && parsed.terms.length >= 3) {
+      candidateKeys = index.findPhraseCandidateKeys(parsed.terms);
+    }
   }
   if (!candidateKeys || candidateKeys.size === 0) {
-    candidateKeys = index.findCandidateKeys(parsed.terms);
+    const withVariants = index.findCandidatesWithVariants(parsed.terms);
+    candidateKeys = withVariants.keys;
+    if (withVariants.variants && Object.keys(withVariants.variants).length > 0) {
+      parsed.fuzzyVariants = withVariants.variants;
+    }
   }
   const scored = [];
   if (candidateKeys && candidateKeys.size > 0) {

@@ -10,7 +10,9 @@ import {
   createNavigatorMatchSnippet,
   createNavigatorPreview,
   createNavigatorSnippetFromLines,
+  extractQueryFlatTerms,
   highlightNavigatorSnippetText,
+  isWeakNavigatorTerm,
   normalizeNavigatorSearchText,
   parseFileNavigatorQuery,
   parseFileNavigatorQueryCached,
@@ -1186,24 +1188,47 @@ export async function searchFileNavigator({ query = '', fileTypes = [], limit = 
     }
   } else {
     // 1. Fast candidate lookup via inverted token index (rarest-first).
-    // 2. Two-tier scoring: cheap pass (exact/prefix/includes + content
-    //    phrase fast-path, no subsequence/edit-distance) first — snippet and
-    //    keystroke queries resolve here. Fuzzy pass only when cheap finds
-    //    nothing (typo queries). Full-index fallback only when candidates
-    //    are empty or both tiers miss, preserving R1 typo recall.
-    // Phrase-first pruning for snippet queries (>=3 terms, both scorers):
-    // pair-posting intersection collapses ~21 unigram candidates to just
-    // the phrase holders. Falls back to the expanded unigram path when a
-    // pair is missing (typos, stopword-only gaps) — same recall, less scoring.
-    // Typo terms (no exact posting) resolve via edit-1/prefix expansion
-    // inside the index: dozens of candidates instead of a 445-record
-    // fallback walk. Null = unresolvable term → full-scan fallback below.
+    // 2. Two-tier scoring: phrase-contiguity tier first (exact ordered
+    //    run via position lists, no full-content scan), sentence walk
+    //    second (position-ordered, typo-tolerant). Full-index fallback
+    //    only when candidates are empty or score nothing (R1 recall).
+    // Candidate priority: single weak keystroke → stem-word holders;
+    // tiny rarest posting (<=12) → score directly, skipping pair merges;
+    // else phrase-pair intersection; else typo-expanded unigram
+    // intersection (missing terms resolve via edit-1/prefix variants,
+    // whose tokens ride along on the parsed query for per-record fuzzy
+    // matching without per-record vocabulary scans).
     let candidateKeys = null;
-    if (parsed.terms.length >= 3) {
-      candidateKeys = navigatorTokenIndex.findPhraseCandidateKeys(parsed.terms);
+    // Single weak keystroke ("you", "th"): title holders only via the
+    // stem-word index — one Map get instead of a full-corpus walk. Null
+    // (no stem holds the term) falls through below; only a full scan can
+    // still surface path-only matches, exactly like the scorer fallback.
+    let singleWeakStem = false;
+    if (parsed.terms.length === 1 && isWeakNavigatorTerm(parsed.terms[0])) {
+      singleWeakStem = true;
+      candidateKeys = navigatorTokenIndex.findStemKeys(parsed.terms[0]);
     }
-    if (!candidateKeys || candidateKeys.size === 0) {
-      candidateKeys = navigatorTokenIndex.findCandidateKeysExpanded(parsed.terms);
+    if (!candidateKeys) {
+      if (parsed.terms.length >= 3 && !singleWeakStem) {
+        // Rarest-unigram shortcut: a tiny exact posting (<=12 holders)
+        // scores directly — same top results as pair intersection (the
+        // walk filters identically), skipping big pair-posting merges.
+        // Empty scores fall through to the pair path as usual.
+        candidateKeys = navigatorTokenIndex.findRarestUnigramKeys(parsed.terms, 12);
+      }
+      if ((!candidateKeys || candidateKeys.size === 0) && parsed.terms.length >= 3) {
+        candidateKeys = navigatorTokenIndex.findPhraseCandidateKeys(parsed.terms);
+      }
+    }
+    if ((!candidateKeys || candidateKeys.size === 0) && !singleWeakStem) {
+      const withVariants = navigatorTokenIndex.findCandidatesWithVariants(parsed.terms);
+      candidateKeys = withVariants.keys;
+      if (withVariants.variants && Object.keys(withVariants.variants).length > 0) {
+        // Per-query fuzzy map: per-record scoring resolves typo terms
+        // with Map gets instead of scanning every unique lyric token.
+        // Attached to the per-search clone — never the shared cached parse.
+        parsed.fuzzyVariants = withVariants.variants;
+      }
     }
     const scoreCandidates = (keys, fuzzy) => {
       const out = [];
