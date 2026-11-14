@@ -31,7 +31,8 @@
     "release:mobile": "node scripts/mobile-release.js",
     "postinstall": "cd server && npm install",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:lyrics-race": "vitest run tests/searchTwoFolder.test.js tests/searchLyricsV3.test.js"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
