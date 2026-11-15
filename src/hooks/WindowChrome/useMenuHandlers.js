@@ -4,7 +4,7 @@ import { createLogger } from '../../utils/logger';
 import useModal from '@/hooks/useModal';
 import useToast from '@/hooks/useToast';
 import { useDarkModeState } from '@/hooks/useStoreSelectors';
-import { canUseFileNavigator, pickLyricFileWithNavigator } from '../../utils/fileNavigatorEvents';
+import { canUseFileNavigator, pickLyricFileWithNavigator, resolveLyricSelectionContent } from '../../utils/fileNavigatorEvents';
 
 const log = createLogger('MenuHandlers');
 
@@ -34,7 +34,7 @@ const useMenuHandlers = (closeMenu) => {
           if (canUseFileNavigator()) {
             const selection = await pickLyricFileWithNavigator({});
             if (!selection || selection.canceled) return;
-            const opened = await window.electronAPI.fileNavigator.open(selection.filePath);
+            const opened = await resolveLyricSelectionContent(selection);
             if (opened?.success && opened.content) result = opened;
           } else {
             const dialogResult = await window.electronAPI.loadLyricsFile();

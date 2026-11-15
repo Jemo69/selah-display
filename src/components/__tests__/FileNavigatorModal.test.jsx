@@ -90,7 +90,8 @@ function mockNavigatorApi(overrides = {}) {
     onChange: vi.fn(() => () => {}),
     ...overrides,
   };
-  vi.stubGlobal('electronAPI', { fileNavigator: api, writeFile: vi.fn(async (_filePath, content) => { calls.writeFile.push(content); return { success: true }; }) });
+  const loadLyricsFile = overrides.loadLyricsFile || vi.fn().mockResolvedValue({ success: false, canceled: true });
+  vi.stubGlobal('electronAPI', { fileNavigator: api, loadLyricsFile, writeFile: vi.fn(async (_filePath, content) => { calls.writeFile.push(content); return { success: true }; }) });
   return { api, calls };
 }
 
@@ -154,6 +155,81 @@ describe('FileNavigatorModal', () => {
     await waitFor(() => {
       expect(onComplete).toHaveBeenCalledWith({ canceled: true });
     });
+  });
+
+  it('opens a single file through Browse files without requiring an indexed folder', async () => {
+    const user = userEvent.setup();
+    const onComplete = vi.fn();
+    const loadLyricsFile = vi.fn().mockResolvedValue({
+      success: true,
+      content: 'Amazing grace, how sweet the sound',
+      fileName: 'Amazing Grace.txt',
+      filePath: '/desktop/Amazing Grace.txt',
+    });
+    mockNavigatorApi({ loadLyricsFile });
+    renderWithToast(<FileNavigatorModal darkMode={false} />);
+
+    window.dispatchEvent(new CustomEvent(OPEN_FILE_NAVIGATOR_EVENT, { detail: { onComplete } }));
+    await screen.findByRole('option', { name: /Amazing Grace/ });
+
+    await user.click(screen.getByTestId('file-navigator-browse-files'));
+
+    await waitFor(() => {
+      expect(loadLyricsFile).toHaveBeenCalledOnce();
+    });
+    await waitFor(() => {
+      expect(onComplete).toHaveBeenCalledWith({
+        canceled: false,
+        filePath: '/desktop/Amazing Grace.txt',
+        payload: expect.objectContaining({ content: 'Amazing grace, how sweet the sound' }),
+      });
+    });
+    // Single-file open bypasses the index — no indexed-folder open required.
+    expect(window.electronAPI.fileNavigator.open).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(screen.queryByTestId('file-navigator-modal')).toBeNull();
+    });
+  });
+
+  it('settles the first request as canceled when opened twice in a row', async () => {
+    const user = userEvent.setup();
+    const first = vi.fn();
+    const second = vi.fn();
+    renderWithToast(<FileNavigatorModal darkMode={false} />);
+
+    window.dispatchEvent(new CustomEvent(OPEN_FILE_NAVIGATOR_EVENT, { detail: { onComplete: first } }));
+    await screen.findByRole('option', { name: /Amazing Grace/ });
+    window.dispatchEvent(new CustomEvent(OPEN_FILE_NAVIGATOR_EVENT, { detail: { onComplete: second } }));
+
+    await waitFor(() => {
+      expect(first).toHaveBeenCalledWith({ canceled: true });
+    });
+    expect(second).not.toHaveBeenCalled();
+    expect(screen.getByTestId('file-navigator-modal')).toBeTruthy();
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
+      expect(second).toHaveBeenCalledWith({ canceled: true });
+    });
+  });
+
+  it('stays in the navigator when the Browse files picker is canceled', async () => {
+    const user = userEvent.setup();
+    const onComplete = vi.fn();
+    const loadLyricsFile = vi.fn().mockResolvedValue({ success: false, canceled: true });
+    mockNavigatorApi({ loadLyricsFile });
+    renderWithToast(<FileNavigatorModal darkMode={false} />);
+
+    window.dispatchEvent(new CustomEvent(OPEN_FILE_NAVIGATOR_EVENT, { detail: { onComplete } }));
+    await screen.findByRole('option', { name: /Amazing Grace/ });
+
+    await user.click(screen.getByTestId('file-navigator-browse-files'));
+
+    await waitFor(() => {
+      expect(loadLyricsFile).toHaveBeenCalledOnce();
+    });
+    expect(onComplete).not.toHaveBeenCalled();
+    expect(screen.getByTestId('file-navigator-modal')).toBeTruthy();
   });
 
   it('searches the index and shows the match', async () => {

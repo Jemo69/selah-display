@@ -52,12 +52,25 @@ export function pickLyricFileWithNavigator({ destination, maxSelections } = {}) 
   });
 }
 
+// Single source of truth for turning a navigator selection into file
+// content. The modal already loaded the file (indexed open or the
+// single-file Browse path), so prefer its payload over re-reading through
+// the index, which rejects files outside indexed roots. Lets the failure
+// propagate — callers decide between silent null and a toast.
+export async function resolveLyricSelectionContent(selection) {
+  if (selection?.payload?.success && selection.payload.content) return selection.payload;
+  return window.electronAPI.fileNavigator.open(selection.filePath);
+}
+
 export async function openLyricsFileThroughNavigator() {
   if (!canUseFileNavigator()) return null;
   const selection = await pickLyricFileWithNavigator({});
-  if (!selection || selection.canceled) return null;
+  // Cancel is a truthy sentinel (not null) so callers' existing
+  // `if (navigatorResult) return` treats it as handled and never falls
+  // through to the OS file picker. Null means unavailable (web build).
+  if (!selection || selection.canceled) return { canceled: true };
   try {
-    const result = await window.electronAPI.fileNavigator.open(selection.filePath);
+    const result = await resolveLyricSelectionContent(selection);
     if (result?.success && result.content) {
       window.dispatchEvent(new CustomEvent('lyrics-opened', { detail: result }));
       return result;

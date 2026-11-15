@@ -258,6 +258,32 @@ export default function FileNavigatorModal({ darkMode = false }) {
     }
   };
 
+  // Single-file fallback: open one lyrics file through the OS picker without
+  // requiring a folder to be indexed first. Canceling the OS picker stays in
+  // the navigator instead of looping back into another dialog.
+  const handleBrowseFiles = async () => {
+    if (opening || !window.electronAPI?.loadLyricsFile) return;
+    setOpening(true);
+    setActionError('');
+    try {
+      const result = await window.electronAPI.loadLyricsFile();
+      if (result?.success && result.content) {
+        const complete = pendingRef.current?.onComplete;
+        pendingRef.current = null;
+        complete?.({ canceled: false, filePath: result.filePath, payload: result });
+        // Full reset (not just setOpen(false)) so a later reopen with no
+        // indexed root cannot show this session's stale query or preview.
+        closePanel();
+      } else if (result && !result.canceled) {
+        setActionError(result.error || 'Could not load the selected lyrics file');
+      }
+    } catch (error) {
+      setActionError(error?.message || 'Could not load the selected lyrics file');
+    } finally {
+      setOpening(false);
+    }
+  };
+
   const handleOpenSelected = async () => {
     if (!selected || selected.kind !== 'file' || opening) return;
     setOpening(true);
@@ -283,6 +309,11 @@ export default function FileNavigatorModal({ darkMode = false }) {
 
     const handleOpenRequest = async (event) => {
       const detail = event.detail || {};
+      // Never orphan a pending request: a new open settles the previous one.
+      if (pendingRef.current) {
+        pendingRef.current.onComplete?.({ canceled: true });
+        pendingRef.current = null;
+      }
       pendingRef.current = {
         onComplete: typeof detail.onComplete === 'function' ? detail.onComplete : null,
       };
@@ -473,7 +504,7 @@ export default function FileNavigatorModal({ darkMode = false }) {
           )}
           {roots.length === 0 && (
             <p className={`text-xs ${textMuted}`}>
-              No lyric folders indexed yet — add a folder or create the default Lyrics folder.
+              No lyric folders indexed yet — add a folder, create the default Lyrics folder, or open a single file with Browse files…
             </p>
           )}
         </div>
@@ -593,6 +624,16 @@ export default function FileNavigatorModal({ darkMode = false }) {
               <span className={`text-[11px] ${textMuted}`}>
                 {status.limitedRoots.length} folder{status.limitedRoots.length > 1 ? 's' : ''} over limits
               </span>
+            )}
+            {typeof window !== 'undefined' && window.electronAPI?.loadLyricsFile && (
+              <button
+                className={`rounded-lg border px-4 py-2 text-sm font-medium ${dark ? 'border-gray-600 hover:bg-gray-800 text-gray-200' : 'border-gray-300 hover:bg-gray-50 text-gray-700'}`}
+                onClick={handleBrowseFiles}
+                disabled={opening}
+                data-testid="file-navigator-browse-files"
+              >
+                Browse files…
+              </button>
             )}
             <button
               className={`rounded-lg border px-4 py-2 text-sm font-medium ${dark ? 'border-gray-600 hover:bg-gray-800 text-gray-200' : 'border-gray-300 hover:bg-gray-50 text-gray-700'}`}
