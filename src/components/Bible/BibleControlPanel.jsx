@@ -2,7 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useR
 import { Search, ChevronRight, ChevronDown, Loader2, History, BookOpen, SkipBack, SkipForward, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, GripVertical, LayoutGrid, Rows3, Monitor, Pencil } from 'lucide-react';
 import useBibleStore from '../../context/BibleStore';
 import useLyricsStore from '../../context/LyricsStore';
-import { orderBibleMetadata, searchBible } from 'shared/bible';
+import { orderBibleMetadata, searchBibleExperimental } from 'shared/bible';
 import { buildAllVersionsPreview, truncatePreviewText } from '../../utils/biblePreview';
 import useToast from '../../hooks/useToast';
 import { useControlSocket } from '../../context/ControlSocketProvider';
@@ -88,7 +88,6 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
 
   const output1Settings = useLyricsStore((s) => s.output1Settings) || {};
   const bibleVerseEditorEnabled = useLyricsStore((s) => s.bibleVerseEditorEnabled ?? false);
-  const sentenceExperimental = useLyricsStore((s) => s.sentenceSearchExperimental ?? true);
   const isOutputOn = useLyricsStore((s) => s.isOutputOn);
   const setIsOutputOn = useLyricsStore((s) => s.setIsOutputOn);
   const controlSocket = useControlSocket?.() || null;
@@ -183,7 +182,6 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
         maxResults: 20,
         defaultBibleId,
         searchAll,
-        experimental: sentenceExperimental,
         ...(biblesChanged ? { refreshBibles: true, allBibles: bibles } : {}),
         ...(currentChanged ? { currentBible } : {})
       });
@@ -192,7 +190,7 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
     return () => {
       clearTimeout(handle);
     };
-  }, [query, currentBible, bibles, defaultBibleId, searchAll, sentenceExperimental]);
+  }, [query, currentBible, bibles, defaultBibleId, searchAll]);
 
   const handleBookToggle = useCallback((bookNumber) => {
     setExpandedBooks(prev => ({
@@ -666,7 +664,7 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
                             if (typeof ref === 'string') {
                               const baseBible = currentBible || (activeBibleId ? bibles[activeBibleId] : null) || Object.values(bibles)[0];
                               if (baseBible) {
-                                const results = searchBible(baseBible, ref, bibles, 5, defaultBibleId, true);
+                                const results = searchBibleExperimental(baseBible, ref, bibles, 5, defaultBibleId, true);
                                 if (results.length > 0) {
                                   handleSearchResultClick(results[0]);
                                   setExpandedBooks(prev => ({ ...prev, [results[0].book]: true }));
@@ -675,7 +673,7 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
                                 }
                                // Fallback: put reference into search box so user sees it on right
                                setQuery(ref);
-                               const immediate = searchBible(baseBible, ref, bibles, 20, defaultBibleId, Boolean(searchAll));
+                               const immediate = searchBibleExperimental(baseBible, ref, bibles, 20, defaultBibleId, Boolean(searchAll));
                                setSearchResults(immediate);
                                setUIState({ historyCollapsed: true });
                                return;
@@ -709,7 +707,7 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
                             // Last resort - treat as search string
                             const fallbackBase = currentBible || Object.values(bibles)[0];
                             if (fallbackBase) {
-                              const results = searchBible(fallbackBase, String(ref), bibles, 5, defaultBibleId, true);
+                              const results = searchBibleExperimental(fallbackBase, String(ref), bibles, 5, defaultBibleId, true);
                               if (results.length) {
                                 handleSearchResultClick(results[0]);
                                 setExpandedBooks(prev => ({ ...prev, [results[0].book]: true }));

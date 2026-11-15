@@ -1113,7 +1113,7 @@ export function searchBible(currentBible, query, allBibles = {}, maxResults = 50
     .map(({ score, ...rest }) => rest);
 }
 
-// --- Experimental sentence-first search (behind Experimental flag) ---
+// --- Sentence-first search (permanent; graduated from Experimental) ---
 // Same reference handling as searchBible (isa 44 5 must keep working), but
 // text ranking is sentence-first: exact phrase wins, then ordered coverage.
 // Single-word OR hits are filtered when the query is a sentence.

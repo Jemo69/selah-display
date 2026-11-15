@@ -725,7 +725,7 @@ export function createHighlightedSnippet(content = '', query = '', fileType = 't
 }
 
 
-// --- Experimental sentence-first file scoring (behind Experimental flag) ---
+// --- Sentence-first file scoring (permanent; graduated from Experimental) ---
 // Import is lazy so scoring stays out of the synchronous module graph:
 // fileNavigatorSentence statically imports matchNavigatorToken from here,
 // which is safe because this file never statically imports it back.
@@ -734,7 +734,7 @@ export async function scoreNavigatorSearchRecordExperimentalAsync(record, parsed
   return mod.scoreNavigatorRecordSentence(record, parsedQuery);
 }
 
-// Ordered score bands (experimental ranker): a title that IS the query
+// Ordered score bands (sentence-first ranker): a title that IS the query
 // must outrank any lyric body merely containing the words — operators
 // typing a title want that song, not a compilation holding the phrase.
 // Bands never overlap: title-exact > title-prefix > content-phrase

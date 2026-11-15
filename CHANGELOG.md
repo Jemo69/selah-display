@@ -20,6 +20,10 @@
 - **Live transcript history, on by default:** one record per service with date, duration, model, provider, and per-segment provider attribution, with rotation, a hard cap that stops recording rather than filling the drive, and one-click erase. The sermon is usually published, so persisting it is the useful default rather than a risk (`main/speechHistory.js`, `src/components/Speech/TranscriptHistoryBrowser.jsx`).
 - **Hardware guards for live use:** a panic-stop hotkey that tears the microphone down from any state, an unmute-on-launch guard that never resumes capture by itself, a rail VU meter with a device-health line, and a downloader that resumes rather than restarting.
 
+### Changed
+
+- **Sentence-first search ranking is now permanent:** Bible + song search always rank whole sentences first — the Experimental toggle and its opt-out are gone. Typing a sentence ("for God so love the world", "water you turn into") puts the verse / lyric file holding the whole sentence first; reference lookups ("isa 44 5", "John 3:16") keep working unchanged. The per-word rankers stay in the codebase as the accuracy-race baselines that prove the new ranker never regresses (`main/fileNavigator.js`, `src/utils/bibleSearch.worker.js`, `src/components/UserPreferencesModal.jsx`).
+
 ### Notes
 
 - **No new runtime dependencies, and no model files.** The recognition engine is a separate, zero-dependency package that is *not* in the installer; the six invariants that guarantee this are enforced by tests that now gate every build.

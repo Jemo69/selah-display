@@ -1,4 +1,4 @@
-// shared/bible/sentenceSearch.js — experimental sentence-first ranking
+// shared/bible/sentenceSearch.js — sentence-first ranking (permanent)
 //
 // Why this exists: the default searchBible() intersects per-word postings.
 // A 4-word sentence like "for God so love the world" then scores verses that

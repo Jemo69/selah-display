@@ -18,7 +18,6 @@ import {
   parseFileNavigatorQuery,
   parseFileNavigatorQueryCached,
   prepareNavigatorSearchRecord,
-  scoreNavigatorSearchRecord,
   scoreNavigatorSearchRecordExperimental,
 } from '../shared/fileNavigatorSearch.js';
 import { createNavigatorTokenIndex } from '../shared/navigatorTokenIndex.js';
@@ -1113,7 +1112,7 @@ const searchCache = new Map();
 const SEARCH_CACHE_MAX = 100;
 let searchCacheGeneration = 0;
 
-function searchCacheKey(parsed, { limit, searchContent, experimental, requestedTypes }) {
+function searchCacheKey(parsed, { limit, searchContent, requestedTypes }) {
   // F4: key on the PARSED query (sorted terms + sorted type filters),
   // not the raw string — whitespace/case variants of ext: filters that
   // parse identically must share one entry. requestedTypes narrow the
@@ -1128,7 +1127,6 @@ function searchCacheKey(parsed, { limit, searchContent, experimental, requestedT
     [...(requestedTypes || [])].sort().join(','),
     Number(limit) || 0,
     searchContent !== false ? 'c1' : 'c0',
-    experimental !== false ? 'e1' : 'e0',
   ].join('|');
 }
 
@@ -1158,7 +1156,7 @@ export function invalidateFileNavigatorSearchCache() {
   searchCache.clear();
 }
 
-export async function searchFileNavigator({ query = '', fileTypes = [], limit = 80, searchContent = true, experimental = true } = {}) {
+export async function searchFileNavigator({ query = '', fileTypes = [], limit = 80, searchContent = true } = {}) {
   await ensureInitialized();
   // Cached parse (hot: every keystroke + 2x per result); cloned because
   // per-search state (searchContent, flatPhrase memo, narrowed fileTypes)
@@ -1169,7 +1167,7 @@ export async function searchFileNavigator({ query = '', fileTypes = [], limit = 
   const requestedTypes = [...new Set((Array.isArray(fileTypes) ? fileTypes : [])
     .map((value) => String(value || '').toLowerCase())
     .filter((value) => ['txt', 'lrc', 'md', 'rtf', 'docx'].includes(value)))];
-  const cacheKey = searchCacheKey(parsed, { limit, searchContent, experimental, requestedTypes });
+  const cacheKey = searchCacheKey(parsed, { limit, searchContent, requestedTypes });
   const cached = searchCacheGet(cacheKey);
   if (cached) return cached;
   const queryHadTypeFilters = parsed.fileTypes.length > 0;
@@ -1234,35 +1232,28 @@ export async function searchFileNavigator({ query = '', fileTypes = [], limit = 
         parsed.fuzzyVariants = withVariants.variants;
       }
     }
-    const scoreCandidates = (keys, fuzzy) => {
+    const scoreCandidates = (keys) => {
       const out = [];
       for (const key of keys) {
         const record = records.get(key);
         if (!record) continue;
-        const match = experimental !== false
-          ? scoreNavigatorSearchRecordExperimental(record, parsed)
-          : scoreNavigatorSearchRecord(record, parsed, { fuzzy });
+        const match = scoreNavigatorSearchRecordExperimental(record, parsed);
         if (!match) continue;
         out.push({ record, ...match });
       }
       return out;
     };
     if (candidateKeys && candidateKeys.size > 0) {
-      scored.push(...scoreCandidates(candidateKeys, false));
-      // Fuzzy tier only on cheap miss (typo queries like "amzing").
-      if (scored.length === 0) {
-        scored.push(...scoreCandidates(candidateKeys, true));
-      }
+      scored.push(...scoreCandidates(candidateKeys));
     }
 
-    // Inflection second pass (experimental only): when nothing scored a
-    // phrase-tier hit (no exact contiguous holder), inflection holders
-    // get their chance — "turn" must find lyric "turned" and vice
-    // versa, instead of losing to a compilation that happens to hold the
-    // exact words. Skipped on phrase hits (the common exact-paste case
-    // keeps its fast path with zero extra work) and for the default
-    // scorer (unchanged behavior). Merges, never replaces.
-    if (experimental !== false && parsed.terms.length >= 2 && !singleWeakStem) {
+    // Inflection second pass: when nothing scored a phrase-tier hit (no
+    // exact contiguous holder), inflection holders get their chance —
+    // "turn" must find lyric "turned" and vice versa, instead of
+    // losing to a compilation that happens to hold the exact words.
+    // Skipped on phrase hits (the common exact-paste case keeps its fast
+    // path with zero extra work). Merges, never replaces.
+    if (parsed.terms.length >= 2 && !singleWeakStem) {
       const hasPhraseHit = scored.some((s) => s.phrase === true);
       if (!hasPhraseHit) {
         const seenPaths = new Set(scored.map((s) => normalizeComparisonPath(s.record.filePath)));
@@ -1285,7 +1276,7 @@ export async function searchFileNavigator({ query = '', fileTypes = [], limit = 
           parsed.fuzzyVariants = merged;
         }
         if (inflectionKeys && inflectionKeys.size > 0) {
-          scored.push(...scoreCandidates(inflectionKeys, false));
+          scored.push(...scoreCandidates(inflectionKeys));
         }
       }
     }
@@ -1293,9 +1284,7 @@ export async function searchFileNavigator({ query = '', fileTypes = [], limit = 
     // 3. R1 Fallback: if candidates were empty or scored 0 results (typo query, fuzzy, edit-distance)
     if (scored.length === 0) {
       for (const record of records.values()) {
-        const match = experimental !== false
-          ? scoreNavigatorSearchRecordExperimental(record, parsed)
-          : scoreNavigatorSearchRecord(record, parsed);
+        const match = scoreNavigatorSearchRecordExperimental(record, parsed);
         if (!match) continue;
         scored.push({ record, ...match });
       }

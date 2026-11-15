@@ -1,4 +1,4 @@
-// shared/fileNavigatorSentence.js — experimental sentence-first file scoring
+// shared/fileNavigatorSentence.js — sentence-first file scoring (permanent)
 // A sentence query ("water to into wine") wants the file whose lyrics contain
 // the sentence in order, not files containing water OR into OR wine.
 // Rules: exact phrase wins; else require ordered proximity with tight span;

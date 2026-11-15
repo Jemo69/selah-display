@@ -9,7 +9,6 @@ import BibleImportModal from './BibleImportModal';
 import { createLogger } from '../../utils/logger.js';
 import { diagInfo } from '../../utils/diagnosticsLog.js';
 import { logSearchEvent } from '../../utils/searchAnalytics.js';
-import useLyricsStore from '../../context/LyricsStore';
 
 const logger = createLogger('BibleSearch');
 
@@ -52,7 +51,6 @@ export default function BibleSearchModal({ isOpen, onClose, onSelectVerses, dark
   } = useBibleStore();
 
   const { showToast } = useToast();
-  const sentenceExperimental = useLyricsStore((s) => s.sentenceSearchExperimental ?? true);
 
   useEffect(() => {
     if (!isOpen) {
@@ -307,7 +305,6 @@ export default function BibleSearchModal({ isOpen, onClose, onSelectVerses, dark
         maxResults: 50,
         defaultBibleId,
         searchAll,
-        experimental: sentenceExperimental,
         ...(biblesChanged ? { refreshBibles: true, allBibles: bibles } : {}),
         ...(currentChanged ? { currentBible } : {})
       });
@@ -316,7 +313,7 @@ export default function BibleSearchModal({ isOpen, onClose, onSelectVerses, dark
     return () => {
       clearTimeout(handle);
     };
-  }, [query, activeBibleId, bibles, defaultBibleId, searchAll, getBibleById, sentenceExperimental]);
+  }, [query, activeBibleId, bibles, defaultBibleId, searchAll, getBibleById]);
 
   const handleQueryChange = useCallback((e) => {
     setAllVersionsPreview(null);
