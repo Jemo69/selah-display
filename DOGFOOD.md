@@ -1,3 +1,46 @@
+# DOGFOOD — Lyrics open: quiet Cancel + single-file Browse (no forced folder)
+
+Date: 2026-11-15 — branch `t3/3bf3af04` (this worktree), PR TBD.
+
+## Scores per surface (minimum, never average)
+
+| Surface | Score | Evidence |
+|---|---|---|
+| Cancel closes quietly (the reported bug) | 10/10 | Fresh prod build (`npm run build` green) booted headless via boaz: Load lyrics file → navigator modal → Cancel click → control panel back, `xwininfo` tree shows ONLY the Selah window (pre-fix code would spawn a native file-dialog window here). Shots: `shots/dogfood-lyrics-after-cancel.png` |
+| Zero-root empty state + Browse files CTA | 10/10 | Live shot `shots/dogfood-lyrics-navigator-empty.png`: "No lyric folders indexed yet — add a folder, create the default Lyrics folder, or open a single file with Browse files…" + footer `Browse files… | Cancel | Open lyrics file` |
+| Browse payload path (F1 blocker: payload ignored → index re-read) | 10/10 | Unit: helper prefers payload with index untouched; modal test: Browse success completes `{canceled:false, filePath, payload}` and closes; modal test: Browse-cancel stays in navigator. Live: Browse click fires handler (footer spinner, `shots/dogfood-lyrics-browse-pending.png`) |
+| New Song Canvas path (F2: payload discarded) | 10/10 | Shares tested helper `resolveLyricSelectionContent`; failure still surfaces the existing Load-failed toast via the surrounding try/catch |
+| No regressions | 10/10 | `npx vitest run src/utils/__tests__/fileNavigatorEvents.test.js src/components/__tests__/FileNavigatorModal.test.jsx` → 18/18 (9 new, 9 existing); `npm run build` 8.37s green; unanimous jury 10/10 ×3 rounds |
+
+**Overall = 10/10 (minimum).** Two channels per claim: unit/component suites + live headless Electron captures and X-window assertions.
+
+## Bug class
+
+**Cancel-as-null conflated user-cancel with navigator-unavailable, so every caller fell through to the next picker** — the same class recurred as payload-ignored-then-index-reread (Browse pick re-opened through `resolveFileWithinRoots`, which rejects unindexed files). Siblings fixed: `useMenuShortcuts.handleTriggerFileLoad`, `LyricDisplayApp.openFileDialog` (both now rely on the truthy `{canceled:true}` sentinel — their extra guards were removed as redundant), `useMenuHandlers` New Song Canvas path, and `openLyricsFileThroughNavigator` — all four now share one helper + one sentinel.
+
+## Tests
+
+- Before: 0 tests pinning cancel/fallback behavior (existing modal Cancel test only asserted `onComplete({canceled:true})`, not that callers stop).
+- After: 18/18 green — 6 new in `src/utils/__tests__/fileNavigatorEvents.test.js` (unavailable→null, cancel→truthy sentinel, contract pin, helper payload/fallback/propagation, payload-preference) + 3 new in `FileNavigatorModal.test.jsx` (Browse success, Browse-cancel stays, double-open orphans first request).
+- Creative tests nobody asked for: double-open orphan settling (F6 proof); caller-contract test replicating the exact `if (navigatorResult) return` fallback pattern.
+- Live proof: boaz headless Electron (fresh `dist/` build, isolated `XDG_CONFIG_HOME`, default port 4000): onboarding dismiss → Load lyrics file → modal → Cancel → no dialog window (X tree + pixels). Jury: correctness 7→10, simplicity 8→10→10 over 3 rounds (Grok/OpenRouter/pi models unavailable — retried on Gemini/Beam until quorum).
+
+## Media
+
+No upload token available in sandbox, so no hosted video line; UI change is proven by local session captures (`shots/dogfood-lyrics-navigator-empty.png`, `shots/dogfood-lyrics-after-cancel.png`, `shots/dogfood-lyrics-browse-pending.png` — gitignored, attached to PR from the worktree).
+
+## Gaps
+
+1. Native file-dialog **selection** step not driven live: headless Xvfb maps no native windows (Browse click fires — spinner proves it — but `showOpenDialog` never paints, so no select+Enter). Component tests cover both sides of the IPC boundary; on real machines dialogs demonstrably open (that is the original complaint).
+2. App health check hardcodes `http://127.0.0.1:4000` (pre-existing, already documented in the mobile dogfood entry) — dogfood had to use the default port.
+3. Escape key via automation did not reach the modal (focus quirk of the harness); Cancel was proven via direct button click instead.
+
+## Commits / PR
+
+- TBD on file — see PR body for Jury table.
+
+---
+
 # DOGFOOD — Sentence-first search (Experimental)
 
 Date: 2026-11-01 — branch `experimental/sentence-search`, PR #60 (OPEN, do-not-merge per operator).
