@@ -459,50 +459,70 @@ export function buildNavigatorSnippetLines(content = '') {
   return { raw, norm };
 }
 
-// Fast per-result snippet from precomputed lines: finds the first line
-// holding any query term (no per-line normalization — lines were
-// normalized once at index time), returns up to 3 surrounding raw lines.
-// Same shape as createNavigatorMatchSnippet (plain text, capped).
+// Fast per-result snippet from precomputed lines: anchors the line
+// holding the MOST query terms (not the first line holding any term —
+// a leading "you"-only chorus must not hide the pasted sentence further
+// down, the exact confusion in the operator screenshot). Returns up to 3
+// surrounding raw lines. Same shape as createNavigatorMatchSnippet.
 export function createNavigatorSnippetFromLines(record, query = '', maxCharacters = 360) {
   const lines = record?.searchSnippetLines;
   if (!lines || !Array.isArray(lines.raw) || !Array.isArray(lines.norm)) return null;
   const { terms } = typeof query === 'string' ? parseFileNavigatorQueryCached(query) : query;
   if (!terms.length) return null;
-  let lineIndex = -1;
-  // Position anchor: earliest display line holding any query token.
-  // O(terms) Map gets instead of scanning every normalized line — the
-  // dominant snippet cost on large files. Falls back to the line scan
+  // Distinct flat tokens (punctuation-insensitive, like the scorer).
+  const seenTerms = new Set();
+  const flatTerms = [];
+  for (let t = 0; t < terms.length; t++) {
+    for (const ft of flattenNavigatorSearchText(terms[t]).split(' ').filter(Boolean)) {
+      if (!seenTerms.has(ft)) { seenTerms.add(ft); flatTerms.push(ft); }
+    }
+  }
+  if (flatTerms.length === 0) return null;
+  // Per-line hit counts via token positions: O(terms + occurrences),
+  // no per-line string scans. Falls back to the substring line scan
   // when positions are absent (older prepared records, oversized files).
   const posMap = record?.contentTokenPositions;
   const lineOf = record?.contentTokenLines;
+  let lineIndex = -1;
   if (posMap && Array.isArray(lineOf) && lineOf.length > 0) {
-    let best = Infinity;
-    const seenTerms = new Set();
-    for (let t = 0; t < terms.length; t++) {
-      const flats = flattenNavigatorSearchText(terms[t]).split(' ').filter(Boolean);
-      for (let f = 0; f < flats.length; f++) {
-        const ft = flats[f];
-        if (seenTerms.has(ft)) continue;
-        seenTerms.add(ft);
-        const list = posMap[ft];
-        if (list && list.length > 0) {
-          const ln = lineOf[list[0]];
-          if (ln < best) best = ln;
-          if (best === 0) break;
-        }
+    // Distinct terms per line: a line holding 3 different query words
+    // outranks one repeating a single word 3 times. Positions are
+    // sorted, so same-line occurrences are adjacent — count each line
+    // once per term with no Set allocation.
+    const hits = new Map();
+    for (const ft of flatTerms) {
+      const list = posMap[ft];
+      if (!list) continue;
+      let lastLn = -1;
+      for (let i = 0; i < list.length; i++) {
+        const ln = lineOf[list[i]];
+        if (typeof ln !== 'number' || ln === lastLn) continue;
+        lastLn = ln;
+        hits.set(ln, (hits.get(ln) || 0) + 1);
       }
-      if (best === 0) break;
     }
-    if (best !== Infinity) lineIndex = best;
+    let best = 0;
+    for (const [ln, count] of hits) {
+      if (count > best || (count === best && (lineIndex < 0 || ln < lineIndex))) {
+        best = count;
+        lineIndex = ln;
+      }
+    }
   }
   if (lineIndex < 0) {
+    // Substring fallback: most matching terms wins, earliest on ties.
+    let best = 0;
     for (let i = 0; i < lines.norm.length; i++) {
       const normalized = lines.norm[i];
       if (!normalized) continue;
+      let count = 0;
       for (let t = 0; t < terms.length; t++) {
-        if (normalized.includes(terms[t])) { lineIndex = i; break; }
+        if (normalized.includes(terms[t])) count++;
       }
-      if (lineIndex >= 0) break;
+      if (count > best) {
+        best = count;
+        lineIndex = i;
+      }
     }
   }
   const start = lineIndex >= 0 ? Math.max(0, lineIndex - 1) : 0;
