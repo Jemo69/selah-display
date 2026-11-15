@@ -39,7 +39,7 @@ import { slugifyOutputName, isReservedOutputSlug } from '../utils/outputs';
 import { runAllOutputActions } from '../utils/outputAutomation';
 import { parseLrcContent } from '../../shared/lyricsParsing.js';
 import { parseScheduleDocument } from '../../shared/scheduleMath.js';
-import { orderBibleMetadata, searchBible } from 'shared/bible';
+import { orderBibleMetadata, searchBibleExperimental } from 'shared/bible';
 import { useAutoplayManager } from '../hooks/useAutoplayManager';
 import { useSyncOutputs } from '../hooks/useSyncOutputs';
 import { useLyricsLoader } from '../hooks/LyricDisplayApp/useLyricsLoader';
@@ -720,7 +720,7 @@ const LyricDisplayApp = () => {
 
             // Older setlists only stored the formatted reference string.
             if ((!reference?.book || verses.length === 0) && metadata.reference && bible) {
-                const result = searchBible(bible, metadata.reference, state.bibles, 1, state.defaultBibleId, false)[0];
+                const result = searchBibleExperimental(bible, metadata.reference, state.bibles, 1, state.defaultBibleId, false)[0];
                 if (result) {
                     reference = {
                         id: result.bibleId || state.activeBibleId,

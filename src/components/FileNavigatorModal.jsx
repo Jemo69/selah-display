@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { OPEN_FILE_NAVIGATOR_EVENT, canUseFileNavigator, mergeFileNavigatorStatus, getFolderSelectionNotice } from '../utils/fileNavigatorEvents';
 import useToast from '../hooks/useToast';
-import { useLyricContentSearchEnabled, useSentenceSearchExperimental } from '../hooks/useStoreSelectors';
+import { useLyricContentSearchEnabled } from '../hooks/useStoreSelectors';
 import { logSearchEvent } from '../utils/searchAnalytics.js';
 import { createLogger } from '../utils/logger';
 
@@ -50,7 +50,6 @@ export default function FileNavigatorModal({ darkMode = false }) {
   const listRef = useRef(null);
 
   const { enabled: lyricSearchEnabled, setEnabled: setLyricSearchEnabled } = useLyricContentSearchEnabled();
-  const { enabled: sentenceExperimental } = useSentenceSearchExperimental();
 
   const setStatusBoth = useCallback((next) => {
     statusRef.current = mergeFileNavigatorStatus(statusRef.current, next);
@@ -117,7 +116,6 @@ export default function FileNavigatorModal({ darkMode = false }) {
       if (!lyricSearchEnabled) {
         payload.searchContent = false;
       }
-      payload.experimental = sentenceExperimental !== false;
       const result = await window.electronAPI.fileNavigator.search(payload);
       if (searchId !== searchCounterRef.current) return;
       const nextResults = result?.success ? result.results : [];
@@ -147,13 +145,13 @@ export default function FileNavigatorModal({ darkMode = false }) {
         meta: { contentSearch: lyricSearchEnabled, error: true },
       });
     }
-  }, [lyricSearchEnabled, sentenceExperimental]);
+  }, [lyricSearchEnabled]);
 
   useEffect(() => {
     if (open && mode === 'search' && query.trim()) {
       runSearch(query);
     }
-  }, [lyricSearchEnabled, sentenceExperimental, open, mode, query, runSearch]);
+  }, [lyricSearchEnabled, open, mode, query, runSearch]);
 
   const handleQueryChange = (value) => {
     setQuery(value);

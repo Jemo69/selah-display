@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { ChevronRight, BookOpen, Star } from 'lucide-react';
 import useBibleStore from '../../context/BibleStore';
-import useLyricsStore from '../../context/LyricsStore';
-import { searchBible, orderBibleMetadata } from 'shared/bible';
+import { orderBibleMetadata } from 'shared/bible';
 import { createLogger } from '../../utils/logger.js';
 
 const logger = createLogger('BibleBrowser');
@@ -31,8 +30,6 @@ export default function BibleBrowser({
     () => orderBibleMetadata(bibleMetadata, defaultBibleId),
     [bibleMetadata, defaultBibleId]
   );
-
-  const sentenceExperimental = useLyricsStore((s) => s.sentenceSearchExperimental ?? true);
 
   useEffect(() => {
     if (!activeBibleId || !currentBible) {
@@ -111,14 +108,13 @@ export default function BibleBrowser({
         maxResults: 30,
         defaultBibleId,
         searchAll,
-        experimental: sentenceExperimental,
         ...(biblesChanged ? { refreshBibles: true, allBibles: bibles } : {}),
         ...(currentChanged ? { currentBible } : {})
       });
     }, 300);
 
     return () => clearTimeout(handle);
-  }, [searchQuery, currentBible, bibles, defaultBibleId, searchAll, onSearchResults, sentenceExperimental]);
+  }, [searchQuery, currentBible, bibles, defaultBibleId, searchAll, onSearchResults]);
 
   const handleBookSelect = useCallback((bookNumber) => {
     onSelectReference({
