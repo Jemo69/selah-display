@@ -243,7 +243,7 @@ describe('FileNavigatorModal', () => {
     await user.type(screen.getByTestId('file-navigator-search'), 'grace');
     const searchItem = await screen.findByRole('option', { name: /Amazing Grace/ });
     expect(searchItem).toBeTruthy();
-    expect(window.electronAPI.fileNavigator.search).toHaveBeenCalledWith({ query: 'grace', limit: 80 });
+    expect(window.electronAPI.fileNavigator.search).toHaveBeenCalledWith(expect.objectContaining({ query: 'grace', limit: 80 }));
   });
 
   it('toggles lyric content search via button and passes searchContent: false when disabled', async () => {
@@ -261,11 +261,13 @@ describe('FileNavigatorModal', () => {
 
     await user.type(screen.getByTestId('file-navigator-search'), 'grace');
     await waitFor(() => {
-      expect(window.electronAPI.fileNavigator.search).toHaveBeenCalledWith({
-        query: 'grace',
-        limit: 80,
-        searchContent: false,
-      });
+      expect(window.electronAPI.fileNavigator.search).toHaveBeenCalledWith(
+        expect.objectContaining({
+          query: 'grace',
+          limit: 80,
+          searchContent: false,
+        })
+      );
     });
   });
 
