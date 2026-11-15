@@ -96,6 +96,21 @@ export function extractQueryFlatTerms(parsedQuery) {
   return flatTerms;
 }
 
+// Content-bearing query tokens: length >= 3 and not a function word.
+// Shared by the scorer (coverage denominator) and the index (inflection
+// expansion skips stopwords so "the"* never fans out to hundreds of
+// longer tokens).
+export const NAVIGATOR_CONTENT_STOPWORDS = new Set([
+  'the','a','an','and','or','of','to','in','on','for','with','from','as','is',
+  'are','was','were','be','been','am','it','its','this','that','these','those',
+]);
+
+export function extractSubstantiveFlatTerms(parsedQuery) {
+  const flatTerms = extractQueryFlatTerms(parsedQuery);
+  const substantive = flatTerms.filter((t) => t.length >= 3 && !NAVIGATOR_CONTENT_STOPWORDS.has(t));
+  return substantive.length > 0 ? substantive : flatTerms;
+}
+
 function isOrderedSubsequence(needle, haystack) {
   if (!needle || !haystack || needle.length < 3) return false;
   let needleIndex = 0;
@@ -444,50 +459,70 @@ export function buildNavigatorSnippetLines(content = '') {
   return { raw, norm };
 }
 
-// Fast per-result snippet from precomputed lines: finds the first line
-// holding any query term (no per-line normalization — lines were
-// normalized once at index time), returns up to 3 surrounding raw lines.
-// Same shape as createNavigatorMatchSnippet (plain text, capped).
+// Fast per-result snippet from precomputed lines: anchors the line
+// holding the MOST query terms (not the first line holding any term —
+// a leading "you"-only chorus must not hide the pasted sentence further
+// down, the exact confusion in the operator screenshot). Returns up to 3
+// surrounding raw lines. Same shape as createNavigatorMatchSnippet.
 export function createNavigatorSnippetFromLines(record, query = '', maxCharacters = 360) {
   const lines = record?.searchSnippetLines;
   if (!lines || !Array.isArray(lines.raw) || !Array.isArray(lines.norm)) return null;
   const { terms } = typeof query === 'string' ? parseFileNavigatorQueryCached(query) : query;
   if (!terms.length) return null;
-  let lineIndex = -1;
-  // Position anchor: earliest display line holding any query token.
-  // O(terms) Map gets instead of scanning every normalized line — the
-  // dominant snippet cost on large files. Falls back to the line scan
+  // Distinct flat tokens (punctuation-insensitive, like the scorer).
+  const seenTerms = new Set();
+  const flatTerms = [];
+  for (let t = 0; t < terms.length; t++) {
+    for (const ft of flattenNavigatorSearchText(terms[t]).split(' ').filter(Boolean)) {
+      if (!seenTerms.has(ft)) { seenTerms.add(ft); flatTerms.push(ft); }
+    }
+  }
+  if (flatTerms.length === 0) return null;
+  // Per-line hit counts via token positions: O(terms + occurrences),
+  // no per-line string scans. Falls back to the substring line scan
   // when positions are absent (older prepared records, oversized files).
   const posMap = record?.contentTokenPositions;
   const lineOf = record?.contentTokenLines;
+  let lineIndex = -1;
   if (posMap && Array.isArray(lineOf) && lineOf.length > 0) {
-    let best = Infinity;
-    const seenTerms = new Set();
-    for (let t = 0; t < terms.length; t++) {
-      const flats = flattenNavigatorSearchText(terms[t]).split(' ').filter(Boolean);
-      for (let f = 0; f < flats.length; f++) {
-        const ft = flats[f];
-        if (seenTerms.has(ft)) continue;
-        seenTerms.add(ft);
-        const list = posMap[ft];
-        if (list && list.length > 0) {
-          const ln = lineOf[list[0]];
-          if (ln < best) best = ln;
-          if (best === 0) break;
-        }
+    // Distinct terms per line: a line holding 3 different query words
+    // outranks one repeating a single word 3 times. Positions are
+    // sorted, so same-line occurrences are adjacent — count each line
+    // once per term with no Set allocation.
+    const hits = new Map();
+    for (const ft of flatTerms) {
+      const list = posMap[ft];
+      if (!list) continue;
+      let lastLn = -1;
+      for (let i = 0; i < list.length; i++) {
+        const ln = lineOf[list[i]];
+        if (typeof ln !== 'number' || ln === lastLn) continue;
+        lastLn = ln;
+        hits.set(ln, (hits.get(ln) || 0) + 1);
       }
-      if (best === 0) break;
     }
-    if (best !== Infinity) lineIndex = best;
+    let best = 0;
+    for (const [ln, count] of hits) {
+      if (count > best || (count === best && (lineIndex < 0 || ln < lineIndex))) {
+        best = count;
+        lineIndex = ln;
+      }
+    }
   }
   if (lineIndex < 0) {
+    // Substring fallback: most matching terms wins, earliest on ties.
+    let best = 0;
     for (let i = 0; i < lines.norm.length; i++) {
       const normalized = lines.norm[i];
       if (!normalized) continue;
+      let count = 0;
       for (let t = 0; t < terms.length; t++) {
-        if (normalized.includes(terms[t])) { lineIndex = i; break; }
+        if (normalized.includes(terms[t])) count++;
       }
-      if (lineIndex >= 0) break;
+      if (count > best) {
+        best = count;
+        lineIndex = i;
+      }
     }
   }
   const start = lineIndex >= 0 ? Math.max(0, lineIndex - 1) : 0;
@@ -699,6 +734,20 @@ export async function scoreNavigatorSearchRecordExperimentalAsync(record, parsed
   return mod.scoreNavigatorRecordSentence(record, parsedQuery);
 }
 
+// Ordered score bands (experimental ranker): a title that IS the query
+// must outrank any lyric body merely containing the words — operators
+// typing a title want that song, not a compilation holding the phrase.
+// Bands never overlap: title-exact > title-prefix > content-phrase
+// (capped) > title-contains > sentence walk > title-word fallback.
+// Content-phrase outranks title-contains so a pasted lyric line ranks
+// its owning sheet above a different song whose title merely holds the
+// same words ("the blood of Jesus" lyric vs title).
+const TITLE_EXACT_SCORE = 5200;
+const TITLE_PREFIX_SCORE = 4600;
+const TITLE_INCLUDES_SCORE = 3200;
+const contentPhraseScore = (termCount, titleKicker, focusBonus) =>
+  3000 + 100 * Math.min(termCount, 10) + titleKicker + focusBonus;
+
 export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
   const query = typeof parsedQuery === 'string'
     ? parseFileNavigatorQuery(parsedQuery)
@@ -721,7 +770,7 @@ export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
     // F6: compare normalized forms — an exact title match with differing
     // case/punctuation must still take the 2200 fast path.
     const weakNorm = normalizeNavigatorSearchText(phrase);
-    if (weakNorm && normStem === weakNorm) return { score: 2200, matchedField: 'name', sentence: true };
+    if (weakNorm && normStem === weakNorm) return { score: TITLE_EXACT_SCORE, matchedField: 'name', sentence: true, phrase: true };
     const weakFlat = flattenNavigatorSearchText(query.terms[0]);
     if (weakFlat) {
       const stemWords = record.stemWords || normStem.split(' ');
@@ -732,76 +781,86 @@ export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
     }
     return null;
   }
-  if (phrase && normStem === phrase) return { score: 2200, matchedField: 'name', sentence: true };
-  if (phrase && normStem.includes(phrase)) return { score: 1800, matchedField: 'name', sentence: true };
+  if (phrase && normStem === phrase) return { score: TITLE_EXACT_SCORE, matchedField: 'name', sentence: true, phrase: true };
+  if (phrase && normStem.startsWith(phrase)) return { score: TITLE_PREFIX_SCORE, matchedField: 'name', sentence: true, phrase: true };
+  if (phrase && normStem.includes(phrase)) return { score: TITLE_INCLUDES_SCORE, matchedField: 'name', sentence: true, phrase: true };
   // Phrase tier via walk contiguity (no flat full-content scan): an exact
   // ordered walk whose every flat term lands on consecutive positions is
   // byte-equivalent to the old flat-substring hit (token-aligned), minus
   // mid-word false positives ("art thou" in "heart thous"). Short sung
   // syllables ride along exactly — they occupy real positions.
   // Sentence tier uses substantive terms with the same positions.
-  const STOP = new Set(['the','a','an','and','or','of','to','in','on','for','with','from','as','is','are','was','were','be','been','am','it','its','this','that','these','those']);
   const flatTerms = extractQueryFlatTerms(query);
-  const substantive = flatTerms.filter((t) => t.length >= 3 && !STOP.has(t));
-  const shortTerms = flatTerms.filter((t) => !(t.length >= 3 && !STOP.has(t)));
-  const useTerms = substantive.length > 0 ? substantive : flatTerms;
+  const useTerms = extractSubstantiveFlatTerms(query);
+  const shortTerms = flatTerms.filter((t) => !(t.length >= 3 && !NAVIGATOR_CONTENT_STOPWORDS.has(t)));
   // Position map (built once at index time); ad-hoc fallback keeps older
   // prepared records and the no-index setlist path working identically.
   const posMap = contentAllowed
     ? (record.contentTokenPositions || buildNavigatorTokenPositions(record.normalizedContent || ''))
     : null;
-  // Single exact term: contiguity is vacuous and coverage is 1 by
-  // construction — score the phrase tier directly from one Map get
-  // instead of running prefilter + run check + walk. Broad queries like
-  // "hallelujah" (145 holders) pay ~0.3us/record instead of ~2us.
-  if (contentAllowed && posMap && useTerms.length === 1) {
-    const only = useTerms[0];
-    const plist = posMap[only];
-    if (plist && plist.length > 0) {
-      const flatStem = record.normalizedStemFlat ?? flattenNavigatorSearchText(normStem);
-      let titleKicker = 0;
-      let titleField = 'content';
-      for (let i = 0; i < query.terms.length; i++) {
-        const t = query.terms[i];
-        if (isWeakNavigatorTerm(t)) continue;
-        const flatT = flattenNavigatorSearchText(t);
-        if (flatT && flatStem.includes(flatT)) { titleKicker = 200; titleField = 'both'; break; }
-      }
-      const contentLen = record.contentText?.length || 1;
-      const focusBonus = Math.max(0, Math.round(120 - 25 * Math.log10(contentLen)));
-      return { score: 250 * query.terms.length + 1500 + titleKicker + focusBonus, matchedField: titleField, sentence: true };
-    }
-  }
   const variantMap = (contentAllowed && query.fuzzyVariants) || null;
   // Resolve one term to its sorted occurrence positions: exact Map get,
   // else per-query variant tokens (attached where the token index lives),
-  // else a unique-key scan (back-compat fallback only).
+  // else a unique-key scan (back-compat fallback only). Memoized per
+  // scorer call — prefilter, phrase run-check, and sentence walk resolve
+  // the same terms, and repeats dominate on repeated-word queries.
+  const resolvedCache = new Map();
   const resolvePositions = (term) => {
-    if (!posMap) return { list: [], exact: false };
-    const exact = posMap[term];
-    if (exact && exact.length > 0) return { list: exact, exact: true };
-    if (variantMap && Object.prototype.hasOwnProperty.call(variantMap, term)) {
-      const merged = [];
-      for (const v of variantMap[term]) {
-        const l = posMap[v];
-        if (l) for (let i = 0; i < l.length; i++) merged.push(l[i]);
+    const hit = resolvedCache.get(term);
+    if (hit) return hit;
+    let out;
+    if (!posMap) out = { list: [], exact: false };
+    else {
+      const exact = posMap[term];
+      if (exact && exact.length > 0) out = { list: exact, exact: true };
+      // Short tokens match exactly or not at all: matchNavigatorToken
+      // only returns true for len<3 on exact equality, which the get
+      // above already checked — so a key scan could never find anything
+      // new here. Instant miss (also skips the scan for stopword-heavy
+      // queries on every record).
+      else if (term.length < 3) out = { list: [], exact: false };
+      else if (variantMap && Object.prototype.hasOwnProperty.call(variantMap, term)) {
+        // Single-source lists are already sorted — reuse them directly
+        // instead of merging + re-sorting (the dominant cost on large
+        // files with common variants). Never mutated downstream.
+        const vlist = variantMap[term];
+        let single = null;
+        let multi = false;
+        for (const v of vlist) {
+          const l = posMap[v];
+          if (!l) continue;
+          if (single) { multi = true; break; }
+          single = l;
+        }
+        if (single && !multi) out = { list: single, exact: false };
+        else {
+          const merged = [];
+          for (const v of vlist) {
+            const l = posMap[v];
+            if (l) for (let i = 0; i < l.length; i++) merged.push(l[i]);
+          }
+          if (merged.length > 0) {
+            merged.sort((a, b) => a - b);
+            out = { list: merged, exact: false };
+          } else out = { list: [], exact: false };
+        }
+      } else {
+        const hits = [];
+        for (const key in posMap) {
+          if (matchNavigatorToken(term, key)) hits.push(posMap[key]);
+        }
+        if (hits.length === 0) out = { list: [], exact: false };
+        else if (hits.length === 1) out = { list: hits[0], exact: false };
+        else {
+          const merged = [];
+          for (const l of hits) for (let i = 0; i < l.length; i++) merged.push(l[i]);
+          merged.sort((a, b) => a - b);
+          out = { list: merged, exact: false };
+        }
       }
-      if (merged.length > 0) {
-        merged.sort((a, b) => a - b);
-        return { list: merged, exact: false };
-      }
-      return { list: [], exact: false };
     }
-    const merged = [];
-    for (const key in posMap) {
-      if (matchNavigatorToken(term, key)) {
-        const l = posMap[key];
-        for (let i = 0; i < l.length; i++) merged.push(l[i]);
-      }
-    }
-    if (merged.length === 0) return { list: [], exact: false };
-    merged.sort((a, b) => a - b);
-    return { list: merged, exact: false };
+    resolvedCache.set(term, out);
+    return out;
   };
   // Prefilter without any full-content scan: count terms with at least
   // one occurrence (exact or variant). Same gates as before (≤2 terms
@@ -868,7 +927,7 @@ export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
         }
         const contentLen = record.contentText?.length || 1;
         const focusBonus = Math.max(0, Math.round(120 - 25 * Math.log10(contentLen)));
-        return { score: 250 * query.terms.length + 1500 + titleKicker + focusBonus, matchedField: titleField, sentence: true };
+        return { score: contentPhraseScore(query.terms.length, titleKicker, focusBonus), matchedField: titleField, sentence: true, phrase: true };
       }
     }
   }
@@ -888,7 +947,6 @@ export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
   const matched = w.matched;
   const first = w.first;
   const last = w.last;
-  const hayLen = contentAllowed && posMap ? Object.keys(posMap).length : 0;
   if (matched === 0) {
     // Title fallback: any single title term still matches (keeps file-title search usable).
     const titleHit = query.terms.some((t) => normStem.includes(t) || normPath.includes(t));
@@ -902,7 +960,7 @@ export function scoreNavigatorSearchRecordExperimental(record, parsedQuery) {
     if (!titleOrdered) return null;
   }
   if (useTerms.length === 2 && matched < 2) return null;
-  const span = first === -1 ? hayLen : last - first + 1;
+  const span = last - first + 1;
   if (query.terms.length >= 3 && span > 12 && coverage < 1) return null;
   const spanBonus = span <= 6 ? 500 : span <= 10 ? 250 : 80;
   // Short sung syllables: exact token presence is a small bonus, never a
