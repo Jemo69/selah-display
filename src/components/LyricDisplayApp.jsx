@@ -9,6 +9,7 @@ import { openLyricsFileThroughNavigator } from '../utils/fileNavigatorEvents';
 
 const logger = createLogger('LyricDisplayApp');
 import useFileUpload from '../hooks/useFileUpload';
+import useBibleAutoImport from '../hooks/useBibleAutoImport';
 import useMultipleFileUpload from '../hooks/useMultipleFileUpload';
 import useSetlistLoader from '../hooks/SetlistModal/useSetlistLoader';
 import AuthStatusIndicator from './AuthStatusIndicator';
@@ -83,6 +84,9 @@ const LazyBoundary = ({ children }) => (
 const LyricDisplayApp = () => {
     logger.info('LyricDisplayApp mounted');
     const navigate = useNavigate();
+    // Bundled-Bible auto-import runs once at app launch (shared guard in
+    // the hook keeps the Bible panel + prefs surfaces from double-running).
+    useBibleAutoImport();
 
     const { isOutputOn, setIsOutputOn, autoTurnOnOutput } = useOutputState();
     const showSelectedLineHighlight = useLyricsStore((state) => state.showSelectedLineHighlight ?? true);

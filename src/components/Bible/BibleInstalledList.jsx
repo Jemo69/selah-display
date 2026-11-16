@@ -80,11 +80,15 @@ export default function BibleInstalledList({
       </p>
 
       {ordered.length > 0 ? (
-        <ul className="mt-3 space-y-2">
+        <ul className="mt-3 max-h-64 space-y-2 overflow-y-auto pr-1">
           {ordered.map((meta) => {
             const books = countBooks(meta.id);
             const isDefault = meta.id === defaultBibleId;
             const isActive = meta.id === activeBibleId;
+            // Stored metadata sometimes carries a literal "Unknown" name
+            // (older imports); fall back to the id so no row is unlabeled.
+            const rawName = String(meta.name || '').trim();
+            const displayName = rawName && rawName.toLowerCase() !== 'unknown' ? rawName : meta.id;
             return (
               <li
                 key={meta.id}
@@ -92,16 +96,21 @@ export default function BibleInstalledList({
                   darkMode ? 'border-gray-800 bg-gray-950/60 text-gray-200' : 'border-gray-100 bg-gray-50 text-gray-800'
                 }`}
                 data-testid={`bible-installed-${meta.id}`}
+                title={displayName}
               >
                 {isActive ? (
                   <CheckCircle2 className={`h-4 w-4 shrink-0 ${darkMode ? 'text-emerald-300' : 'text-emerald-600'}`} aria-hidden="true" />
                 ) : (
                   <Circle className={`h-4 w-4 shrink-0 ${darkMode ? 'text-gray-600' : 'text-gray-300'}`} aria-hidden="true" />
                 )}
-                <span className="min-w-0 flex-1 truncate font-medium">{meta.name || meta.id}</span>
-                {books != null && (
+                <span className="min-w-0 flex-1 truncate font-medium">{displayName}</span>
+                {books != null ? (
                   <span className={`shrink-0 text-[11px] ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
                     {books} {books === 1 ? 'book' : 'books'}
+                  </span>
+                ) : (
+                  <span className={`shrink-0 text-[11px] italic ${darkMode ? 'text-gray-600' : 'text-gray-400'}`} title="Translation metadata is installed; full text loads on first use">
+                    metadata only
                   </span>
                 )}
                 {isDefault && (

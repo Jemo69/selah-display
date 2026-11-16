@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import UserPreferencesModal from '@/components/UserPreferencesModal';
 import useBibleStore from '@/context/BibleStore';
 import { bibleDb } from '@/utils/db';
+import { resetBibleAutoImportForTests } from '@/hooks/useBibleAutoImport';
 
 vi.mock('@/utils/db', () => ({
   bibleDb: {
@@ -19,6 +20,7 @@ describe('UserPreferencesModal - Bible auto-import surface', () => {
   const origBibleAPI = typeof window !== 'undefined' ? window.bibleAPI : undefined;
 
   beforeEach(() => {
+    resetBibleAutoImportForTests();
     useBibleStore.setState({
       bibles: {},
       bibleMetadata: {},

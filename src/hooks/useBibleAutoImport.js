@@ -1,11 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import useBibleStore from '../context/BibleStore';
-import { parseBible } from 'shared/bible';
 import { createLogger } from '../utils/logger.js';
 
 const log = createLogger('BibleAutoImport');
 
 const BUNDLED_IDS = ['bundled-kjv', 'kjv-bundled'];
+
+// App-wide guard: the hook mounts in both the Bible panel and
+// User Preferences > Bible, but the side effect must run once.
+// All instances share one in-flight promise and one cached outcome.
+let autoImportFlight = null;
+let autoImportOutcome = null; // { status, detail } shared copy source
 
 /**
  * Auto-import the bundled offline translation (KJV sample) on first run.
@@ -19,15 +24,14 @@ const BUNDLED_IDS = ['bundled-kjv', 'kjv-bundled'];
  * successful import becomes default/active when the library is empty.
  */
 export function useBibleAutoImport({ enabled = true } = {}) {
-  const [status, setStatus] = useState('idle'); // idle | importing | done | error
-  const [detail, setDetail] = useState(null);
-  const ranRef = useRef(false);
+  const [status, setStatus] = useState(autoImportOutcome?.status || 'idle'); // idle | importing | done | error
+  const [detail, setDetail] = useState(autoImportOutcome?.detail || null);
 
   const run = useCallback(async () => {
-    if (ranRef.current) return { ok: false, reason: 'already-ran' };
-    ranRef.current = true;
+    if (autoImportFlight) return autoImportFlight;
     setStatus('importing');
     setDetail('Looking for bundled translations…');
+    autoImportFlight = (async () => {
     try {
       const store = useBibleStore.getState();
       const existingIds = new Set(Object.keys(store.bibleMetadata || {}));
@@ -156,19 +160,28 @@ export function useBibleAutoImport({ enabled = true } = {}) {
         try {
           await window.electronAPI?.bible?.save?.(imported[0].id, useBibleStore.getState().bibles[imported[0].id]);
         } catch { /* IndexedDB is source of truth */ }
-        setStatus('done');
-        setDetail(`Auto-imported ${imported.map((b) => b.name).join(', ')}.`);
+        autoImportOutcome = { status: 'done', detail: `Auto-imported ${imported.map((b) => b.name).join(', ')}.` };
         log.info('Bundled Bible auto-imported', { imported });
       } else {
-        setStatus('done');
-        setDetail('Bundled translation already installed.');
+        autoImportOutcome = { status: 'done', detail: 'Bundled translation already installed.' };
       }
+      setStatus(autoImportOutcome.status);
+      setDetail(autoImportOutcome.detail);
       return { ok: true, imported };
     } catch (error) {
+      autoImportOutcome = { status: 'error', detail: error?.message || 'Auto-import failed.' };
       setStatus('error');
-      setDetail(error?.message || 'Auto-import failed.');
+      setDetail(autoImportOutcome.detail);
       log.warn('Bible auto-import failed', { error: error?.message });
       return { ok: false, error };
+    }
+    })();
+    try {
+      return await autoImportFlight;
+    } finally {
+      // Keep the outcome cached for late mounters; clear only the flight
+      // on failure so a rescan can retry.
+      if (autoImportOutcome?.status === 'error') autoImportFlight = null;
     }
   }, []);
 
@@ -176,8 +189,17 @@ export function useBibleAutoImport({ enabled = true } = {}) {
     if (enabled) run();
   }, [enabled, run]);
 
+  useEffect(() => {
+    // Late mounters (second surface) pick up the shared outcome.
+    if (autoImportOutcome) {
+      setStatus(autoImportOutcome.status);
+      setDetail(autoImportOutcome.detail);
+    }
+  }, []);
+
   const rescan = useCallback(() => {
-    ranRef.current = false;
+    autoImportFlight = null;
+    autoImportOutcome = null;
     return run();
   }, [run]);
 
@@ -186,27 +208,8 @@ export function useBibleAutoImport({ enabled = true } = {}) {
 
 export default useBibleAutoImport;
 
-// Shared-parser sanity export (used by tests): plan shape → store shape stays
-// convertible without Electron.
-export function convertPlanBookJson(planJson) {
-  const out = [];
-  let n = 1;
-  for (const [bookName, chapters] of Object.entries(planJson || {})) {
-    if (bookName.toLowerCase() === 'info' || !chapters || typeof chapters !== 'object') continue;
-    out.push({
-      number: n++,
-      name: bookName,
-      chapters: Object.entries(chapters)
-        .filter(([k]) => /^\d+$/.test(String(k)))
-        .map(([ch, verses]) => ({
-          number: Number(ch),
-          verses: Object.entries(verses || {})
-            .filter(([v]) => /^\d+$/.test(String(v)))
-            .map(([v, text]) => ({ number: Number(v), text: String(text) })),
-        })),
-    });
-  }
-  return out;
+/** Test-only: clear the shared guard so each test imports fresh. */
+export function resetBibleAutoImportForTests() {
+  autoImportFlight = null;
+  autoImportOutcome = null;
 }
-
-export { parseBible };

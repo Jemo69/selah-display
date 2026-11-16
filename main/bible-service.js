@@ -141,7 +141,15 @@ class BibleService {
     const name = this.normalizeBook(book);
     if (this.cache.has(name)) return this.cache.get(name);
     const file = path.join(this.baseDir, `${name}.json`);
-    const raw = JSON.parse(readFileSync(file, 'utf8'));
+    let raw;
+    try {
+      raw = JSON.parse(readFileSync(file, 'utf8'));
+    } catch {
+      // Operator-facing copy: never leak fs paths (ENOENT) to the UI.
+      const have = this.availableBooks();
+      const hint = have.length > 0 ? ` (bundled sample covers: ${have.join(', ')})` : '';
+      throw new Error(`${name} is not in the bundled offline sample${hint}. Import a full translation to look it up.`);
+    }
     const data = raw[name] || raw; // files: { "Genesis": {...}, "Info": {...} }
     this.cache.set(name, data);
     return data;

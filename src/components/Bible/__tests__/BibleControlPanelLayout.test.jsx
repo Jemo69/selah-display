@@ -184,3 +184,33 @@ describe('BibleControlPanel parallel display placement', () => {
     expect(screen.queryByTestId('parallel-bible-link-body')).toBeNull();
   });
 });
+
+describe('BibleControlPanel offline verse lookup', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.linkedBibleId = null;
+    mocks.parallelHidden = false;
+    mocks.ui = { parallelControlCollapsed: false };
+    globalThis.Worker = class {
+      postMessage() {}
+      terminate() {}
+    };
+    globalThis.fetch = vi.fn(async () => ({ ok: false }));
+  });
+
+  afterEach(() => {
+    delete globalThis.Worker;
+    delete globalThis.fetch;
+  });
+
+  it('renders the lookup with a labeled action (not mouse-only Enter)', () => {
+    render(<BibleControlPanel darkMode={false} />);
+
+    expect(screen.getByTestId('bible-offline-lookup')).toBeTruthy();
+    expect(screen.getByLabelText('Offline verse lookup')).toBeTruthy();
+    // The action must be reachable by pointer, not only via Enter.
+    // Reachable by pointer (not Enter-only) and visibly labeled.
+    const btn = screen.getByRole('button', { name: 'Look up John 3:16' });
+    expect(btn.textContent).toBe('Look up John 3:16');
+  });
+});

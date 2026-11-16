@@ -8,9 +8,37 @@ import useBibleStore from '../context/BibleStore';
 
 const getApi = () => (typeof window !== 'undefined' ? window.bibleAPI : null);
 
+/**
+ * Normalise a verse-service reply into one renderable card.
+ * The main service returns a single object for "John 3:16" but an array
+ * for ranges ("Genesis 1:1-3"); the store fallback always returns one
+ * object. Ranges join verse texts under the range reference so both paths
+ * behave identically for the same hint.
+ */
+export function normalizeVerseResult(result, ref) {
+  if (Array.isArray(result)) {
+    const verses = result.filter(Boolean);
+    if (verses.length === 0) throw new Error(`Verse not found: ${ref}`);
+    const first = verses[0];
+    const last = verses[verses.length - 1];
+    const rangeRef =
+      verses.length > 1 && first.book === last.book && first.chapter === last.chapter
+        ? `${first.book} ${first.chapter}:${first.verse}-${last.verse}`
+        : verses.map((v) => v.reference).join(', ');
+    return {
+      book: first.book,
+      reference: rangeRef,
+      text: verses.map((v) => v.text).join(' '),
+      translation: first.translation,
+      verses,
+    };
+  }
+  return result;
+}
+
 export async function fetchVerse(ref) {
   const api = getApi();
-  if (api?.getVerse) return api.getVerse(ref);
+  if (api?.getVerse) return normalizeVerseResult(await api.getVerse(ref), ref);
   // Fallback: resolve from the loaded store.
   const store = useBibleStore.getState();
   const activeId = store.activeBibleId || store.defaultBibleId || Object.keys(store.bibles)[0];

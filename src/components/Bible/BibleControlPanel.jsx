@@ -54,8 +54,9 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
   const verseRefs = useRef(new Map());
   const { showToast } = useToast();
   // Offline verse service: auto-import the bundled KJV sample once, then
-  // show which translations are installed (User Prefs > Bible lists them all).
-  const { status: autoImportStatus, detail: autoImportDetail } = useBibleAutoImport();
+  // show which translations are installed (panel list + User Prefs > Bible).
+  // The hook is app-wide idempotent: every surface shares one outcome.
+  const { status: autoImportStatus, detail: autoImportDetail, run: rescanBundled } = useBibleAutoImport();
   const [offlineLookup, setOfflineLookup] = useState('John 3:16');
   const [offlineResult, setOfflineResult] = useState(null);
   const [offlineError, setOfflineError] = useState(null);
@@ -85,7 +86,11 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
     setUIState
   } = useBibleStore();
   const selectionCollapsed = ui.selectionCollapsed ?? false;
-  const sidePanelWidth = ui.sidePanelWidth ?? 380;
+  // Clamp runaway persisted widths: an absurd sidePanelWidth (e.g. stored
+  // from a much wider window) would otherwise push the whole panel —
+  // including the offline lookup row — past the viewport clip, hiding
+  // reachable controls off-screen.
+  const sidePanelWidth = Math.min(Math.max(ui.sidePanelWidth ?? 380, 280), 560);
   const verseLayout = ui.verseLayout ?? 'grid';
   const isRowMode = verseLayout === 'list';
   // Concept 5 Grid Board: stretchable panel drives column count (1 / 2 / 3).
@@ -534,7 +539,9 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
       const rect = containerRef.current.getBoundingClientRect();
       const newWidth = rect.right - e.clientX;
       const min = 280;
-      const max = Math.max(min + 40, rect.width - 280);
+      // Absolute cap: the panel must never outgrow the viewport and push
+      // its own controls (offline lookup, verse list) past the clip.
+      const max = Math.min(560, Math.max(min + 40, rect.width - 280));
       const clamped = Math.min(Math.max(newWidth, min), max);
       // only update if within bounds — avoids jitter at edges
       if (newWidth >= min && newWidth <= max) {
@@ -573,22 +580,22 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
           }`}
           style={{ 
             gridTemplateColumns: (!ui.libraryCollapsed && !ui.sidePanelCollapsed) 
-              ? `1fr ${ui.sidePanelWidth}px` 
+              ? `1fr ${sidePanelWidth}px` 
               : undefined 
           }}
         >
           {/* Main Bible module (Library & History) */}
           {!ui.libraryCollapsed && (
-          <div className={`flex min-h-0 flex-col gap-3 transition-all duration-300 animate-in fade-in slide-in-from-left-4`}>
+          <div className={`flex min-h-0 min-w-0 flex-col gap-3 transition-all duration-300 animate-in fade-in slide-in-from-left-4`}>
             <section className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border shadow-sm ${darkMode ? 'border-gray-700 bg-gray-900/60' : 'border-gray-200 bg-gray-50'}`}>
               <div className={`flex-shrink-0 border-b px-4 py-3 ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <BookOpen className={`h-4 w-4 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`} />
                     <div>
-                      <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider">Bible Library
-                        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold normal-case ${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-gray-200 text-gray-600'}`} data-testid="bible-installed-count-badge" title="Translations installed in this app">
-                          {Object.keys(bibleMetadata || {}).length} installed
+                      <div className="flex min-w-0 items-center gap-1.5 text-xs font-bold uppercase tracking-wider">Bible Library
+                        <span className={`shrink-0 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[10px] font-bold normal-case ${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-gray-200 text-gray-600'}`} data-testid="bible-installed-count-badge" title={`${Object.keys(bibleMetadata || {}).length} translations installed`}>
+                          {Object.keys(bibleMetadata || {}).length}
                         </span>
                       </div>
                       <div className={`text-[11px] ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
@@ -767,12 +774,19 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
                 )}
               </section>
             )}
+            {/* Installed translations — same list as User Preferences > Bible. */}
+            <BibleInstalledList
+              darkMode={darkMode}
+              autoImportStatus={autoImportStatus}
+              autoImportDetail={autoImportDetail}
+              onRescan={rescanBundled}
+            />
           </div>
           )}
 
           {/* Verse side panel */}
           {!ui.sidePanelCollapsed && (
-          <aside className={`flex min-h-0 flex-col overflow-hidden rounded-2xl border shadow-xl relative transition-all duration-300 animate-in fade-in slide-in-from-right-4 ${darkMode ? 'border-gray-700 bg-gray-950/60' : 'border-gray-200 bg-white'}`}>
+          <aside className={`flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border shadow-xl relative transition-all duration-300 animate-in fade-in slide-in-from-right-4 ${darkMode ? 'border-gray-700 bg-gray-950/60' : 'border-gray-200 bg-white'}`}>
             {/* Resize Handle */}
             {!ui.libraryCollapsed && (
               <div
@@ -925,8 +939,8 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
               )}
               {/* Offline verse service — direct reference lookup (John 3:16) via
                   main-process Bible service + cache, with store fallback. */}
-              <div className={`mt-2 rounded-lg border p-2 ${darkMode ? 'border-gray-700 bg-gray-800/60' : 'border-gray-200 bg-gray-50'}`} data-testid="bible-offline-lookup">
-                <div className="flex items-center gap-2">
+              <div className={`mt-2 min-w-0 overflow-hidden rounded-lg border p-2 ${darkMode ? 'border-gray-700 bg-gray-800/60' : 'border-gray-200 bg-gray-50'}`} data-testid="bible-offline-lookup">
+                <div className="flex min-w-0 flex-col gap-2">
                   <input
                     type="text"
                     value={offlineLookup}
@@ -935,15 +949,18 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
                     placeholder="John 3:16"
                     title='Offline lookup — try "John 3:16" or "Genesis 1:1-3"'
                     aria-label="Offline verse lookup"
-                    className={`min-w-0 flex-1 rounded-md border px-2 py-1.5 text-xs ${darkMode ? 'bg-gray-900 border-gray-700 text-white placeholder-gray-500' : 'bg-white border-gray-300 text-gray-900 placeholder-gray-400'}`}
+                    className={`w-full min-w-0 rounded-md border px-2 py-1.5 text-xs ${darkMode ? 'bg-gray-900 border-gray-700 text-white placeholder-gray-500' : 'bg-white border-gray-300 text-gray-900 placeholder-gray-400'}`}
                   />
                   <button
                     type="button"
                     onClick={() => handleOfflineLookup()}
                     disabled={offlineLoading || !offlineLookup.trim()}
-                    className="shrink-0 rounded-md bg-blue-600 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white transition-colors hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60"
+                    aria-label={`Look up ${offlineLookup.trim() || 'offline verse'}`}
+                    title="Look up this reference in the offline verse service (same as Enter)"
+                    className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-blue-500/40 bg-blue-500/15 px-2.5 py-1.5 text-xs font-medium text-blue-200 transition-colors hover:bg-blue-500/25 disabled:cursor-wait disabled:opacity-60"
                   >
-                    {offlineLoading ? '…' : 'Verse'}
+                    <Search className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    <span>{offlineLoading ? 'Looking up…' : `Look up${offlineLookup.trim() ? ` ${offlineLookup.trim()}` : ''}`}</span>
                   </button>
                 </div>
                 {offlineError && (
@@ -967,7 +984,7 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
                       }
                     }}
                     title="Send this verse to display"
-                    className={`mt-1.5 w-full rounded-md border p-2 text-left transition-colors ${darkMode ? 'border-gray-700 bg-gray-900 hover:bg-gray-700' : 'border-gray-200 bg-white hover:bg-gray-100'}`}
+                    className={`mt-1.5 block w-full min-w-0 overflow-hidden rounded-md border p-2 text-left transition-colors ${darkMode ? 'border-gray-700 bg-gray-900 hover:bg-gray-700' : 'border-gray-200 bg-white hover:bg-gray-100'}`}
                   >
                     <div className="text-xs font-semibold">{offlineResult.reference}{offlineResult.translation ? ` (${offlineResult.translation})` : ''}</div>
                     <div className={`mt-0.5 line-clamp-2 text-[11px] leading-relaxed ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>{offlineResult.text}</div>

@@ -135,10 +135,6 @@
       {
         "from": "public/bibles",
         "to": "bibles"
-      },
-      {
-        "from": "assets/bibles",
-        "to": "bibles"
       }
     ],
     "extraFiles": [
