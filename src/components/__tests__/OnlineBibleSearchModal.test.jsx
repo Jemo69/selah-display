@@ -193,11 +193,17 @@ describe('OnlineBibleSearchModal', () => {
 
     // Filtering everything else out must not hide the running download.
     fireEvent.change(screen.getByTestId('online-bible-catalog-search'), {
-      target: { value: 'zzz-no-such' },
+      target: { value: 'young' },
     });
     expect(screen.getByTestId('online-bible-translation-KJV')).toBeTruthy();
+    expect(screen.getByTestId('online-bible-translation-YLT')).toBeTruthy();
     expect(screen.queryByText(/No translations match/)).toBeNull();
-    // Other rows' Import buttons are disabled, not silent no-ops.
+    // The other visible row's Import is disabled (not a silent no-op)
+    // while the pinned KJV row still offers Cancel.
+    const yltRow = screen.getByTestId('online-bible-translation-YLT');
+    const yltImport = yltRow.querySelector('button');
+    expect(yltImport.disabled).toBe(true);
+    expect(screen.getByText('Cancel')).toBeTruthy();
     release();
   });
 

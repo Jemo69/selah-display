@@ -261,68 +261,76 @@ export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
               No translations match “{catalogQuery.trim()}”.
             </p>
           ) : (
-          <ul className="space-y-2">
-            {visibleTranslations.map((t) => {
-              const installed = Boolean(bibleMetadata?.[onlineBibleIdFor(t.abbr)]);
-              const busy = importingAbbr === t.abbr;
-              const counts = bookCounts[t.abbr];
-              return (
-                <li
-                  key={t.abbr}
-                  className={`rounded-xl border p-3 ${darkMode ? 'border-gray-800 bg-gray-900/60' : 'border-gray-200 bg-white'}`}
-                  data-testid={`online-bible-translation-${t.abbr}`}
-                >
-                  <div className="flex items-center gap-2">
-                    <BookOpen className={`h-4 w-4 shrink-0 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`} aria-hidden="true" />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium">{t.name}</div>
-                      <div className={`text-[11px] ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-                        <span title={booksFailed[t.abbr] ? `Catalog failed to load (${booksFailed[t.abbr]}). Import will retry the download.` : undefined}>
-                          {t.abbr} · {t.edition} · {counts ? `${counts.books} books, ${counts.chapters} chapters` : booksFailed[t.abbr] ? 'catalog unavailable' : '…'}
+            <ul className="space-y-2">
+              {visibleTranslations.map((t) => {
+                const installed = Boolean(bibleMetadata?.[onlineBibleIdFor(t.abbr)]);
+                const busy = importingAbbr === t.abbr;
+                const counts = bookCounts[t.abbr];
+                return (
+                  <li
+                    key={t.abbr}
+                    className={`rounded-xl border p-3 ${darkMode ? 'border-gray-800 bg-gray-900/60' : 'border-gray-200 bg-white'}`}
+                    data-testid={`online-bible-translation-${t.abbr}`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <BookOpen className={`h-4 w-4 shrink-0 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`} aria-hidden="true" />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium">{t.name}</div>
+                        <div className={`text-[11px] ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
+                          <span title={booksFailed[t.abbr] ? `Catalog failed to load (${booksFailed[t.abbr]}). Import will retry the download.` : undefined}>
+                            {t.abbr} · {t.edition} · {counts ? `${counts.books} books, ${counts.chapters} chapters` : booksFailed[t.abbr] ? 'catalog unavailable' : '…'}
+                          </span>
+                        </div>
+                      </div>
+                      {installed && !busy && (
+                        <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${darkMode ? 'bg-emerald-500/20 text-emerald-200' : 'bg-emerald-100 text-emerald-700'}`}>
+                          <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+                          Installed
                         </span>
-                      </div>
+                      )}
+                      {busy ? (
+                        <Button size="sm" variant="outline" onClick={handleCancelImport}>
+                          Cancel
+                        </Button>
+                      ) : (
+                        // Native title never shows on a disabled button in
+                        // Chromium, so the waiting explanation lives on a
+                        // wrapping span instead.
+                        <span
+                          className="shrink-0"
+                          title={importingAbbr != null ? `Waiting — ${importingAbbr} is already downloading` : undefined}
+                        >
+                          <Button
+                            size="sm"
+                            onClick={() => handleImport(t.abbr)}
+                            disabled={!isOnline || importingAbbr != null}
+                            title={installed ? `Download ${t.name} again` : `Download ${t.name} into your library`}
+                          >
+                            <Download className="mr-1.5 h-3.5 w-3.5" />
+                            {installed ? 'Re-import' : 'Import'}
+                          </Button>
+                        </span>
+                      )}
                     </div>
-                    {installed && !busy && (
-                      <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${darkMode ? 'bg-emerald-500/20 text-emerald-200' : 'bg-emerald-100 text-emerald-700'}`}>
-                        <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
-                        Installed
-                      </span>
-                    )}
-                    {busy ? (
-                      <Button size="sm" variant="outline" onClick={handleCancelImport}>
-                        Cancel
-                      </Button>
-                    ) : (
-                      <Button
-                        size="sm"
-                        onClick={() => handleImport(t.abbr)}
-                        disabled={!isOnline || (importingAbbr != null && !busy)}
-                        title={importingAbbr != null && !busy ? `Waiting — ${importingAbbr} is already downloading` : installed ? `Download ${t.name} again` : `Download ${t.name} into your library`}
-                      >
-                        <Download className="mr-1.5 h-3.5 w-3.5" />
-                        {installed ? 'Re-import' : 'Import'}
-                      </Button>
-                    )}
-                  </div>
-                  {busy && importProgress && (
-                    <div className="mt-2">
-                      <div className={`h-2 overflow-hidden rounded-full ${darkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
-                        <div
-                          className="h-full rounded-full bg-blue-600 transition-all"
-                          style={{ width: `${importProgress.total > 0 ? Math.round((importProgress.done / importProgress.total) * 100) : 0}%` }}
-                        />
+                    {busy && importProgress && (
+                      <div className="mt-2">
+                        <div className={`h-2 overflow-hidden rounded-full ${darkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
+                          <div
+                            className="h-full rounded-full bg-blue-600 transition-all"
+                            style={{ width: `${importProgress.total > 0 ? Math.round((importProgress.done / importProgress.total) * 100) : 0}%` }}
+                          />
+                        </div>
+                        <div className={`mt-1 text-[11px] ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                          {importProgress.book
+                            ? `${importProgress.book} ${importProgress.chapter} · ${importProgress.done} of ${importProgress.total} chapters`
+                            : `Starting download…`}
+                        </div>
                       </div>
-                      <div className={`mt-1 text-[11px] ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                        {importProgress.book
-                          ? `${importProgress.book} ${importProgress.chapter} · ${importProgress.done} of ${importProgress.total} chapters`
-                          : `Starting download…`}
-                      </div>
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
           )}
           <p className={`flex items-start gap-1.5 text-[11px] leading-relaxed ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
