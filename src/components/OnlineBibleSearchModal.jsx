@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { X, Download, BookOpen, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { X, Download, BookOpen, AlertTriangle, CheckCircle2, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import useToast from '../hooks/useToast';
 import useNetworkStatus from '../hooks/OnlineLyricsSearchModal/useNetworkStatus';
@@ -28,6 +28,14 @@ export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
 
   const [bookCounts, setBookCounts] = useState({});
   const [booksFailed, setBooksFailed] = useState({});
+  const [catalogQuery, setCatalogQuery] = useState('');
+
+  const catalogQueryWords = catalogQuery.toLowerCase().split(/\s+/).filter(Boolean);
+  const visibleTranslations = ONLINE_BIBLE_TRANSLATIONS.filter((t) => {
+    if (catalogQueryWords.length === 0) return true;
+    const haystack = `${t.abbr} ${t.name} ${t.edition} ${t.language}`.toLowerCase();
+    return catalogQueryWords.every((w) => haystack.includes(w));
+  });
   const [importingAbbr, setImportingAbbr] = useState(null);
   const [importProgress, setImportProgress] = useState(null);
   const [importError, setImportError] = useState(null);
@@ -212,13 +220,40 @@ export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
           <p className={`text-xs leading-relaxed ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
             These public-domain translations download straight into your Bible library. Pick one and tap Import.
           </p>
+          <div className="relative">
+            <Search className={`absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`} aria-hidden="true" />
+            <input
+              type="text"
+              value={catalogQuery}
+              onChange={(e) => setCatalogQuery(e.target.value)}
+              placeholder="Search translations…"
+              aria-label="Search translations"
+              data-testid="online-bible-catalog-search"
+              className={`w-full rounded-lg border py-2 pl-9 pr-8 text-sm ${darkMode ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500' : 'bg-white border-gray-300 text-gray-900 placeholder-gray-400'}`}
+            />
+            {catalogQuery && (
+              <button
+                type="button"
+                onClick={() => setCatalogQuery('')}
+                aria-label="Clear translation search"
+                className={`absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 ${darkMode ? 'text-gray-400 hover:text-gray-200' : 'text-gray-400 hover:text-gray-600'}`}
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </button>
+            )}
+          </div>
           {importError && (
             <div className={`rounded-lg border px-3 py-2.5 text-sm ${darkMode ? 'border-red-500/40 bg-red-500/10 text-red-200' : 'border-red-200 bg-red-50 text-red-700'}`} role="alert">
               {importError}
             </div>
           )}
           <ul className="space-y-2">
-            {ONLINE_BIBLE_TRANSLATIONS.map((t) => {
+            {visibleTranslations.length === 0 && (
+              <li className={`rounded-xl border border-dashed px-3 py-4 text-center text-sm ${darkMode ? 'border-gray-700 text-gray-400' : 'border-gray-300 text-gray-500'}`}>
+                No translations match “{catalogQuery.trim()}”.
+              </li>
+            )}
+            {visibleTranslations.map((t) => {
               const installed = Boolean(bibleMetadata?.[onlineBibleIdFor(t.abbr)]);
               const busy = importingAbbr === t.abbr;
               const counts = bookCounts[t.abbr];

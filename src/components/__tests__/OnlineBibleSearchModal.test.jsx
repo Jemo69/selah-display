@@ -64,6 +64,33 @@ describe('OnlineBibleSearchModal', () => {
     expect(screen.queryByTestId('online-bible-tab-lookup')).toBeNull();
   });
 
+  it('searches translations by name, abbreviation, or edition', async () => {
+    renderOpen();
+    expect(await screen.findByTestId('online-bible-translation-KJV')).toBeTruthy();
+    expect(screen.getByTestId('online-bible-translation-ASV')).toBeTruthy();
+
+    fireEvent.change(screen.getByTestId('online-bible-catalog-search'), {
+      target: { value: 'young' },
+    });
+    expect(screen.queryByTestId('online-bible-translation-KJV')).toBeNull();
+    expect(screen.getByTestId('online-bible-translation-YLT')).toBeTruthy();
+
+    fireEvent.change(screen.getByTestId('online-bible-catalog-search'), {
+      target: { value: '1901' },
+    });
+    expect(screen.getByTestId('online-bible-translation-ASV')).toBeTruthy();
+    expect(screen.queryByTestId('online-bible-translation-YLT')).toBeNull();
+
+    fireEvent.change(screen.getByTestId('online-bible-catalog-search'), {
+      target: { value: 'zzz-no-such' },
+    });
+    expect(screen.queryByTestId('online-bible-translation-ASV')).toBeNull();
+    expect(screen.getByText(/No translations match/)).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText('Clear translation search'));
+    expect(screen.getByTestId('online-bible-translation-KJV')).toBeTruthy();
+  });
+
   it('imports a translation into the library', async () => {
     const bible = {
       id: 'bolls-kjv',
