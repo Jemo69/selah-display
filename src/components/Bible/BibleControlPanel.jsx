@@ -95,7 +95,8 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
   const isRowMode = verseLayout === 'list';
   // Concept 5 Grid Board: stretchable panel drives column count (1 / 2 / 3).
   // Row mode forces a single-column list regardless of panel width.
-  const verseGridColumns = isRowMode ? 1 : (sidePanelWidth >= 640 ? 3 : sidePanelWidth >= 440 ? 2 : 1);
+  // Thresholds stay within the 280..560 panel clamp so 3-up stays reachable.
+  const verseGridColumns = isRowMode ? 1 : (sidePanelWidth >= 520 ? 3 : sidePanelWidth >= 420 ? 2 : 1);
   const splitLongVersesEnabled = Boolean(settings?.splitLongVerses);
   const splitLongVersesChars = Number(settings?.longVersesChars || 100);
   const splitLongVersesTolerance = Number(settings?.longVersesTolerance || 0);
@@ -541,7 +542,8 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
       const min = 280;
       // Absolute cap: the panel must never outgrow the viewport and push
       // its own controls (offline lookup, verse list) past the clip.
-      const max = Math.min(560, Math.max(min + 40, rect.width - 280));
+      // Viewport-relative so narrow windows keep a usable library column.
+      const max = Math.min(560, Math.max(min + 40, Math.floor(rect.width * 0.6)));
       const clamped = Math.min(Math.max(newWidth, min), max);
       // only update if within bounds — avoids jitter at edges
       if (newWidth >= min && newWidth <= max) {
@@ -589,17 +591,17 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
           <div className={`flex min-h-0 min-w-0 flex-col gap-3 transition-all duration-300 animate-in fade-in slide-in-from-left-4`}>
             <section className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border shadow-sm ${darkMode ? 'border-gray-700 bg-gray-900/60' : 'border-gray-200 bg-gray-50'}`}>
               <div className={`flex-shrink-0 border-b px-4 py-3 ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <BookOpen className={`h-4 w-4 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`} />
-                    <div>
-                      <div className="flex min-w-0 items-center gap-1.5 text-xs font-bold uppercase tracking-wider">Bible Library
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <BookOpen className={`h-4 w-4 shrink-0 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`} />
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-xs font-bold uppercase tracking-wider">Bible Library
                         <span className={`shrink-0 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[10px] font-bold normal-case ${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-gray-200 text-gray-600'}`} data-testid="bible-installed-count-badge" title={`${Object.keys(bibleMetadata || {}).length} translations installed`}>
                           {Object.keys(bibleMetadata || {}).length}
                         </span>
                       </div>
-                      <div className={`text-[11px] ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                        {autoImportStatus === 'importing' ? 'Auto-importing bundled KJV…' : 'Choose a book and chapter • offline verse service ready'}
+                      <div className={`truncate text-[11px] ${darkMode ? 'text-gray-400' : 'text-gray-500'}`} title={autoImportStatus === 'importing' ? 'Auto-importing bundled KJV…' : 'Choose a book and chapter. The offline verse service is ready.'}>
+                        {autoImportStatus === 'importing' ? 'Auto-importing bundled KJV…' : 'Choose a book and chapter.'}
                       </div>
                     </div>
                   </div>
@@ -780,6 +782,7 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
               autoImportStatus={autoImportStatus}
               autoImportDetail={autoImportDetail}
               onRescan={rescanBundled}
+              compact
             />
           </div>
           )}
@@ -960,7 +963,7 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
                     className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-blue-500/40 bg-blue-500/15 px-2.5 py-1.5 text-xs font-medium text-blue-200 transition-colors hover:bg-blue-500/25 disabled:cursor-wait disabled:opacity-60"
                   >
                     <Search className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                    <span>{offlineLoading ? 'Looking up…' : `Look up${offlineLookup.trim() ? ` ${offlineLookup.trim()}` : ''}`}</span>
+                    <span className="truncate">{offlineLoading ? 'Looking up…' : `Look up${offlineLookup.trim() ? ` ${offlineLookup.trim()}` : ''}`}</span>
                   </button>
                 </div>
                 {offlineError && (

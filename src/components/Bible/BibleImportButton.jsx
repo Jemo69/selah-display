@@ -122,7 +122,7 @@ export default function BibleImportButton({
         aria-label={BIBLE_IMPORT_LABEL}
         title="Import a Bible translation file (.xml / .json: Zefania, OSIS, Beblia, or OpenSong)"
         data-testid="bible-import-button"
-        className={`inline-flex items-center gap-2 rounded-lg border font-semibold transition-colors disabled:cursor-wait disabled:opacity-60 ${sizeClasses} ${colorClasses} ${className}`}
+        className={`inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border font-semibold transition-colors disabled:cursor-wait disabled:opacity-60 ${sizeClasses} ${colorClasses} ${className}`}
       >
         {isImporting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
         {isImporting ? 'Importing…' : BIBLE_IMPORT_LABEL}

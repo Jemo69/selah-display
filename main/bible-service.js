@@ -1,7 +1,10 @@
 /**
  * Electron Bible Verse Service (offline).
  * Plan: slop-plans electron-bible-verse-service
- *   renderer (UI) —invoke→ preload (window.bibleAPI) —ipc→ main/bible-service.js —fs→ assets/bibles/KJV/*.json
+ *   renderer (UI) —invoke→ preload (window.bibleAPI) —ipc→ main/bible-service.js —fs→ public/bibles/KJV/*.json
+ * (packaged: extraResources/bibles; dev: public/bibles. A legacy
+ * assets/bibles dir is still probed first if present, but the packaged
+ * single source of truth is public/bibles.)
  *
  * Per-book files shaped like:
  *   KJV/Genesis.json → { "Genesis": { "1": { "1": "text" } }, "Info": {...} }

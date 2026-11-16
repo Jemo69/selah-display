@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useReducer, useState } from 'react';
 import useBibleStore from '../context/BibleStore';
 import { createLogger } from '../utils/logger.js';
 
@@ -6,11 +6,18 @@ const log = createLogger('BibleAutoImport');
 
 const BUNDLED_IDS = ['bundled-kjv', 'kjv-bundled'];
 
-// App-wide guard: the hook mounts in both the Bible panel and
-// User Preferences > Bible, but the side effect must run once.
-// All instances share one in-flight promise and one cached outcome.
+// App-wide guard: the hook mounts in the Bible panel, User Preferences >
+// Bible, and at app launch, but the side effect must run once. All
+// instances share one in-flight promise, one cached outcome, and one
+// listener set so every surface re-renders when the outcome lands.
 let autoImportFlight = null;
-let autoImportOutcome = null; // { status, detail } shared copy source
+let autoImportOutcome = null; // { status, detail } shared source of truth
+const autoImportListeners = new Set();
+function publishAutoImport() {
+  autoImportListeners.forEach((fn) => {
+    try { fn(); } catch { /* a dead surface must not break the others */ }
+  });
+}
 
 /**
  * Auto-import the bundled offline translation (KJV sample) on first run.
@@ -26,11 +33,30 @@ let autoImportOutcome = null; // { status, detail } shared copy source
 export function useBibleAutoImport({ enabled = true } = {}) {
   const [status, setStatus] = useState(autoImportOutcome?.status || 'idle'); // idle | importing | done | error
   const [detail, setDetail] = useState(autoImportOutcome?.detail || null);
+  const [, bump] = useReducer((x) => x + 1, 0);
+
+  // Every mounted surface follows the shared outcome (covers late
+  // mounters and rescan-from-another-surface staleness).
+  useEffect(() => {
+    const sync = () => {
+      if (autoImportOutcome) {
+        setStatus(autoImportOutcome.status);
+        setDetail(autoImportOutcome.detail);
+      } else {
+        bump();
+      }
+    };
+    autoImportListeners.add(sync);
+    sync();
+    return () => { autoImportListeners.delete(sync); };
+  }, []);
 
   const run = useCallback(async () => {
     if (autoImportFlight) return autoImportFlight;
     setStatus('importing');
     setDetail('Looking for bundled translations…');
+    autoImportOutcome = { status: 'importing', detail: 'Looking for bundled translations…' };
+    publishAutoImport();
     autoImportFlight = (async () => {
     try {
       const store = useBibleStore.getState();
@@ -167,11 +193,13 @@ export function useBibleAutoImport({ enabled = true } = {}) {
       }
       setStatus(autoImportOutcome.status);
       setDetail(autoImportOutcome.detail);
+      publishAutoImport();
       return { ok: true, imported };
     } catch (error) {
       autoImportOutcome = { status: 'error', detail: error?.message || 'Auto-import failed.' };
       setStatus('error');
       setDetail(autoImportOutcome.detail);
+      publishAutoImport();
       log.warn('Bible auto-import failed', { error: error?.message });
       return { ok: false, error };
     }
@@ -188,14 +216,6 @@ export function useBibleAutoImport({ enabled = true } = {}) {
   useEffect(() => {
     if (enabled) run();
   }, [enabled, run]);
-
-  useEffect(() => {
-    // Late mounters (second surface) pick up the shared outcome.
-    if (autoImportOutcome) {
-      setStatus(autoImportOutcome.status);
-      setDetail(autoImportOutcome.detail);
-    }
-  }, []);
 
   const rescan = useCallback(() => {
     autoImportFlight = null;
