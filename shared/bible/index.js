@@ -4,6 +4,7 @@ import { parseZefaniaBible } from './zefaniaBible.js';
 import { parseOsisBible } from './osisBible.js';
 import { parseBebliaBible } from './bebliaBible.js';
 import { parseOpenSongBible } from './openSongBible.js';
+import { parseGatewayJsonBible } from './gatewayJsonBible.js';
 import createSharedLogger from '../logger.js';
 
 const log = createSharedLogger('Bible');
@@ -12,7 +13,8 @@ const bibleParsers = {
   zefania: { name: 'Zefania', parse: parseZefaniaBible },
   osis: { name: 'OSIS', parse: parseOsisBible },
   beblia: { name: 'Beblia', parse: parseBebliaBible },
-  opensong: { name: 'OpenSong', parse: parseOpenSongBible }
+  opensong: { name: 'OpenSong', parse: parseOpenSongBible },
+  gatewayJson: { name: 'Bible Gateway JSON', parse: parseGatewayJsonBible }
 };
 
 export function parseBible(content, fileName = 'bible') {
@@ -20,8 +22,22 @@ export function parseBible(content, fileName = 'bible') {
   const format = detectBibleFormat(content);
   log.debug(`parseBible: detected format="${format}"`);
 
+  if (format === 'gatewayJson') {
+    const result = parseGatewayJsonBible(content, fileName);
+    if (result.books.length > 0) {
+      log.info(`parseBible: successfully parsed "${fileName}" as Bible Gateway JSON, ${result.books.length} books`);
+    }
+    return finishBibleParse(result, fileName);
+  }
+
   if (format === 'unknown') {
     log.warn('Unknown Bible format, attempting Zefania as fallback');
+    // Bible Gateway JSON files are single-book ({Genesis:{...}}) or combined
+    // ({Genesis:{...},...}); try that before the XML fallback.
+    const gatewayResult = parseGatewayJsonBible(content, fileName);
+    if (gatewayResult.books.length > 0) {
+      return finishBibleParse(gatewayResult, fileName);
+    }
     const result = parseZefaniaBible(content);
     if (result.books.length > 0) {
       return { id: `bible_${Date.now()}`, ...result };
@@ -38,7 +54,13 @@ export function parseBible(content, fileName = 'bible') {
 
   const result = parser.parse(content);
   log.info(`parseBible: successfully parsed "${fileName}" as ${parser.name}, ${result.books.length} books`);
+  return finishBibleParse(result, fileName);
+}
 
+function finishBibleParse(result, fileName) {
+  if (!result || !Array.isArray(result.books) || result.books.length === 0) {
+    return { name: fileName, books: [] };
+  }
   // Add O(1) lookup maps
   result.bookMap = {};
   for (const book of result.books) {

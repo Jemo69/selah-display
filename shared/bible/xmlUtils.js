@@ -78,6 +78,21 @@ export function xml2json(xml) {
 }
 
 export function detectBibleFormat(content) {
+  const trimmed = (content || '').trim();
+  if (trimmed.startsWith('{')) {
+    try {
+      const data = JSON.parse(trimmed);
+      const keys = Object.keys(data || {}).filter((k) => k !== 'Info');
+      const looksLikeGateway = keys.some((book) => {
+        const chapters = data[book];
+        return chapters && typeof chapters === 'object' && Object.values(chapters).some((verses) => verses && typeof verses === 'object');
+      });
+      if (looksLikeGateway) {
+        log.debug('detectBibleFormat: detected gatewayJson format');
+        return 'gatewayJson';
+      }
+    } catch {}
+  }
   if (content.includes('XMLBIBLE') && content.includes('BIBLEBOOK')) {
     log.debug('detectBibleFormat: detected zefania format');
     return 'zefania';
