@@ -29,13 +29,6 @@ export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
   const [bookCounts, setBookCounts] = useState({});
   const [booksFailed, setBooksFailed] = useState({});
   const [catalogQuery, setCatalogQuery] = useState('');
-
-  const catalogQueryWords = catalogQuery.toLowerCase().split(/\s+/).filter(Boolean);
-  const visibleTranslations = ONLINE_BIBLE_TRANSLATIONS.filter((t) => {
-    if (catalogQueryWords.length === 0) return true;
-    const haystack = `${t.abbr} ${t.name} ${t.edition} ${t.language}`.toLowerCase();
-    return catalogQueryWords.every((w) => haystack.includes(w));
-  });
   const [importingAbbr, setImportingAbbr] = useState(null);
   const [importProgress, setImportProgress] = useState(null);
   const [importError, setImportError] = useState(null);
@@ -44,6 +37,22 @@ export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
   const { showToast } = useToast();
   const isOnline = useNetworkStatus();
   const bibleMetadata = useBibleStore((s) => s.bibleMetadata);
+
+  const catalogQueryWords = catalogQuery.toLowerCase().split(/\s+/).filter(Boolean);
+  const matchingTranslations = ONLINE_BIBLE_TRANSLATIONS.filter((t) => {
+    if (catalogQueryWords.length === 0) return true;
+    const haystack = `${t.abbr} ${t.name} ${t.edition} ${t.language}`.toLowerCase();
+    return catalogQueryWords.every((w) => haystack.includes(w));
+  });
+  // Pin the in-flight import at the top: filtering must never hide the
+  // only progress bar and Cancel button, nor strand other rows' Import
+  // buttons as silent no-ops (they are disabled while one runs).
+  const visibleTranslations = importingAbbr
+    ? [
+      ...ONLINE_BIBLE_TRANSLATIONS.filter((t) => t.abbr === importingAbbr),
+      ...matchingTranslations.filter((t) => t.abbr !== importingAbbr),
+    ]
+    : matchingTranslations;
 
   useLayoutEffect(() => {
     setVisible(true);
@@ -247,12 +256,12 @@ export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
               {importError}
             </div>
           )}
+          {visibleTranslations.length === 0 ? (
+            <p role="status" className={`rounded-xl border border-dashed px-3 py-4 text-center text-sm ${darkMode ? 'border-gray-700 text-gray-400' : 'border-gray-300 text-gray-500'}`}>
+              No translations match “{catalogQuery.trim()}”.
+            </p>
+          ) : (
           <ul className="space-y-2">
-            {visibleTranslations.length === 0 && (
-              <li className={`rounded-xl border border-dashed px-3 py-4 text-center text-sm ${darkMode ? 'border-gray-700 text-gray-400' : 'border-gray-300 text-gray-500'}`}>
-                No translations match “{catalogQuery.trim()}”.
-              </li>
-            )}
             {visibleTranslations.map((t) => {
               const installed = Boolean(bibleMetadata?.[onlineBibleIdFor(t.abbr)]);
               const busy = importingAbbr === t.abbr;
@@ -287,8 +296,8 @@ export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
                       <Button
                         size="sm"
                         onClick={() => handleImport(t.abbr)}
-                        disabled={!isOnline}
-                        title={installed ? `Download ${t.name} again` : `Download ${t.name} into your library`}
+                        disabled={!isOnline || (importingAbbr != null && !busy)}
+                        title={importingAbbr != null && !busy ? `Waiting — ${importingAbbr} is already downloading` : installed ? `Download ${t.name} again` : `Download ${t.name} into your library`}
                       >
                         <Download className="mr-1.5 h-3.5 w-3.5" />
                         {installed ? 'Re-import' : 'Import'}
@@ -314,6 +323,7 @@ export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
               );
             })}
           </ul>
+          )}
           <p className={`flex items-start gap-1.5 text-[11px] leading-relaxed ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
             A full translation is about a thousand short downloads and can take a minute or two. You can cancel any time; nothing is saved until it finishes.

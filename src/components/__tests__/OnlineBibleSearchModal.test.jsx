@@ -76,6 +76,18 @@ describe('OnlineBibleSearchModal', () => {
     expect(screen.getByTestId('online-bible-translation-YLT')).toBeTruthy();
 
     fireEvent.change(screen.getByTestId('online-bible-catalog-search'), {
+      target: { value: 'ylt' },
+    });
+    expect(screen.getByTestId('online-bible-translation-YLT')).toBeTruthy();
+    expect(screen.queryByTestId('online-bible-translation-KJV')).toBeNull();
+
+    fireEvent.change(screen.getByTestId('online-bible-catalog-search'), {
+      target: { value: 'world english' },
+    });
+    expect(screen.getByTestId('online-bible-translation-WEB')).toBeTruthy();
+    expect(screen.queryByTestId('online-bible-translation-YLT')).toBeNull();
+
+    fireEvent.change(screen.getByTestId('online-bible-catalog-search'), {
       target: { value: '1901' },
     });
     expect(screen.getByTestId('online-bible-translation-ASV')).toBeTruthy();
@@ -88,7 +100,9 @@ describe('OnlineBibleSearchModal', () => {
     expect(screen.getByText(/No translations match/)).toBeTruthy();
 
     fireEvent.click(screen.getByLabelText('Clear translation search'));
-    expect(screen.getByTestId('online-bible-translation-KJV')).toBeTruthy();
+    for (const abbr of ['KJV', 'ASV', 'WEB', 'YLT']) {
+      expect(screen.getByTestId(`online-bible-translation-${abbr}`)).toBeTruthy();
+    }
   });
 
   it('imports a translation into the library', async () => {
@@ -162,6 +176,29 @@ describe('OnlineBibleSearchModal', () => {
     expect(await screen.findByTestId('online-bible-search-modal')).toBeTruthy();
     fireEvent.click(screen.getByLabelText('Close Bible search'));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the in-flight import visible while filtering', async () => {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    mocks.downloadOnlineTranslation.mockImplementation(async () => {
+      await gate;
+      return { id: 'bolls-kjv', name: 'King James Version', books: [] };
+    });
+    renderOpen();
+    expect(await screen.findByTestId('online-bible-translation-KJV')).toBeTruthy();
+
+    fireEvent.click(screen.getAllByText('Import')[0]);
+    await waitFor(() => expect(mocks.downloadOnlineTranslation).toHaveBeenCalled());
+
+    // Filtering everything else out must not hide the running download.
+    fireEvent.change(screen.getByTestId('online-bible-catalog-search'), {
+      target: { value: 'zzz-no-such' },
+    });
+    expect(screen.getByTestId('online-bible-translation-KJV')).toBeTruthy();
+    expect(screen.queryByText(/No translations match/)).toBeNull();
+    // Other rows' Import buttons are disabled, not silent no-ops.
+    release();
   });
 
   it('shows a friendly error when an import fails', async () => {
