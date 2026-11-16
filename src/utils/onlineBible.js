@@ -135,7 +135,6 @@ export async function fetchOnlineChapter(abbr, bookNumber, chapter, { signal } =
 const chapterName = (bookNumber) => CANONICAL_BOOK_NAMES[bookNumber - 1] || `Book ${bookNumber}`;
 
 export const onlineBibleIdFor = (abbr) => `bolls-${String(abbr).toLowerCase()}`;
-const buildBollsId = onlineBibleIdFor;
 
 /** Total chapters in a Protestant-66 book table (progress denominator). */
 export function countOnlineChapters(books) {
@@ -239,7 +238,7 @@ export async function downloadOnlineTranslation(abbr, { onProgress, signal } = {
   });
 
   const bible = {
-    id: buildBollsId(info.abbr),
+    id: onlineBibleIdFor(info.abbr),
     name: info.name,
     source: 'bolls.life',
     translation: info.abbr,

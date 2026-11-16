@@ -2070,15 +2070,15 @@ const LyricDisplayApp = () => {
                 </LazyBoundary>
 
                 {/* Online Bible Search & Import Modal */}
-                {onlineBibleModalOpen && (
-                    <LazyBoundary>
-                        <OnlineBibleSearchModal
-                            isOpen={onlineBibleModalOpen}
-                            onClose={handleCloseOnlineBibleSearch}
-                            darkMode={darkMode}
-                        />
-                    </LazyBoundary>
-                )}
+                {/* Always mounted so open/close runs through isOpen: the exit
+                    animation plays and in-flight downloads abort on close. */}
+                <LazyBoundary>
+                    <OnlineBibleSearchModal
+                        isOpen={onlineBibleModalOpen}
+                        onClose={handleCloseOnlineBibleSearch}
+                        darkMode={darkMode}
+                    />
+                </LazyBoundary>
 
                 {/* Online Lyrics Search Modal */}
                 {onlineLyricsModalOpen && (

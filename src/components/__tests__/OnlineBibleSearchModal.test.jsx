@@ -86,6 +86,49 @@ describe('OnlineBibleSearchModal', () => {
     expect(useBibleStore.getState().defaultBibleId).toBe('bolls-kjv');
   });
 
+  it('aborts an in-flight import on unmount', async () => {
+    let capturedSignal = null;
+    mocks.downloadOnlineTranslation.mockImplementation(
+      (_abbr, { signal } = {}) => new Promise((_resolve, reject) => {
+        capturedSignal = signal;
+        signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+      })
+    );
+    const { unmount } = renderOpen();
+    expect(await screen.findByTestId('online-bible-translation-KJV')).toBeTruthy();
+
+    fireEvent.click(screen.getAllByText('Import')[0]);
+    await waitFor(() => expect(capturedSignal).not.toBeNull());
+    expect(capturedSignal.aborted).toBe(false);
+
+    unmount();
+    await waitFor(() => expect(capturedSignal.aborted).toBe(true));
+  });
+
+  it('issues all four book-list fetches up front and tolerates one failure', async () => {
+    const calls = [];
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    mocks.fetchOnlineBooks.mockImplementation(async (abbr) => {
+      calls.push(abbr);
+      await gate;
+      if (abbr === 'ASV') throw new Error('nope');
+      return [{ number: 1, name: 'Genesis', chapters: 1 }];
+    });
+    renderOpen();
+    expect(await screen.findByTestId('online-bible-translation-KJV')).toBeTruthy();
+
+    // All four requests are in flight before any of them resolves.
+    await waitFor(() => expect(calls).toHaveLength(4));
+    expect([...calls].sort()).toEqual(['ASV', 'KJV', 'WEB', 'YLT']);
+    release();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('online-bible-translation-KJV').textContent).toMatch('1 books');
+    });
+    expect(screen.getByTestId('online-bible-translation-ASV').textContent).toMatch('unavailable');
+  });
+
   it('shows a friendly error when an import fails', async () => {
     mocks.downloadOnlineTranslation.mockRejectedValue(new Error('Bible service responded with 500'));
     renderOpen();

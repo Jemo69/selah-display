@@ -26,6 +26,7 @@ export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
   const [entering, setEntering] = useState(false);
 
   const [bookCounts, setBookCounts] = useState({});
+  const [booksFailed, setBooksFailed] = useState({});
   const [importingAbbr, setImportingAbbr] = useState(null);
   const [importProgress, setImportProgress] = useState(null);
   const [importError, setImportError] = useState(null);
@@ -54,19 +55,19 @@ export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
 
   useEffect(() => {
     if (!isOpen && !visible) {
-      abortRef.current?.abort();
-      abortRef.current = null;
       setImportingAbbr(null);
       setImportProgress(null);
       setImportError(null);
     }
   }, [isOpen, visible]);
 
-  // Abort in-flight work the moment the modal starts closing (rather than
-  // waiting out the 220ms exit animation).
+  // Abort in-flight work when the modal closes or unmounts. The parent
+  // keeps this component mounted and drives isOpen, so the close path
+  // always runs (the exit animation plays, then state resets below).
   useEffect(() => {
     if (!isOpen) abortRef.current?.abort();
   }, [isOpen]);
+  useEffect(() => () => { abortRef.current?.abort(); }, []);
 
   // Book/chapter counts per translation (cached by the client).
   // All four translate in parallel; the effect owns an AbortController so
@@ -93,10 +94,23 @@ export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
         }
         return next;
       });
-      for (const s of settled) {
+      const failed = {};
+      const recovered = [];
+      ONLINE_BIBLE_TRANSLATIONS.forEach((t, i) => {
+        const s = settled[i];
         if (s.status === 'rejected' && !controller.signal.aborted) {
-          logger.warn('Online book list failed', { error: s.reason?.message || String(s.reason) });
+          failed[t.abbr] = s.reason?.message || String(s.reason);
+          logger.warn('Online book list failed', { abbr: t.abbr, error: failed[t.abbr] });
+        } else if (s.status === 'fulfilled') {
+          recovered.push(t.abbr);
         }
+      });
+      if (Object.keys(failed).length > 0 || recovered.length > 0) {
+        setBooksFailed((prev) => {
+          const next = { ...prev, ...failed };
+          for (const abbr of recovered) delete next[abbr];
+          return next;
+        });
       }
     })();
     return () => { controller.abort(); };
@@ -161,7 +175,6 @@ export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
     (exiting || entering) ? 'opacity-0 translate-y-8 scale-95' : 'opacity-100 translate-y-0 scale-100',
   ].join(' ');
 
-  const installedIdFor = onlineBibleIdFor;
 
   return (
     <div
@@ -214,7 +227,7 @@ export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
           )}
           <ul className="space-y-2">
             {ONLINE_BIBLE_TRANSLATIONS.map((t) => {
-              const installed = Boolean(bibleMetadata?.[installedIdFor(t.abbr)]);
+              const installed = Boolean(bibleMetadata?.[onlineBibleIdFor(t.abbr)]);
               const busy = importingAbbr === t.abbr;
               const counts = bookCounts[t.abbr];
               return (
@@ -228,7 +241,7 @@ export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium">{t.name}</div>
                       <div className={`text-[11px] ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-                        {t.abbr} · {t.edition} · {counts ? `${counts.books} books, ${counts.chapters} chapters` : '…'}
+                        {t.abbr} · {t.edition} · {counts ? `${counts.books} books, ${counts.chapters} chapters` : booksFailed[t.abbr] ? 'catalog unavailable — Import still works' : '…'}
                       </div>
                     </div>
                     {installed && !busy && (
