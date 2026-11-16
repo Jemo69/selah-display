@@ -17,3 +17,8 @@
 import './test/server.test.js';
 import './test/wsTransport.test.js';
 import './test/benchmark.test.js';
+// The DRIVER tests belong here too. They were absent from this entry point,
+// so CI exercised the HTTP surface and never the code that spawns
+// whisper-cli — the binary boundary had no coverage at all.
+import './test/whispercpp.test.js';
+import './test/sherpaonnx.test.js';
