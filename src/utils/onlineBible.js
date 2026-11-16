@@ -134,7 +134,8 @@ export async function fetchOnlineChapter(abbr, bookNumber, chapter, { signal } =
 
 const chapterName = (bookNumber) => CANONICAL_BOOK_NAMES[bookNumber - 1] || `Book ${bookNumber}`;
 
-const buildBollsId = (abbr) => `bolls-${String(abbr).toLowerCase()}`;
+export const onlineBibleIdFor = (abbr) => `bolls-${String(abbr).toLowerCase()}`;
+const buildBollsId = onlineBibleIdFor;
 
 /** Total chapters in a Protestant-66 book table (progress denominator). */
 export function countOnlineChapters(books) {
@@ -210,13 +211,14 @@ export async function downloadOnlineTranslation(abbr, { onProgress, signal } = {
     }
   };
 
-  let cursor = 0;
-  const workers = Array.from(
-    { length: Math.min(DOWNLOAD_CONCURRENCY, tasks.length) },
-    async () => {
-      while (cursor < tasks.length) {
+  // Pre-sliced per-worker queues (no shared mutable cursor to reason about).
+  const workerCount = Math.min(DOWNLOAD_CONCURRENCY, tasks.length);
+  const slices = Array.from({ length: workerCount }, () => []);
+  tasks.forEach((task, i) => { slices[i % workerCount].push(task); });
+  const workers = slices.map(
+    (slice) => (async () => {
+      for (const task of slice) {
         failAfterAbort();
-        const task = tasks[cursor++];
         const verses = await fetchWithRetry(info.abbr, task.book, task.chapter, { signal });
         failAfterAbort();
         if (!chaptersByBook.has(task.book)) chaptersByBook.set(task.book, []);
@@ -224,7 +226,7 @@ export async function downloadOnlineTranslation(abbr, { onProgress, signal } = {
         done += 1;
         report(task.bookName, task.chapter);
       }
-    }
+    })()
   );
   await Promise.all(workers);
 

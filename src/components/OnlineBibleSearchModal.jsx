@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { X, Download, Loader2, BookOpen, AlertTriangle, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { X, Download, BookOpen, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Tooltip } from '@/components/ui/tooltip';
 import useToast from '../hooks/useToast';
 import useNetworkStatus from '../hooks/OnlineLyricsSearchModal/useNetworkStatus';
 import useBibleStore from '../context/BibleStore';
@@ -10,6 +9,7 @@ import {
   ONLINE_BIBLE_TRANSLATIONS,
   fetchOnlineBooks,
   downloadOnlineTranslation,
+  onlineBibleIdFor,
 } from '../utils/onlineBible';
 
 const logger = createLogger('OnlineBibleSearch');
@@ -62,25 +62,44 @@ export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
     }
   }, [isOpen, visible]);
 
+  // Abort in-flight work the moment the modal starts closing (rather than
+  // waiting out the 220ms exit animation).
+  useEffect(() => {
+    if (!isOpen) abortRef.current?.abort();
+  }, [isOpen]);
+
   // Book/chapter counts per translation (cached by the client).
+  // All four translate in parallel; the effect owns an AbortController so
+  // closing the modal cancels the requests instead of ignoring the results.
   useEffect(() => {
     if (!isOpen || !isOnline) return undefined;
-    let cancelled = false;
+    const controller = new AbortController();
     (async () => {
-      for (const t of ONLINE_BIBLE_TRANSLATIONS) {
-        try {
-          const books = await fetchOnlineBooks(t.abbr);
-          if (cancelled) return;
-          setBookCounts((prev) => {
-            if (prev[t.abbr]) return prev;
-            return { ...prev, [t.abbr]: { books: books.length, chapters: books.reduce((n, b) => n + (b.chapters || 0), 0) } };
-          });
-        } catch (error) {
-          if (!cancelled) logger.warn('Online book list failed', { abbr: t.abbr, error: error?.message });
+      const settled = await Promise.allSettled(
+        ONLINE_BIBLE_TRANSLATIONS.map(async (t) => ({
+          abbr: t.abbr,
+          books: await fetchOnlineBooks(t.abbr, { signal: controller.signal }),
+        }))
+      );
+      if (controller.signal.aborted) return;
+      setBookCounts((prev) => {
+        const next = { ...prev };
+        for (const s of settled) {
+          if (s.status !== 'fulfilled' || next[s.value.abbr]) continue;
+          next[s.value.abbr] = {
+            books: s.value.books.length,
+            chapters: s.value.books.reduce((n, b) => n + (b.chapters || 0), 0),
+          };
+        }
+        return next;
+      });
+      for (const s of settled) {
+        if (s.status === 'rejected' && !controller.signal.aborted) {
+          logger.warn('Online book list failed', { error: s.reason?.message || String(s.reason) });
         }
       }
     })();
-    return () => { cancelled = true; };
+    return () => { controller.abort(); };
   }, [isOpen, isOnline]);
 
   const handleImport = useCallback(async (abbr) => {
@@ -142,7 +161,7 @@ export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
     (exiting || entering) ? 'opacity-0 translate-y-8 scale-95' : 'opacity-100 translate-y-0 scale-100',
   ].join(' ');
 
-  const installedIdFor = (abbr) => `bolls-${String(abbr).toLowerCase()}`;
+  const installedIdFor = onlineBibleIdFor;
 
   return (
     <div
