@@ -13,7 +13,6 @@ import {
 } from '../utils/onlineBible';
 
 const logger = createLogger('OnlineBibleSearch');
-const animationDuration = 220;
 
 /**
  * Find and import a Bible translation — no browser needed.
@@ -21,8 +20,10 @@ const animationDuration = 220;
  * translation into the Bible library with progress and cancel.
  */
 export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
+  // Mount animation only: the parent conditionally mounts this modal (same
+  // as every other modal in the app), so there is no exit transition —
+  // closing unmounts immediately and fresh mounts start from initial state.
   const [visible, setVisible] = useState(false);
-  const [exiting, setExiting] = useState(false);
   const [entering, setEntering] = useState(false);
 
   const [bookCounts, setBookCounts] = useState({});
@@ -37,29 +38,11 @@ export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
   const bibleMetadata = useBibleStore((s) => s.bibleMetadata);
 
   useLayoutEffect(() => {
-    if (isOpen) {
-      setVisible(true);
-      setExiting(false);
-      setEntering(true);
-      const raf = requestAnimationFrame(() => setEntering(false));
-      return () => cancelAnimationFrame(raf);
-    }
-    setEntering(false);
-    setExiting(true);
-    const timeout = setTimeout(() => {
-      setExiting(false);
-      setVisible(false);
-    }, animationDuration);
-    return () => clearTimeout(timeout);
-  }, [isOpen]);
-
-  useEffect(() => {
-    if (!isOpen && !visible) {
-      setImportingAbbr(null);
-      setImportProgress(null);
-      setImportError(null);
-    }
-  }, [isOpen, visible]);
+    setVisible(true);
+    setEntering(true);
+    const raf = requestAnimationFrame(() => setEntering(false));
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   // Abort in-flight work on unmount. The parent conditionally mounts this
   // modal (same as every other modal in the app), so closing unmounts it;
@@ -182,7 +165,7 @@ export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
     'flex flex-col min-h-0',
     darkMode ? 'bg-gray-900 text-gray-50 border-gray-800 ring-blue-500/35' : 'bg-white text-gray-900 border-gray-200 ring-blue-500/20',
     'transition-all duration-200 ease-out',
-    (exiting || entering) ? 'opacity-0 translate-y-8 scale-95' : 'opacity-100 translate-y-0 scale-100',
+    entering ? 'opacity-0 translate-y-8 scale-95' : 'opacity-100 translate-y-0 scale-100',
   ].join(' ');
 
   return (
@@ -191,7 +174,7 @@ export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
       data-testid="online-bible-search-modal"
     >
       <div
-        className={`absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity duration-200 ${(exiting || entering) ? 'opacity-0' : 'opacity-100'}`}
+        className={`absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity duration-200 ${entering ? 'opacity-0' : 'opacity-100'}`}
         onClick={() => onClose?.()}
       />
       <div className={modalClasses}>
@@ -251,7 +234,7 @@ export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
                       <div className="truncate text-sm font-medium">{t.name}</div>
                       <div className={`text-[11px] ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
                         <span title={booksFailed[t.abbr] ? `Catalog failed to load (${booksFailed[t.abbr]}). Import will retry the download.` : undefined}>
-                        {t.abbr} · {t.edition} · {counts ? `${counts.books} books, ${counts.chapters} chapters` : booksFailed[t.abbr] ? 'catalog unavailable' : '…'}
+                          {t.abbr} · {t.edition} · {counts ? `${counts.books} books, ${counts.chapters} chapters` : booksFailed[t.abbr] ? 'catalog unavailable' : '…'}
                         </span>
                       </div>
                     </div>
