@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useCallback, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { RefreshCw, FolderOpen, FileText, FilePlusCorner, Edit, ListMusic, Globe, Plus, Info, FileMusic, Play, ChevronDown, ChevronUp, Square, Sparkles, Volume2, VolumeX, Moon, Sun, Settings, BookText, Database, MoreHorizontal, PanelLeftClose, PanelLeftOpen, GripVertical, Maximize2, Minimize2, Trash2, AlertTriangle, X, Monitor, HeartPulse, GraduationCap } from 'lucide-react';
+import { RefreshCw, FolderOpen, FileText, FilePlusCorner, Edit, ListMusic, Globe, Plus, Info, FileMusic, Play, ChevronDown, ChevronUp, Square, Sparkles, Volume2, VolumeX, Moon, Sun, Settings, BookText, BookOpen, Database, MoreHorizontal, PanelLeftClose, PanelLeftOpen, GripVertical, Maximize2, Minimize2, Trash2, AlertTriangle, X, Monitor, HeartPulse, GraduationCap } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useLyricsState, useOutputState, useOutputAutomationState, useOutput1Settings, useOutput2Settings, useStageSettings, useDarkModeState, useSetlistState, useIsDesktopApp, useAutoplaySettings, useIntelligentAutoplayState, useOutputRegistry, useSidebarState, useSettingsState, useHeaderState, useFreeNotesEnabled, useBibleVerseEditorEnabled, useShowControlState, useTickerState } from '../hooks/useStoreSelectors';
 import { useControlSocket } from '../context/ControlSocketProvider';
@@ -70,6 +70,7 @@ import useSessionHydration from '../hooks/useSessionHydration';
 
 const SetlistModal = React.lazy(() => import('./SetlistModal'));
 const OnlineLyricsSearchModal = React.lazy(() => import('./OnlineLyricsSearchModal'));
+const OnlineBibleSearchModal = React.lazy(() => import('./OnlineBibleSearchModal'));
 const RccgTphbSongModal = React.lazy(() => import('./RccgTphbSongModal'));
 const EasyWorshipImportModal = React.lazy(() => import('./EasyWorshipImportModal'));
 const PresentationImportModal = React.lazy(() => import('./PresentationImportModal'));
@@ -502,6 +503,7 @@ const LyricDisplayApp = () => {
     });
 
     const [onlineLyricsModalOpen, setOnlineLyricsModalOpen] = React.useState(false);
+    const [onlineBibleModalOpen, setOnlineBibleModalOpen] = React.useState(false);
     const [rccgTphbModalOpen, setRccgTphbModalOpen] = React.useState(false);
     const [easyWorshipModalOpen, setEasyWorshipModalOpen] = React.useState(false);
     const [presentationModalOpen, setPresentationModalOpen] = React.useState(false);
@@ -846,6 +848,14 @@ const LyricDisplayApp = () => {
 
     const handleOpenOnlineLyricsSearch = () => {
         setOnlineLyricsModalOpen(true);
+    };
+
+    const handleOpenOnlineBibleSearch = () => {
+        setOnlineBibleModalOpen(true);
+    };
+
+    const handleCloseOnlineBibleSearch = () => {
+        setOnlineBibleModalOpen(false);
     };
 
     const handleCloseOnlineLyricsSearch = () => {
@@ -1449,6 +1459,16 @@ const LyricDisplayApp = () => {
                                                 Online lyrics search
                                             </button>
                                             <button
+                                                className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-left transition-colors hover:bg-accent hover:text-accent-foreground"
+                                                onClick={() => {
+                                                    handleOpenOnlineBibleSearch();
+                                                    setSidebarOverflowOpen(false);
+                                                }}
+                                            >
+                                                <BookOpen className="w-4 h-4" />
+                                                Bible search &amp; import
+                                            </button>
+                                            <button
                                                 className="flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-sm text-left transition-colors hover:bg-accent hover:text-accent-foreground"
                                                 onClick={() => {
                                                     setRccgTphbModalOpen(true);
@@ -2048,6 +2068,18 @@ const LyricDisplayApp = () => {
                 <LazyBoundary>
                     <SchedulePanel darkMode={!!darkMode} />
                 </LazyBoundary>
+
+                {/* Online Bible Search & Import Modal (conditionally mounted
+                    like every other modal; unmounting aborts in-flight work). */}
+                {onlineBibleModalOpen && (
+                    <LazyBoundary>
+                        <OnlineBibleSearchModal
+                            isOpen={onlineBibleModalOpen}
+                            onClose={handleCloseOnlineBibleSearch}
+                            darkMode={darkMode}
+                        />
+                    </LazyBoundary>
+                )}
 
                 {/* Online Lyrics Search Modal */}
                 {onlineLyricsModalOpen && (
