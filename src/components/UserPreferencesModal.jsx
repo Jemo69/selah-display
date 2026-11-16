@@ -26,6 +26,8 @@ import { outputTemplates, bibleTemplates, freeNoteTemplates, stageTemplates } fr
 import { useOutputTemplateSync } from '../hooks/useOutputTemplateSync';
 import { MidiOscSection } from './MidiOscSettings';
 import BibleImportButton from './Bible/BibleImportButton';
+import BibleInstalledList from './Bible/BibleInstalledList';
+import useBibleAutoImport from '../hooks/useBibleAutoImport';
 import DiagnosticsSection from './DiagnosticsSection';
 import OnboardSection from './Onboarding/OnboardSection';
 import { useOnboardStore, ROLE_HIDDEN } from '../context/OnboardStore';
@@ -608,6 +610,8 @@ const BibleSection = ({ darkMode }) => {
     }
   }, [setDefaultBible]);
 
+  const { status: autoImportStatus, detail: autoImportDetail, run: rescanBundled } = useBibleAutoImport();
+
   return (
     <div className="space-y-5">
       <div>
@@ -621,6 +625,12 @@ const BibleSection = ({ darkMode }) => {
         </p>
         <BibleImportButton darkMode={darkMode} onImported={handleBibleImported} />
       </div>
+      <BibleInstalledList
+        darkMode={darkMode}
+        autoImportStatus={autoImportStatus}
+        autoImportDetail={autoImportDetail}
+        onRescan={rescanBundled}
+      />
       <div className={`rounded-xl border p-4 ${darkMode ? 'bg-[#282946]/40 border-[#282946]' : 'bg-white border-gray-200'}`}>
         <div className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>Default translation</div>
         <p className={`text-xs mt-1 leading-relaxed ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Choose which Bible translation is selected by default when the app starts.</p>

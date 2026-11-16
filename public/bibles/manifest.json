@@ -1,0 +1,12 @@
+{
+  "translations": [
+    {
+      "id": "kjv-bundled",
+      "name": "KJV (Bundled Sample)",
+      "dir": "KJV",
+      "publicDomain": true,
+      "files": ["Genesis.json", "John.json"],
+      "sampleReferences": ["Genesis 1:1-5", "John 1:1-5", "John 3:16-17"]
+    }
+  ]
+}

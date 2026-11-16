@@ -11,6 +11,9 @@ import { splitBibleTextIntoSlides, resolveBibleGeometry } from '../../utils/bibl
 import { dispatchOpenBibleChapterEditor } from './BibleChapterEditorModal';
 import ParallelBibleLinkControl from './ParallelBibleLinkControl';
 import BibleImportButton from './BibleImportButton';
+import BibleInstalledList from './BibleInstalledList';
+import useBibleAutoImport from '../../hooks/useBibleAutoImport';
+import { fetchVerse as fetchOfflineVerse } from '../../utils/bibleVerseClient';
 
 const logger = createLogger('BibleControlPanel');
 
@@ -50,6 +53,13 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
   const verseListRef = useRef(null);
   const verseRefs = useRef(new Map());
   const { showToast } = useToast();
+  // Offline verse service: auto-import the bundled KJV sample once, then
+  // show which translations are installed (User Prefs > Bible lists them all).
+  const { status: autoImportStatus, detail: autoImportDetail } = useBibleAutoImport();
+  const [offlineLookup, setOfflineLookup] = useState('John 3:16');
+  const [offlineResult, setOfflineResult] = useState(null);
+  const [offlineError, setOfflineError] = useState(null);
+  const [offlineLoading, setOfflineLoading] = useState(false);
 
   const {
     bibles,
@@ -97,6 +107,25 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
     setIsOutputOn(next);
     controlSocket?.emitOutputToggle?.(next);
   }, [isOutputOn, setIsOutputOn, controlSocket]);
+
+  // Offline verse service lookup (plan: electron-bible-verse-service).
+  // Resolves "John 3:16" via main-process fs + cache (window.bibleAPI),
+  // falling back to the loaded store on web builds.
+  const handleOfflineLookup = useCallback(async (ref) => {
+    const target = String(ref || offlineLookup || '').trim();
+    if (!target) return;
+    setOfflineLoading(true);
+    setOfflineError(null);
+    try {
+      const verse = await fetchOfflineVerse(target);
+      setOfflineResult(verse);
+    } catch (error) {
+      setOfflineResult(null);
+      setOfflineError(error?.message || 'Verse not found');
+    } finally {
+      setOfflineLoading(false);
+    }
+  }, [offlineLookup]);
   const bibleGeometry = useMemo(
     () => resolveBibleGeometry(output1Settings),
     [output1Settings]
@@ -557,9 +586,13 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
                   <div className="flex items-center gap-2">
                     <BookOpen className={`h-4 w-4 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`} />
                     <div>
-                      <div className="text-xs font-bold uppercase tracking-wider">Bible Library</div>
+                      <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider">Bible Library
+                        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold normal-case ${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-gray-200 text-gray-600'}`} data-testid="bible-installed-count-badge" title="Translations installed in this app">
+                          {Object.keys(bibleMetadata || {}).length} installed
+                        </span>
+                      </div>
                       <div className={`text-[11px] ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                        Choose a book and chapter
+                        {autoImportStatus === 'importing' ? 'Auto-importing bundled KJV…' : 'Choose a book and chapter • offline verse service ready'}
                       </div>
                     </div>
                   </div>
@@ -631,6 +664,9 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
                     <div>
                       <BookOpen className="mx-auto mb-3 h-8 w-8 opacity-60" />
                       <p className="text-sm font-medium">Import a Bible to get started</p>
+                      <p className="mt-1 text-[11px] opacity-80" data-testid="bible-auto-import-status-panel">
+                        {autoImportStatus === 'importing' ? 'Auto-importing bundled KJV…' : (autoImportDetail || 'Bundled KJV sample installs automatically.')}
+                      </p>
                       <BibleImportButton darkMode={darkMode} className="mt-3" />
                     </div>
                   </div>
@@ -887,6 +923,60 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
                   <span className="font-semibold">Enter</span> to display • <span className="font-semibold">Shift+Enter</span> to preview in all translations • <span className="font-semibold">Alt+Enter</span> to stage without changing output {bibleVerseEditorEnabled && <> • <span className="font-semibold">Alt+Shift+Enter</span> to edit verse</>}
                 </div>
               )}
+              {/* Offline verse service — direct reference lookup (John 3:16) via
+                  main-process Bible service + cache, with store fallback. */}
+              <div className={`mt-2 rounded-lg border p-2 ${darkMode ? 'border-gray-700 bg-gray-800/60' : 'border-gray-200 bg-gray-50'}`} data-testid="bible-offline-lookup">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={offlineLookup}
+                    onChange={(e) => setOfflineLookup(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleOfflineLookup(); } }}
+                    placeholder="John 3:16"
+                    title='Offline lookup — try "John 3:16" or "Genesis 1:1-3"'
+                    aria-label="Offline verse lookup"
+                    className={`min-w-0 flex-1 rounded-md border px-2 py-1.5 text-xs ${darkMode ? 'bg-gray-900 border-gray-700 text-white placeholder-gray-500' : 'bg-white border-gray-300 text-gray-900 placeholder-gray-400'}`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleOfflineLookup()}
+                    disabled={offlineLoading || !offlineLookup.trim()}
+                    className="shrink-0 rounded-md bg-blue-600 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white transition-colors hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {offlineLoading ? '…' : 'Verse'}
+                  </button>
+                </div>
+                {offlineError && (
+                  <div className={`mt-1.5 text-[11px] ${darkMode ? 'text-red-300' : 'text-red-600'}`}>{offlineError}</div>
+                )}
+                {offlineResult && !offlineError && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const text = offlineResult.text || '';
+                      if (onSelectVerse) {
+                        const slides = getBibleSlides(text, splitLongVersesEnabled, splitLongVersesChars, splitLongVersesTolerance, splitMethod, bibleGeometry);
+                        onSelectVerse({
+                          reference: offlineResult.reference || offlineLookup,
+                          text: slides[0] || text,
+                          fullText: text,
+                          slides,
+                          slideIndex: 0,
+                          bible: offlineResult.translation || currentBible?.name,
+                        });
+                      }
+                    }}
+                    title="Send this verse to display"
+                    className={`mt-1.5 w-full rounded-md border p-2 text-left transition-colors ${darkMode ? 'border-gray-700 bg-gray-900 hover:bg-gray-700' : 'border-gray-200 bg-white hover:bg-gray-100'}`}
+                  >
+                    <div className="text-xs font-semibold">{offlineResult.reference}{offlineResult.translation ? ` (${offlineResult.translation})` : ''}</div>
+                    <div className={`mt-0.5 line-clamp-2 text-[11px] leading-relaxed ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>{offlineResult.text}</div>
+                  </button>
+                )}
+                {!offlineResult && !offlineError && (
+                  <div className={`mt-1.5 text-[10px] ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Offline • cached per-book • e.g. John 3:16</div>
+                )}
+              </div>
               {bibleVerseEditorEnabled && (
                 <button
                   type="button"

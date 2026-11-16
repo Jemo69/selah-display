@@ -34,6 +34,7 @@ import path from 'path';
 import { Worker } from 'worker_threads';
 import { fileURLToPath } from 'url';
 import { parseBible, buildSearchIndex } from '../shared/bible/index.js';
+import bibleService from './bible-service.js';
 import createMainLogger from './logger.js';
 import { registerLyricWatcherHandlers } from './lyricWatcher.js';
 import { isTrustedIpcSender, untrustedIpcResponse } from './ipcSecurity.js';
@@ -1418,6 +1419,36 @@ function cacheBibleParsed(filePath, entry) {
       return { success: true };
     } catch (error) {
       log.error('Error deleting Bible:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Offline verse service (plan: electron-bible-verse-service).
+  // FS stays in main; renderer reaches it via window.bibleAPI (preload).
+  try {
+    bibleService.attachApp(app);
+  } catch { /* service still works with dev path fallbacks */ }
+  ipcMain.handle('bible:get-verse', async (_event, ref) => bibleService.getVerse(ref));
+  ipcMain.handle('bible:get-chapter', async (_event, book, chapter) => bibleService.getChapter(book, chapter));
+  ipcMain.handle('bible:random', async () => bibleService.getRandomVerse());
+  ipcMain.handle('bible:set-translation', async (_event, t) => {
+    bibleService.setTranslation(t);
+    return { success: true, translation: bibleService.translation };
+  });
+  ipcMain.handle('bible:list-translations', async () => {
+    try {
+      return { success: true, translations: bibleService.listTranslations() };
+    } catch (error) {
+      log.error('Error listing bundled Bibles:', error);
+      return { success: false, error: error.message, translations: [] };
+    }
+  });
+  ipcMain.handle('bible:get-bundled', async (_event, translation) => {
+    try {
+      if (translation) bibleService.setTranslation(translation);
+      return { success: true, bible: bibleService.exportTranslation() };
+    } catch (error) {
+      log.error('Error exporting bundled Bible:', error);
       return { success: false, error: error.message };
     }
   });

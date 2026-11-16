@@ -131,6 +131,14 @@
       {
         "from": "server/node_modules",
         "to": "app.asar.unpacked/server/node_modules"
+      },
+      {
+        "from": "public/bibles",
+        "to": "bibles"
+      },
+      {
+        "from": "assets/bibles",
+        "to": "bibles"
       }
     ],
     "extraFiles": [

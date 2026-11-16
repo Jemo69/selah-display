@@ -433,6 +433,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   }
 });
 
+// Offline Bible verse service (plan: electron-bible-verse-service).
+// renderer (UI) —invoke→ preload (window.bibleAPI) —ipc→ main/bible-service.js —fs→ assets/bibles/KJV/*.json
+// Kept separate from electronAPI.bible (file import/export) so existing
+// import flows are untouched. Safe no-op when ipc is unavailable (web build).
+try {
+  contextBridge.exposeInMainWorld('bibleAPI', {
+    getVerse: (ref) => ipcRenderer.invoke('bible:get-verse', ref),
+    getChapter: (book, chapter) => ipcRenderer.invoke('bible:get-chapter', book, chapter),
+    random: () => ipcRenderer.invoke('bible:random'),
+    setTranslation: (t) => ipcRenderer.invoke('bible:set-translation', t),
+    listTranslations: () => ipcRenderer.invoke('bible:list-translations'),
+    getBundled: (translation) => ipcRenderer.invoke('bible:get-bundled', translation),
+  });
+} catch { /* contextBridge unavailable in some test harnesses */ }
+
 contextBridge.exposeInMainWorld('electronStore', {
   getDarkMode: () => {
     try {
