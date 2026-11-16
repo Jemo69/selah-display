@@ -94,3 +94,47 @@ Date: 2026-11-02 — branch `fix/mobile-reliability-tailscale-fast-sync`, PR #61
 - `1575bcf` Dogfood: hardcoded-4000 siblings + QR port-awareness.
 - `fb9de81` Dogfood: extend smoke to 47.
 - PR #61 `fix/mobile-reliability-tailscale-fast-sync` → `master` — OPEN, MERGEABLE, Invariants green, 3 platform builds pending.
+
+# DOGFOOD — Electron Bible Verse Service (offline + auto-import + installed list)
+
+Date: 2026-11-15 — branch `feat/electron-bible-verse-service`, PR #69 (OPEN, staged per operator — do not merge without operator go-ahead).
+
+## Scores per surface (minimum, never average)
+
+| Surface | Score | Evidence |
+|---|---|---|
+| Bible panel: installed badge, offline lookup, range card | 10/10 | `shots/boaz-panel-round3.png`, `shots/boaz-offline-verse-round2.png`; boaz run PASS (lookup assert_changed delta 0.0544, chapter expand 0.0439/0.0731) |
+| User Preferences > Bible: import + installed list + badges + rescan | 10/10 | `shots/boaz-prefs-bible-round3.png` (full names, no Unknown rows, 66-books + metadata-only labels, scroll) |
+| Offline verse service (main fs + IPC + preload) | 10/10 | node direct check (`John 3:16`, `Genesis 1:1-3`, chapter, random, export); live cards via `window.bibleAPI` |
+| Error paths (missing book, bad ref, garbage) | 10/10 | Live `Psalm 23:1` → "Psalm is not in the bundled offline sample…"; `xyz` → "Bad reference: xyz. Use like…"; no crash, selection intact |
+| Neighbor: live tray + Send to Display + parallel + 3-col grid | 10/10 | `shots/boaz-3col-grid.png` (GENESIS 1, "3 columns - 31 verses", Send to Display painted) |
+
+**Overall = 10/10 (minimum).** Two channels per claim: unit suites (37 passed) + fresh headless Electron captures on the shipped build.
+
+## Bug class
+
+**Unclamped persisted pixel widths + grid children without min-w-0 let a stored panel width (787px) blow the grid past the viewport, hiding reachable controls off-screen.** Siblings checked: `sidebarWidth` (LyricsStore) is write-clamped 320..800 at the resize handler — lower risk, pre-existing chrome, untouched. Fix: read clamp 280..560 everywhere the value is used (grid template included), resize ceiling min(560, 60% container), min-w-0 on both grid children. Verified via CDP rects (aside 948+787 → 655+560) and pixels (labeled "Look up John 3:16" button paints).
+
+## Tests
+
+- Before: existing Bible suites green.
+- After: 37 passed (`BibleInstalledList`, `BibleControlPanelLayout` + lookup control test, `BibleAutoImport` + shared-guard reset, `UserPreferencesModal`, `bibleVerseClientNormalize` incl. range-join + Electron-prefix-strip regressions, `bibleVerseSync`); `npm run build` green before and after.
+- Live proof: boaz scripted runs PASS on fresh processes; `shots/bible-verse-service-tour.mp4` (77 frames, type → Enter → click Look up); `evidence/bible.tar.gz` (346 files).
+
+## Media
+
+<video src="https://pub-a14e3233c63f4fe79257ff018c886e81.r2.dev/pr-69/1794727952224-bible-verse-service-tour.mp4" width="100%" controls></video>
+
+## Gaps
+
+1. Bundled sample covers Genesis + John only (public-domain KJV excerpts); full-Bible lookup needs a user-imported Zefania/OSIS/Beblia/OpenSong file — by design, stated in the UI copy.
+2. No Display-2/projector proof (boaz single-display only) and no on-device mobile run — needs-human-hardware, unchanged from prior entries.
+3. Pre-existing "Unknown"-named stored translations now display as ids (fallback); renaming them in place is out of scope.
+
+## Commits / PR
+
+- `9c72081` offline verse service + auto-import + installed list.
+- `bdb9b8c` jury round 1 fixes (lookup reachability, range form, panel bounds).
+- `f48a223` jury round 2 fixes (header wrap, grid reachability, compact list, sync, single source, viewport ceiling).
+- `c90eddb` lookup error copy strip (no transport noise).
+- PR #69 `feat/electron-bible-verse-service` → `master` — OPEN, MERGEABLE, staged (no merge without operator go-ahead).
