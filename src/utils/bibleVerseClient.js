@@ -38,7 +38,22 @@ export function normalizeVerseResult(result, ref) {
 
 export async function fetchVerse(ref) {
   const api = getApi();
-  if (api?.getVerse) return normalizeVerseResult(await api.getVerse(ref), ref);
+  if (api?.getVerse) {
+    try {
+      return normalizeVerseResult(await api.getVerse(ref), ref);
+    } catch (error) {
+      // Electron wraps main-process throws as "Error invoking remote
+      // method 'bible:get-verse': Error: <message>" — strip the transport
+      // wrapper and the nested error-class prefix so operators see the
+      // plain sentence, never a channel id or an "Error:" stutter.
+      const message = String(error?.message || error || 'Verse not found');
+      throw new Error(
+        message
+          .replace(/^Error invoking remote method '[^']+':\s*/, '')
+          .replace(/^Error:\s*/, '')
+      );
+    }
+  }
   // Fallback: resolve from the loaded store.
   const store = useBibleStore.getState();
   const activeId = store.activeBibleId || store.defaultBibleId || Object.keys(store.bibles)[0];

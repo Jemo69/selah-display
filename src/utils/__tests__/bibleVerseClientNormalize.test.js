@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest';
-import { normalizeVerseResult } from '../bibleVerseClient';
+import { describe, expect, it, afterEach } from 'vitest';
+import { normalizeVerseResult, fetchVerse } from '../bibleVerseClient';
+
+afterEach(() => {
+  delete window.bibleAPI;
+});
 
 describe('normalizeVerseResult (offline verse service range form)', () => {
   it('passes a single verse through untouched', () => {
@@ -29,5 +33,15 @@ describe('normalizeVerseResult (offline verse service range form)', () => {
 
   it('throws on an empty range instead of rendering an empty card', () => {
     expect(() => normalizeVerseResult([], 'Psalms 99:9')).toThrow('Verse not found');
+  });
+
+  it('strips Electron invoke wrapping from service errors', async () => {
+    window.bibleAPI = {
+      getVerse: async () => {
+        throw new Error("Error invoking remote method 'bible:get-verse': Error: Psalm is not in the bundled offline sample");
+      },
+    };
+    await expect(fetchVerse('Psalm 23:1')).rejects.toThrow('Psalm is not in the bundled offline sample');
+    await expect(fetchVerse('Psalm 23:1')).rejects.not.toThrow('invoking remote method');
   });
 });
