@@ -137,3 +137,44 @@ Date: 2026-11-02 — branch `fix/mobile-reliability-tailscale-fast-sync`, PR #61
 - `1575bcf` Dogfood: hardcoded-4000 siblings + QR port-awareness.
 - `fb9de81` Dogfood: extend smoke to 47.
 - PR #61 `fix/mobile-reliability-tailscale-fast-sync` → `master` — OPEN, MERGEABLE, Invariants green, 3 platform builds pending.
+
+# DOGFOOD — In-app Bible search & import (no browser needed)
+
+Date: 2026-11-16 — branch `feat/online-bible-search-import` (PR to be opened; PR #69 closed unmerged — different, rejected direction).
+
+## Scores per surface (minimum, never average)
+
+| Surface | Score | Evidence |
+|---|---|---|
+| "..." menu entry (Bible search & import) | 10/10 | boaz still `shots/ob-menu.png`: entry renders below Online lyrics search |
+| Translations modal (catalog, counts, states) | 10/10 | boaz stills: 4 translations with live book/chapter counts (KJV 66/1195, ASV 66/1188, WEB 66/1191, YLT 66/1189), ONLINE badge |
+| Full KJV import end to end | 10/10 | boaz run PASS: tapped Import → progress → INSTALLED + Re-import (`shots/ob-imported.png`); 1,195 chapters via retry/backoff through real HTTP 429s |
+| Installed KJV live in Bible panel | 10/10 | boaz still `shots/ob-kjv-live.png`: books browse, Genesis verses render KJV text |
+| Error paths (rate limit, bad input) | 10/10 | Live 429 → friendly "service is busy, wait a minute"; `xyz` → clean "couldn't understand" style errors; cancel works; no crashes |
+| Neighbor surfaces untouched | 10/10 | Import Bible Translation button + Bible panel flows unchanged; AGENTS.md regression tests green |
+
+**Overall = 10/10 (minimum).** Two channels per claim: unit suites (14 passed: client + modal incl. abort/unmount, parallel-prefetch, retry/give-up, import/error/close paths) + fresh headless Electron captures on the shipped build + `npm run build` green.
+
+## Bug class
+
+**Silent long-tail failure under a free API's rate limit** — a 1,195-request import that works in tests (mocked fetch) but dies on first contact with real 429s. Fixed with: concurrency 3 + 150ms pacing, 5-attempt exponential backoff honoring aborts, friendly give-up message. Sibling check: no other bulk-download path in the app hits an external API this way (lyrics providers are keyed/single-shot).
+
+## Tests
+
+- Before: no online-bible coverage (new surface).
+- After: + `src/utils/__tests__/onlineBible.test.js` (8: clean text, Protestant-66 shape, chapter clean/sort, full download shape/progress, abort, 429-retry, 429-give-up) + `OnlineBibleSearchModal.test.jsx` (6: catalog render, import, error, unmount-abort, parallel-prefetch isolation, close).
+- Live proof: boaz headless Electron, fresh processes, real bolls.life traffic; `shots/ob-*.png` + modal/imported/panel stills.
+
+## Gaps
+
+1. No keyword search — bolls.life exposes no search endpoint; lookup is by translation + the panel's existing local search covers keywords once imported.
+2. Only 4 public-domain English translations curated (KJV/ASV/WEB/YLT) — licensed translations (NIV/ESV) can't ship keyless.
+3. No Display-2/projection proof (boaz single-display only) — needs-human-hardware, unchanged from prior entries.
+
+## Commits / PR
+
+- `43a3c21` feat: in-app Bible search & import, no browser needed.
+- `e13f99a` jury round 1 fixes (parallel prefetch, abortable counts, shared id, chunked download).
+- `f8b3856` jury round 2 fixes (abortable close, parallel counts, shared id, failure states).
+- `49f2b44` jury round 3 fixes (conditional mount, Escape close, honest catalog state).
+- `7c8f5f5` jury round 4 fixes (drop dead exit machinery, house-consistent mount).
