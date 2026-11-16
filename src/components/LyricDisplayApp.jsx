@@ -2069,16 +2069,17 @@ const LyricDisplayApp = () => {
                     <SchedulePanel darkMode={!!darkMode} />
                 </LazyBoundary>
 
-                {/* Online Bible Search & Import Modal */}
-                {/* Always mounted so open/close runs through isOpen: the exit
-                    animation plays and in-flight downloads abort on close. */}
-                <LazyBoundary>
-                    <OnlineBibleSearchModal
-                        isOpen={onlineBibleModalOpen}
-                        onClose={handleCloseOnlineBibleSearch}
-                        darkMode={darkMode}
-                    />
-                </LazyBoundary>
+                {/* Online Bible Search & Import Modal (conditionally mounted
+                    like every other modal; unmounting aborts in-flight work). */}
+                {onlineBibleModalOpen && (
+                    <LazyBoundary>
+                        <OnlineBibleSearchModal
+                            isOpen={onlineBibleModalOpen}
+                            onClose={handleCloseOnlineBibleSearch}
+                            darkMode={darkMode}
+                        />
+                    </LazyBoundary>
+                )}
 
                 {/* Online Lyrics Search Modal */}
                 {onlineLyricsModalOpen && (

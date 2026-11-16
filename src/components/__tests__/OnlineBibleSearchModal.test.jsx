@@ -129,6 +129,14 @@ describe('OnlineBibleSearchModal', () => {
     expect(screen.getByTestId('online-bible-translation-ASV').textContent).toMatch('unavailable');
   });
 
+  it('closes from the X button', async () => {
+    const onClose = vi.fn();
+    renderOpen({ onClose });
+    expect(await screen.findByTestId('online-bible-search-modal')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Close Bible search'));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('shows a friendly error when an import fails', async () => {
     mocks.downloadOnlineTranslation.mockRejectedValue(new Error('Bible service responded with 500'));
     renderOpen();

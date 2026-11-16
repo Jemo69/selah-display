@@ -61,16 +61,26 @@ export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
     }
   }, [isOpen, visible]);
 
-  // Abort in-flight work when the modal closes or unmounts. The parent
-  // keeps this component mounted and drives isOpen, so the close path
-  // always runs (the exit animation plays, then state resets below).
-  useEffect(() => {
-    if (!isOpen) abortRef.current?.abort();
-  }, [isOpen]);
+  // Abort in-flight work on unmount. The parent conditionally mounts this
+  // modal (same as every other modal in the app), so closing unmounts it;
+  // the cleanup below is the close path for downloads and counts alike.
   useEffect(() => () => { abortRef.current?.abort(); }, []);
 
-  // Book/chapter counts per translation (cached by the client).
-  // All four translate in parallel; the effect owns an AbortController so
+  // Escape closes, matching every other modal in the app.
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose?.();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
+
+  // Book/chapter counts for the translations list (cached by the client).
+  // All four translations load in parallel; the effect owns an AbortController so
   // closing the modal cancels the requests instead of ignoring the results.
   useEffect(() => {
     if (!isOpen || !isOnline) return undefined;
@@ -175,7 +185,6 @@ export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
     (exiting || entering) ? 'opacity-0 translate-y-8 scale-95' : 'opacity-100 translate-y-0 scale-100',
   ].join(' ');
 
-
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
@@ -241,7 +250,9 @@ export default function OnlineBibleSearchModal({ isOpen, onClose, darkMode }) {
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium">{t.name}</div>
                       <div className={`text-[11px] ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-                        {t.abbr} · {t.edition} · {counts ? `${counts.books} books, ${counts.chapters} chapters` : booksFailed[t.abbr] ? 'catalog unavailable — Import still works' : '…'}
+                        <span title={booksFailed[t.abbr] ? `Catalog failed to load (${booksFailed[t.abbr]}). Import will retry the download.` : undefined}>
+                        {t.abbr} · {t.edition} · {counts ? `${counts.books} books, ${counts.chapters} chapters` : booksFailed[t.abbr] ? 'catalog unavailable' : '…'}
+                        </span>
                       </div>
                     </div>
                     {installed && !busy && (
