@@ -28,6 +28,28 @@ import useSpeechStore from '../../context/SpeechStore';
 
 export const BENCHMARK_TITLE = 'Benchmarking arrives in Phase 3';
 
+/**
+ * After a model finishes installing, which model should the app run?
+ *
+ * The store defaults to the best model, not the smallest, and not the one
+ * anyone downloads first. Installing `tiny` and walking away left the store
+ * naming a model that is not on disk: the supervisor repairs that at start
+ * (main/speechIpc.js substitutes an installed model), but every surface
+ * between installs still showed the wrong name. A finished install becomes
+ * the active model, but ONLY when the current choice cannot run: a working
+ * selection is never displaced mid-service.
+ *
+ * @param {{currentModelId?: string|null, installedIds?: string[], justInstalledId?: string|null}} options
+ * @returns {string|null} the model to select, or null to leave the store alone
+ */
+export function chooseModelAfterInstall({ currentModelId, installedIds, justInstalledId } = {}) {
+  const ids = new Set(installedIds ?? []);
+  if (!justInstalledId || !ids.has(justInstalledId)) return null;
+  if (currentModelId === justInstalledId) return null;
+  if (currentModelId && ids.has(currentModelId)) return null;
+  return justInstalledId;
+}
+
 const formatBytes = (bytes) => {
   if (!Number.isFinite(bytes) || bytes < 0) return null;
   const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
@@ -164,6 +186,48 @@ export function useModelInstallState() {
     if (result && result.ok === false && result.code !== 'cancelled') {
       setError({ code: result.code, message: result.message });
     }
+
+    // Make the model that was just installed the one the engine will run — but
+    // only when the current choice cannot run, and only while nothing is
+    // running. A JOINED download is not a finished one: `speech:install`
+    // answers { ok:true, state:'downloading', alreadyRunning:true } for a second
+    // caller, and adopting then would point the app at a file still being written.
+    // A RUNNING engine is left alone because main fixes the model at fork time
+    // and the driver captures it at construction. Goes through
+    // speech:select-model so a digest mismatch is refused here as on a card click.
+    const finished =
+      result?.ok === true && result.alreadyRunning !== true && result.state !== 'downloading';
+    if (finished) {
+      const speech = bridge();
+      if (speech && typeof speech.selectModel === 'function') {
+        let installedIds = [];
+        let engineRunning = false;
+        try {
+          const state = await speech.getState?.();
+          installedIds = (state?.installState?.installed ?? []).map((entry) => entry.id);
+          engineRunning = state?.running === true;
+        } catch {
+          installedIds = [];
+        }
+        const chosen = engineRunning
+          ? null
+          : chooseModelAfterInstall({
+              currentModelId: useSpeechStore.getState().modelId ?? null,
+              installedIds,
+              justInstalledId: modelId,
+            });
+        if (chosen) {
+          try {
+            const verdict = await speech.selectModel({ modelId: chosen });
+            if (verdict?.ok) useSpeechStore.getState().setModelId(chosen);
+          } catch {
+            // The catalog still offers the card, so the user can select it by
+            // hand; a failed auto-selection is not an error worth a banner.
+          }
+        }
+      }
+    }
+
     return result;
   }, [refresh]);
 
@@ -402,10 +466,13 @@ const InstallEngineWizard = ({ darkMode = false }) => {
           </div>
           <p className={mutedClass}>
             The model file is stored on this machine and its digest matches what the
-            catalog pinned. It is <strong>not loaded</strong> until the engine binary is
-            installed and you start Sermon Assist. Benchmarking measures how fast each
-            model runs on this machine and only ever recommends — it never removes a
-            model or blocks an install.
+            catalog pinned. Whether Sermon Assist can use it depends on the engine this
+            build ships for this platform: Windows and Linux offer a whisper.cpp
+            download, macOS does not yet — install it from the engine section above,
+            or Production mode cannot start. The Speech panel on this page names the engine that is actually
+            running. What has <strong>not</strong> been measured on this machine is how
+            fast or how accurate the model is — that is what the benchmark adds, and it
+            only ever recommends.
           </p>
           <button type="button" disabled title={BENCHMARK_TITLE} data-testid="speech-install-benchmark"
             className={`${quietButton} cursor-not-allowed opacity-60`}>

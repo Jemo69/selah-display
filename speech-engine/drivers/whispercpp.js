@@ -194,32 +194,63 @@ export function parseSegments(stdout, sessionId, offsetMs = 0) {
 }
 
 /**
+ * The on-disk file name for a catalog model id.
+ *
+ * THE NAME THAT MATTERS IS THE CATALOG'S `fileName`, NOT `${id}.bin`. The
+ * downloader writes `modelPaths(modelsDir, model.fileName)` and
+ * `listInstalledModels` reads that same name, which is what lights the
+ * "Installed" badge in the catalog. The catalog name is tried first, so a
+ * hand-placed `${id}.bin` can no longer outrank the downloaded file, and a
+ * non-catalog `.bin` id resolves instead of returning null; `${id}.bin` is
+ * kept as a fallback for hand-placed drop-ins and fixtures (and wins over
+ * nothing that an install actually writes).
+ *
+ * @param {string} modelId catalog id, or a file name ending in `.bin`
+ * @returns {string|null} a plain file name, never a path
+ */
+export function weightsFileName(modelId) {
+  if (typeof modelId !== 'string' || !modelId) return null;
+  if (modelId.endsWith('.bin')) return path.basename(modelId);
+  const row = WHISPER_ROWS.find((model) => model.id === modelId);
+  return row && typeof row.fileName === 'string' && row.fileName
+    ? path.basename(row.fileName)
+    : `${path.basename(modelId)}.bin`;
+}
+
+/**
  * Resolve the weights file for a catalog model id.
  *
+ * The catalog name is tried first because that is what an install produces.
+ * `${id}.bin` is kept as a fallback: hand-placed drop-ins and fixtures use
+ * that shape, and renaming a user's file to match us would be a worse answer
+ * than accepting both.
+ *
  * @param {string} modelsDir
- * @param {string} modelId
+ * @param {string} modelId catalog id, or a file name ending in `.bin`
  * @returns {string|null} null when the file is absent or empty
  */
 export function resolveWeights(modelsDir, modelId) {
   if (typeof modelsDir !== 'string' || !modelsDir || !modelId) return null;
-  const catalogModel = WHISPER_ROWS.find((m) => m.id === modelId);
-  if (!catalogModel) return null;
 
-  const candidates = [
-    path.join(modelsDir, `${modelId}.bin`),
-    path.join(modelsDir, `ggml-${modelId}.bin`),
-    catalogModel.fileName ? path.join(modelsDir, catalogModel.fileName) : null,
-  ].filter(Boolean);
+  const fileName = weightsFileName(modelId);
+  if (!fileName) return null;
+
+  const candidates = [path.join(modelsDir, fileName)];
+  if (!modelId.endsWith('.bin')) {
+    candidates.push(path.join(modelsDir, `${path.basename(modelId)}.bin`));
+  }
 
   for (const full of candidates) {
-    if (existsSync(full)) {
-      try {
-        if (statSync(full).size > 0) return full;
-      } catch {
-        // Unreadable / broken file -> try next candidate
-      }
+    if (!existsSync(full)) continue;
+    try {
+      // A zero-byte file is not a model: it is a failed or truncated install,
+      // and whisper-cli would fail on it in a way that reads as a decoder bug.
+      if (statSync(full).size > 0) return full;
+    } catch {
+      // Unreadable for any reason: try the next candidate.
     }
   }
+
   return null;
 }
 
@@ -272,12 +303,15 @@ export function createWhisperEngine({ bus, binDir, modelsDir, modelId } = {}) {
     }
 
     return new Promise((resolve, reject) => {
-      // whisper-cli arguments:
+      // whisper-cli arguments (verified against the pinned b5454 build with
+      // the JFK reference clip: this exact invocation prints the timestamped
+      // `[hh:mm:ss.mmm --> hh:mm:ss.mmm]` transcript to stdout and exits 0).
       // -m <model>    weights file
-      // -f -          audio from stdin (read canonical WAV)
+      // -f -          audio from stdin (read canonical WAV — audio never hits disk)
       // -np           no progress prints
       // -l <lang>     auto or language code
-      // -of <path>    direct file output to null device so timestamps go to stdout
+      // -of <path>    file output goes to the null device; the transcript is
+      //               read from stdout, so no sermon text is ever written to disk
       const args = [
         '-m', weights,
         '-f', '-',            // read the WAV from stdin
@@ -501,7 +535,7 @@ export function createWhisperEngine({ bus, binDir, modelsDir, modelId } = {}) {
 
           if (sessions.has(sessionId)) {
             const last = segments[segments.length - 1];
-            const maxSegmentEnd = last ? last.endMs : offsetMs;
+            const maxSegmentEnd = last ? last.tEndMs : offsetMs;
             elapsed.set(sessionId, Math.max(offsetMs + audioDurationMs, maxSegmentEnd));
           }
 
