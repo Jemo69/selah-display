@@ -53,6 +53,7 @@ import os from 'node:os';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createWhisperEngine, hasBinary, resolveWeights, WHISPER_ROWS } from './drivers/whispercpp.js';
+import { createOsDeviceEngine } from './drivers/osdevice.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -151,9 +152,33 @@ function buildEngine() {
     }
   }
 
+  if (engineKind === 'osdevice') {
+    // The constructor probes the platform itself and throws ENGINE_UNAVAILABLE
+    // with the remedy when there is no OS backend here — same fail-loud rule
+    // as whisper, never a silent fallback to the canned engine.
+    try {
+      // Language rides the same env/flag convention as the whisper model id
+      // below. Nothing in the app sets it yet (every session is 'auto' =
+      // the default recognizer); it exists so a test or a launcher can.
+      return createOsDeviceEngine({
+        bus,
+        language: typeof args.lang === 'string' ? args.lang : (env.LD_SPEECH_LANG || undefined),
+      });
+    } catch (error) {
+      // error.message already embeds the probe's actionable reason
+      // (missing PowerShell vs missing recognizer) — printing the generic
+      // support line here would strand the remedy in a discarded string.
+      const detail = error?.code === 'unavailable' && error?.message
+        ? error.message
+        : 'The OS speech engine could not be initialised.';
+      console.error(`speech-engine: ${detail}`);
+      process.exit(2);
+    }
+  }
+
   // An unknown engine name is a configuration error, and guessing at one is
   // exactly how a typo becomes a wrong engine mid-service.
-  console.error(`speech-engine: unknown engine "${engineKind}". Use "fake" or "whisper".`);
+  console.error(`speech-engine: unknown engine "${engineKind}". Use "fake", "whisper", or "osdevice".`);
   process.exit(2);
   return null;
 }

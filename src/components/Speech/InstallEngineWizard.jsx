@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Download, Gauge, X } from 'lucide-react';
-import { getDefaultModel, getModel } from 'shared/speech';
+import { getDefaultModel, getModel, getProvider } from 'shared/speech';
 import useSpeechStore from '../../context/SpeechStore';
 
 // ---------------------------------------------------------------------------
@@ -234,6 +234,11 @@ export function useModelInstallState() {
 
 const InstallEngineWizard = ({ darkMode = false }) => {
   const modelId = useSpeechStore((state) => state.modelId);
+  const providerId = useSpeechStore((state) => state.providerId);
+  // Providers with nothing to install (OS on-device) have no model file, no
+  // download, and no digest — the model section below would invite installing
+  // a file the engine will never read, so it renders a note instead.
+  const noModelNeeded = getProvider(providerId)?.needsNoInstall === true;
   const {
     installState,
     progress,
@@ -602,15 +607,28 @@ const InstallEngineWizard = ({ darkMode = false }) => {
         )}
       </div>
 
-      <div className="space-y-1.5">
-        <span className={labelClass}>Engine model install</span>
-        <p className={mutedClass}>
-          Local transcription needs the model file on disk. Downloads are resumable, verified
-          against the catalog checksum, and never start on their own — only when you click.
-        </p>
-      </div>
+      {noModelNeeded ? (
+        <div className="space-y-1.5">
+          <span className={labelClass}>Engine model install</span>
+          <p className={mutedClass} data-testid="speech-install-no-model-needed">
+            The selected provider uses the platform's built-in speech service — there is no
+            model file to download and nothing to verify. Skip this section, and the
+            engine binary above: both are whisper.cpp only, and this provider uses neither.
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="space-y-1.5">
+            <span className={labelClass}>Engine model install</span>
+            <p className={mutedClass}>
+              Local transcription needs the model file on disk. Downloads are resumable, verified
+              against the catalog checksum, and never start on their own — only when you click.
+            </p>
+          </div>
 
-      {body}
+          {body}
+        </>
+      )}
 
       {error?.message ? (
         <div

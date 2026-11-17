@@ -65,7 +65,7 @@
       "name": "OS on-device",
       "requires": null,
       "reads": [],
-      "wordTimestamps": true,
+      "wordTimestamps": false,
       "biasSupport": false,
       "streaming": true,
       "gpu": [
@@ -75,12 +75,9 @@
       "needsNoInstall": true,
       "installMethod": "probe",
       "license": "varies-by-platform",
-      "description": "Built into the platform (Apple Speech, Windows.Media.SpeechRecognition). Nothing to install and nothing to download - the one provider that needs neither. Linux ships no built-in engine, so the probe simply reports unavailable there.",
+      "description": "Built into Windows (System.Speech, in-box since Vista, offline). Nothing to install and nothing to download. Other platforms report unavailable with the working alternative — Linux and macOS use whisper.cpp (Tiny English is 78 MB) instead.",
       "platforms": [
-        "mac",
-        "win",
-        "ios",
-        "android"
+        "win"
       ]
     },
     {

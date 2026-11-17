@@ -170,6 +170,28 @@ let registered = null;
  *             getInstallState: Function, publishInstallState: Function,
  *             publishProgress: Function, history: Object }}
  */
+/**
+ * Which engine kind a renderer-selected provider maps to.
+ *
+ * The provider picker used to be decorative for anything but whisper.cpp:
+ * the value travelled as history metadata while the engine ran whisper
+ * regardless. Null/undefined/'' means the default provider (whispercpp).
+ * Anything with no driver in this build (sherpa-onnx, vosk,
+ * faster-whisper, custom) maps to null so the start path refuses with a
+ * sentence instead of forking the wrong engine.
+ *
+ * Pure: no Electron, no I/O — unit-tested in tests/speech/.
+ *
+ * @param {string|null|undefined} providerId catalog provider id
+ * @returns {'whisper'|'osdevice'|null}
+ */
+export function engineKindForProviderId(providerId) {
+  if (providerId === null || providerId === undefined || providerId === '') return 'whisper';
+  if (providerId === 'whispercpp') return 'whisper';
+  if (providerId === 'osondevice') return 'osdevice';
+  return null;
+}
+
 export function registerSpeechIpc({
   getMainWindow,
   engineRoots = [],
@@ -345,7 +367,62 @@ export function registerSpeechIpc({
     // Refusing with a sentence the operator can act on is the only honest
     // answer; engineTruth.js can then never label canned text as production.
     const wantsTestEngine = payload?.engineMode === 'test' || payload?.engineKind === 'fake';
-    const targetEngineKind = wantsTestEngine ? 'fake' : 'whisper';
+    // Null/undefined/'' means "the default provider" (whispercpp) — same as
+    // before: the store defaults to whispercpp and old blobs may carry
+    // anything, so only an explicit non-whisper provider id diverts.
+    const providerEngineKind = engineKindForProviderId(payload?.providerId);
+    // Test mode always wins, as before: the canned engine runs for rehearsal
+    // regardless of provider, so an unwired provider id must not refuse a
+    // test-mode start that used to work.
+    if (providerEngineKind === null && !wantsTestEngine) {
+      const error = {
+        code: 'provider-not-supported',
+        message:
+          'This speech provider has no runnable engine in this build yet. ' +
+          'Use whisper.cpp, or OS on-device on Windows.',
+      };
+      log.info('Speech engine not started: provider-not-supported');
+      broadcast('speech:error', error);
+      broadcast('speech:health', null);
+      return {
+        ok: false,
+        started: false,
+        reason: 'provider-not-supported',
+        mode: engineInstallState.mode,
+        installState: buildInstallState(),
+        engine: null,
+        health: null,
+        error,
+      };
+    }
+    const targetEngineKind = wantsTestEngine ? 'fake' : providerEngineKind;
+
+    // OS on-device needs no binary and no model file, so the whisper gates
+    // below do not apply. The one gate that does: the OS backend only exists
+    // on Windows. Refuse early (no fork) anywhere else, naming the path that
+    // works — forking just to exit 2 would read as a crash.
+    if (targetEngineKind === 'osdevice' && process.platform !== 'win32') {
+      const error = {
+        code: 'os-device-unavailable',
+        message:
+          'OS on-device speech is only available on Windows in this build. ' +
+          'Use whisper.cpp — Tiny English is about 78 MB and is enough to ' +
+          'check that live transcription works.',
+      };
+      log.info('Speech engine not started: os-device-unavailable');
+      broadcast('speech:error', error);
+      broadcast('speech:health', null);
+      return {
+        ok: false,
+        started: false,
+        reason: 'os-device-unavailable',
+        mode: engineInstallState.mode,
+        installState: buildInstallState(),
+        engine: null,
+        health: null,
+        error,
+      };
+    }
 
     if (targetEngineKind === 'whisper' && !hasWhisperBinary(activeBinDir)) {
       const error = {
@@ -435,6 +512,12 @@ export function registerSpeechIpc({
     } else if (!targetModelId && installedList.length > 0) {
       targetModelId = installedList[0].id;
     }
+    // History attribution for the OS engine names the OS model, not a whisper
+    // model id: targetModelId above can be a whisper id (store default or the
+    // installed-list fallback), and OS-engine segments attributed to it would
+    // read as transcribed by a model that never ran. Mirrors the driver's
+    // OSDEVICE_MODEL ('os-device').
+    const historyModelId = targetEngineKind === 'osdevice' ? 'os-device' : targetModelId;
     const startOutcome = (outcome) => {
       diagMain('info', 'engine', 'start settled', {
         ok: outcome?.ok === true,
@@ -462,7 +545,7 @@ export function registerSpeechIpc({
       historyDir: activeHistoryDir,
       historyStore: history,
       engineKind: targetEngineKind,
-      modelId: targetModelId,
+      modelId: historyModelId,
       providerId: stringField(payload?.providerId),
       where: stringField(payload?.where),
       ...callbacks,
