@@ -242,13 +242,17 @@ describe('install flow (renderer, stubbed bridge)', () => {
 
     fireEvent.click(screen.getByTestId('speech-install-continue'));
     const pending = screen.getByTestId('speech-install-benchmark-pending');
-    // The honest claim. A downloaded-and-verified model file is NOT a loaded
-    // model: the only engine that can run today is the contract-conformant
-    // fake, which ignores audio entirely. Saying "Ready to transcribe" here
-    // would tell a church operator the feature works when it cannot.
+    // Model verified on disk. The copy must NOT promise a transcript: this
+    // platform may not ship an engine, and saying "this is the model that will
+    // transcribe" is the same class of overclaim that pulled the previous
+    // release — just moved from the badge to the prose.
     expect(pending).toHaveTextContent('Large v3 is downloaded and verified');
-    expect(pending).toHaveTextContent(/not loaded/i);
-    expect(pending).toHaveTextContent(/engine binary/i);
+    expect(pending).toHaveTextContent(/Windows and Linux offer a whisper\.cpp download/i);
+    expect(pending).toHaveTextContent(/macOS\s+does not yet/i);
+    expect(pending).toHaveTextContent(/engine section above/i);
+    expect(pending).not.toHaveTextContent(/is the model that will transcribe/i);
+    expect(pending).not.toHaveTextContent(/test scaffold/i);
+    expect(pending).not.toHaveTextContent(/nothing will transcribe/i);
     expect(pending).not.toHaveTextContent(/Ready to transcribe/);
     expect(pending).not.toHaveTextContent(/is what loads/);
 
@@ -259,6 +263,46 @@ describe('install flow (renderer, stubbed bridge)', () => {
 
     // Nothing else fired: no uninstall, no benchmark, no extra install.
     expect(bridge.install).toHaveBeenCalledTimes(1);
+  });
+
+  itFlow('a finished install of a different model becomes the active model', async () => {
+    // Wiring-level coverage for the post-install auto-select: installing
+    // Tiny English while the store names large-v3 must go through
+    // speech:select-model AND move the store. Deleting the auto-select block
+    // leaves the pure decision-table tests green, so this is the test that
+    // pins the behavior an operator actually sees.
+    const bridge = createBridge();
+    window.electronAPI = { speech: bridge };
+
+    renderPrefs();
+    await screen.findByTestId('speech-install-not-installed');
+    expect(useSpeechStore.getState().modelId).toBe('large-v3');
+
+    fireEvent.click(screen.getByTestId('speech-install-tiny'));
+    expect(bridge.install).toHaveBeenCalledWith({ modelId: 'tiny.en' });
+    // No downloading card: the wizard's progress UI keys on the selected
+    // model (large-v3), not the one-off tiny install. The download still
+    // runs — the assertion that matters is the select-model below.
+
+    bridge.setInstallState({
+      ...emptyInstallState(),
+      installed: [
+        {
+          id: 'tiny.en',
+          fileName: 'ggml-tiny.en.bin',
+          bytes: 78000000,
+          digestRecorded: true,
+          sizeMatchesRecord: true,
+          source: 'download',
+        },
+      ],
+      activeDownloads: [],
+    });
+    act(() => bridge.emit('installState', bridge.currentInstallState()));
+    bridge.resolveInstall({ ok: true, modelId: 'tiny.en', digestSource: 'catalog-sha256' });
+
+    await waitFor(() => expect(bridge.selectModel).toHaveBeenCalledWith({ modelId: 'tiny.en' }));
+    expect(useSpeechStore.getState().modelId).toBe('tiny.en');
   });
 
   itFlow('sends the documented cancel payload and stops showing progress', async () => {

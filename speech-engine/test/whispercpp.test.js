@@ -13,7 +13,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, chmodSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, chmodSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -341,4 +341,81 @@ test('no transcript text is written to stderr by the driver', async () => {
     !written.join('\n').includes('SECRET-SERMON-TEXT'),
     'decoder output must never reach the log'
   );
+});
+/**
+ * A fake CLI that records the arguments it was handed. A fake that ignores
+ * arguments agrees with any caller, so without this the suite cannot catch
+ * a wrong FLAG — that is what the contract test below pins.
+ */
+function installRecordingCli(dir, argvFile, { exitCode = 0, stdout = '' } = {}) {
+  const full = path.join(dir, binaryName());
+  if (process.platform === 'win32') return full; // covered by the POSIX suite
+
+  writeFileSync(
+    full,
+    `#!/bin/sh
+cat > /dev/null
+printf '%s\\n' "$@" > "${argvFile}"
+printf '%s' "${stdout}"
+exit ${exitCode}
+`,
+    { mode: 0o755 }
+  );
+  chmodSync(full, 0o755);
+  return full;
+}
+
+test('the CLI is invoked so the transcript stays on stdout and audio off disk', async () => {
+  // Verified against the pinned b5454 build with the JFK reference clip:
+  // `-of /dev/null` with no `--output-*` flag still prints the timestamped
+  // transcript to stdout. An earlier revision of this test asserted `-otxt`
+  // was REQUIRED — that claim was disproved by execution, so this test
+  // asserts the real contract instead of the flag superstition.
+  const binDir = tempRoot();
+  const modelsDir = tempRoot();
+  const argvFile = path.join(tempRoot(), 'argv.txt');
+  if (process.platform === 'win32') return;
+  installRecordingCli(binDir, argvFile);
+  writeFileSync(path.join(modelsDir, 'base.bin'), 'weights');
+
+  const engine = createWhisperEngine({ bus: null, binDir, modelsDir, modelId: 'base' });
+  await engine.transcribe({ frames: [frame()] });
+
+  const argv = readFileSync(argvFile, 'utf8').trim().split('\n');
+  const valueOf = (flag) => argv[argv.indexOf(flag) + 1];
+
+  // `-nt` strips the `[hh:mm:ss.mmm --> hh:mm:ss.mmm]` prefix that
+  // parseSegments matches on, so it guarantees zero segments on success.
+  assert.ok(!argv.includes('-nt'), '-nt removes the timestamps parseSegments needs');
+
+  // Audio travels on stdin so it never lands on disk.
+  assert.equal(valueOf('-f'), '-');
+
+  // File output goes to the null device — no sermon text is written to disk.
+  // (An `-of <real-path>` + `-otxt` combination was briefly shipped here and
+  // proven to write transcript.txt; the driver never read that file.)
+  const outputBase = valueOf('-of');
+  assert.ok(
+    outputBase === '/dev/null' || outputBase === 'NUL',
+    `file output must go to the null device, got ${outputBase}`
+  );
+});
+
+test('a failing decoder is reported as an error with the same invocation', async () => {
+  const binDir = tempRoot();
+  const modelsDir = tempRoot();
+  const argvFile = path.join(tempRoot(), 'argv.txt');
+  if (process.platform === 'win32') return;
+  installRecordingCli(binDir, argvFile, { exitCode: 3 });
+  writeFileSync(path.join(modelsDir, 'base.bin'), 'weights');
+
+  const engine = createWhisperEngine({ bus: null, binDir, modelsDir, modelId: 'base' });
+  const result = await engine.transcribe({ frames: [frame()] });
+
+  // A failing decode is reported as an error and never as silence, and the
+  // failure path runs the same invocation (not a degraded fallback).
+  assert.ok(result.messages.some((message) => message.t === 'error'));
+  const argv = readFileSync(argvFile, 'utf8').trim().split('\n');
+  assert.equal(argv[argv.indexOf('-f') + 1], '-');
+  assert.ok(!argv.includes('-nt'));
 });
