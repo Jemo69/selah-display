@@ -17,6 +17,9 @@
 import './test/server.test.js';
 import './test/wsTransport.test.js';
 import './test/benchmark.test.js';
+// The OS on-device driver: same boundary, same requirement — its spawn,
+// parse, and cleanup paths run here, not only on a Windows machine.
+import './test/osdevice.test.js';
 // The DRIVER tests belong here too. They were absent from this entry point,
 // so CI exercised the HTTP surface and never the code that spawns
 // whisper-cli — the binary boundary had no coverage at all.
