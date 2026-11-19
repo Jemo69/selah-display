@@ -142,6 +142,10 @@ test('recognizeScript wires file input, dictation grammar, and single-line JSON 
     script.includes('try { [Console]::OutputEncoding'),
     'console re-encoding degrades instead of aborting the script'
   );
+  assert.ok(
+    !/catch \{ \},/.test(script),
+    'the encoding guard ends with a statement terminator, not an array comma'
+  );
   assert.ok(script.includes('exit 2;'), 'script errors exit 2 with ERROR: on stderr');
   assert.ok(script.includes('C:\\tmp\\segment.wav'), 'the staged WAV path');
   assert.ok(!script.includes('$culture'), 'auto uses the default recognizer');

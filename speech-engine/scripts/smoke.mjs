@@ -362,7 +362,15 @@ function httpRequest(base, token, method, route, body) {
 async function stopEngine(child) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
   child.kill('SIGTERM');
-  await Promise.race([once(child, 'exit'), new Promise((resolve) => setTimeout(resolve, 3000))]);
+  // Do not leave a 3-second timer holding the smoke command open after the
+  // child has already exited — that turns one wasted second into four.
+  await new Promise((resolve) => {
+    const timer = setTimeout(resolve, 3000);
+    once(child, 'exit').then(() => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
   if (child.exitCode === null && child.signalCode === null) {
     try { child.kill('SIGKILL'); } catch { /* already gone */ }
   }

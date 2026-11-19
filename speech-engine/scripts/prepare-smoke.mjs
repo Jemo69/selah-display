@@ -116,8 +116,20 @@ async function prepareModel(modelsDir, { force }) {
 
   const part = `${target}.part`;
   writeFileSync(part, buffer);
-  rmSync(target, { force: true });
-  renameSync(part, target);
+  // POSIX rename() replaces atomically; Windows refuses to rename onto an
+  // existing file. Try the atomic path first and only clear the target when
+  // the platform makes that unavoidable, so an interruption never leaves the
+  // models directory with neither the old file nor the new one on POSIX.
+  try {
+    renameSync(part, target);
+  } catch (error) {
+    if (error?.code !== 'EEXIST' && error?.code !== 'EPERM' && error?.code !== 'EACCES') {
+      rmSync(part, { force: true });
+      throw error;
+    }
+    rmSync(target, { force: true });
+    renameSync(part, target);
+  }
   return { bytes: buffer.length, downloaded: true };
 }
 

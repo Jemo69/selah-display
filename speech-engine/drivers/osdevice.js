@@ -159,7 +159,7 @@ export function recognizeScript({ wavPath, language = 'auto' } = {}) {
       `catch { $rec = New-Object System.Speech.Recognition.SpeechRecognitionEngine };`
     : `$rec = New-Object System.Speech.Recognition.SpeechRecognitionEngine;`;
   return [
-    `try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; } catch { },`,
+    `try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; } catch { };`,
     `$ErrorActionPreference = 'Stop';`,
     `Add-Type -AssemblyName System.Speech;`,
     `try {`,
