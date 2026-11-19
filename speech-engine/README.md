@@ -105,8 +105,9 @@ node speech-engine/scripts/smoke.mjs --engine=osdevice
 
 **Cost.** No network after setup, no hosted model, no key. Inference on the
 3-second clip is roughly one second on a CPU. The only persistent bytes are
-the gitignored 41 MiB light engine and the 99 KB fixture; CI restores them
-from a cache keyed by the pinned release + model digest.
+the 99 KB fixture and the gitignored light engine: 41 MiB downloaded, about
+62 MiB unpacked into `.speech-smoke/`. CI restores that folder from a cache
+keyed by the pinned release + model digest.
 
 ## Transport decision (Phase 2)
 

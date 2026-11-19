@@ -4,11 +4,12 @@ name: Speech Live Smoke
 # messages. This workflow proves the other half: real spoken audio through the
 # real recognizer, on every change that can affect it.
 #
-# COST. No hosted API, no key, no per-run model download. The first run fetches
-# a pinned whisper.cpp binary (10 MiB) and Tiny English Q5_1 (31 MiB) into the
-# gitignored .speech-smoke/ folder; actions/cache restores those 41 MiB on
-# later runs. The committed clip is 99 KB, and inference on it takes about one
-# second on a CPU. There is no GPU and no cloud dependency.
+# COST. No hosted API, no key, no per-run model download. The first run downloads
+# a pinned whisper.cpp binary (10 MiB) and Tiny English Q5_1 (31 MiB), then
+# unpacks them into the gitignored .speech-smoke/ folder (~62 MiB on disk).
+# actions/cache restores that folder on later runs. The committed clip is
+# 99 KB, and inference on it takes about one second on a CPU. There is no GPU
+# and no cloud dependency.
 #
 # WHY THIS IS A SEPARATE WORKFLOW. It should be visible as its own check, not
 # buried inside a platform build, and a cache/download failure should fail one
@@ -21,6 +22,7 @@ on:
       - 'speech-engine/**'
       - 'shared/speech/**'
       - 'shared/wer.js'
+      - 'main/speechArchive.js'
       - 'main/speech*.js'
       - '.github/workflows/speech-live-smoke.yml'
   push:
@@ -30,6 +32,7 @@ on:
       - 'speech-engine/**'
       - 'shared/speech/**'
       - 'shared/wer.js'
+      - 'main/speechArchive.js'
       - 'main/speech*.js'
       - '.github/workflows/speech-live-smoke.yml'
   workflow_dispatch:
