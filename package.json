@@ -31,6 +31,8 @@
     "release:mobile": "node scripts/mobile-release.js",
     "postinstall": "cd server && npm install",
     "test": "vitest run",
+    "speech-smoke": "node speech-engine/scripts/smoke.mjs",
+    "speech-smoke:setup": "node speech-engine/scripts/prepare-smoke.mjs",
     "test:watch": "vitest",
     "test:lyrics-race": "vitest run tests/searchTwoFolder.test.js tests/searchLyricsV3.test.js"
   },

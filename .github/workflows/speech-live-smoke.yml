@@ -1,0 +1,84 @@
+name: Speech Live Smoke
+
+# The conformance suites prove the engine CONTRACT with fake shells and canned
+# messages. This workflow proves the other half: real spoken audio through the
+# real recognizer, on every change that can affect it.
+#
+# COST. No hosted API, no key, no per-run model download. The first run fetches
+# a pinned whisper.cpp binary (10 MiB) and Tiny English Q5_1 (31 MiB) into the
+# gitignored .speech-smoke/ folder; actions/cache restores those 41 MiB on
+# later runs. The committed clip is 99 KB, and inference on it takes about one
+# second on a CPU. There is no GPU and no cloud dependency.
+#
+# WHY THIS IS A SEPARATE WORKFLOW. It should be visible as its own check, not
+# buried inside a platform build, and a cache/download failure should fail one
+# clearly named job rather than every installer. It also keeps the engine's
+# plugin workflow (build-speech-engine.yml) independent of the app build.
+
+on:
+  pull_request:
+    paths:
+      - 'speech-engine/**'
+      - 'shared/speech/**'
+      - 'main/speech*.js'
+      - '.github/workflows/speech-live-smoke.yml'
+  push:
+    branches:
+      - master
+    paths:
+      - 'speech-engine/**'
+      - 'shared/speech/**'
+      - 'main/speech*.js'
+      - '.github/workflows/speech-live-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: speech-live-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live-whisper-smoke:
+    name: Real voice → real transcript
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The cache key includes the pinned release, the model catalog (which
+      # carries the model digest), and the installer (which carries the binary
+      # digest). Bumping any of them invalidates the cache deliberately.
+      - name: Restore the light engine
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: .speech-smoke
+          key: speech-smoke-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('speech-engine/scripts/prepare-smoke.mjs', 'main/speechEngineInstaller.js', 'shared/speech/models.catalog.json') }}
+
+      # Idempotent: on a cache hit it hashes the existing model and returns
+      # without network I/O. On a miss it downloads, verifies both SHA-256
+      # digests, and unpacks the pinned payload.
+      - name: Fetch the pinned engine and light model
+        run: node speech-engine/scripts/prepare-smoke.mjs
+
+      # Forks the real index.js, sends the committed 3.2 s clip over the real
+      # HTTP contract, and fails unless the returned final transcript matches
+      # the spoken sentence within the WER budget.
+      - name: Transcribe the committed voice clip
+        run: node speech-engine/scripts/smoke.mjs
+
+      # A cache that silently stopped being populated is a slow leak in CI
+      # minutes, not a correctness bug. Make it visible without failing a PR.
+      - name: Report cache status
+        if: always()
+        run: |
+          echo "cache-hit=${{ steps.cache.outputs.cache-hit || 'false' }}"
+          du -sh .speech-smoke 2>/dev/null || true
