@@ -72,7 +72,7 @@ right words on this machine?" — that needs real audio through the real engine.
 
 - the audio is a committed **6.3-second, 196 KB** John 10:10 spoken clip
   (`test/fixtures/voice-smoke-16k.wav`); no microphone, no human, no API call
-- it forks the real `index.js`, creates a real session, sends 32 PCM frames
+- it forks the real `index.js`, creates a real session, sends 63 PCM frames
   over the real HTTP contract, and compares the returned final transcript to
   the spoken sentence using `shared/wer.js`
 - it exits nonzero when the engine is missing, returns an error, returns no
