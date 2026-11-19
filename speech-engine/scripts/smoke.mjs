@@ -5,14 +5,14 @@
  *
  * WHAT THIS IS. A one-command end-to-end check of the speech engine. It starts
  * the actual `index.js` entry point (the same process Selah's supervisor
- * forks), sends it a committed 3.2-second spoken clip over the real HTTP
+ * forks), sends it a committed 6.3-second spoken clip over the real HTTP
  * contract, and compares the returned transcript with the sentence that was
  * spoken using the app's own WER implementation.
  *
  * WHY A COMMITTED CLIP AND NOT A MICROPHONE. A live microphone check needs a
  * human, a quiet room, and a working input device — none of which CI has. The
- * clip is 99 KB, mono 16 kHz PCM, generated once from text, and it costs zero
- * network, zero model download, and about one second of CPU to transcribe.
+ * clip is 196 KB, mono 16 kHz PCM, generated once from text, and it costs zero
+ * network, zero model download, and a few seconds of CPU to transcribe.
  * That is enough to prove the full path: audio bytes -> engine HTTP contract ->
  * driver -> recognizer -> final message -> text.
  *
@@ -64,7 +64,7 @@ const INDEX_JS = path.join(ENGINE_ROOT, 'index.js');
 const DEFAULT_AUDIO = path.join(ENGINE_ROOT, 'test', 'fixtures', 'voice-smoke-16k.wav');
 
 /** The sentence spoken in the committed clip. Keep in step with the fixture. */
-const DEFAULT_REFERENCE = 'The Lord is my shepherd, I shall not want.';
+const DEFAULT_REFERENCE = 'The thief comes only to steal and kill and destroy. I came that they may have life, and have it abundantly.';
 
 /** The lightest English model in Selah's catalog. `prepare-smoke.mjs` fetches it. */
 const DEFAULT_MODEL = 'tiny.en-q5_1';
@@ -78,7 +78,7 @@ const BYTES_PER_SAMPLE = 2;
 /** Startup includes a Windows PowerShell probe; 30 s is generous, not loose. */
 const START_TIMEOUT_MS = 30_000;
 
-/** Far beyond a 3-second clip; catches a hung recognizer instead of hanging CI. */
+/** Far beyond a 6-second clip; catches a hung recognizer instead of hanging CI. */
 const TRANSCRIBE_TIMEOUT_MS = 90_000;
 
 /** WER budget. Tiny models sometimes drop "the"; more than this is not working. */
@@ -392,7 +392,7 @@ Usage:
 
 Options:
   --engine=whisper|osdevice  engine to run (default: whisper)
-  --audio=PATH               WAV to transcribe (default: the committed 3.2 s clip)
+  --audio=PATH               WAV to transcribe (default: the committed 6.3 s clip)
   --expect="TEXT"            what the clip says (default follows the committed clip)
   --max-wer=0.25             highest acceptable word error rate
   --model=ID                 whisper model id (default: tiny.en-q5_1, 31 MiB)

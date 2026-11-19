@@ -8,7 +8,7 @@ name: Speech Live Smoke
 # a pinned whisper.cpp binary (10 MiB) and Tiny English Q5_1 (31 MiB), then
 # unpacks them into the gitignored .speech-smoke/ folder (~62 MiB on disk).
 # actions/cache restores that folder on later runs. The committed clip is
-# 99 KB, and inference on it takes about one second on a CPU. There is no GPU
+# 196 KB, and inference on it takes one to three seconds on a CPU. There is no GPU
 # and no cloud dependency.
 #
 # WHY THIS IS A SEPARATE WORKFLOW. It should be visible as its own check, not
@@ -74,7 +74,7 @@ jobs:
       - name: Fetch the pinned engine and light model
         run: node speech-engine/scripts/prepare-smoke.mjs
 
-      # Forks the real index.js, sends the committed 3.2 s clip over the real
+      # Forks the real index.js, sends the committed 6.3 s John 10:10 clip over the real
       # HTTP contract, and fails unless the returned final transcript matches
       # the spoken sentence within the WER budget.
       - name: Transcribe the committed voice clip

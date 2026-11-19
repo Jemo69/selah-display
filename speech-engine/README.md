@@ -70,7 +70,7 @@ right words on this machine?" — that needs real audio through the real engine.
 
 `scripts/smoke.mjs` answers exactly that, and it is cheap:
 
-- the audio is a committed **3.2-second, 99 KB** spoken clip
+- the audio is a committed **6.3-second, 196 KB** John 10:10 spoken clip
   (`test/fixtures/voice-smoke-16k.wav`); no microphone, no human, no API call
 - it forks the real `index.js`, creates a real session, sends 32 PCM frames
   over the real HTTP contract, and compares the returned final transcript to
@@ -104,8 +104,8 @@ node speech-engine/scripts/smoke.mjs --engine=osdevice
 ```
 
 **Cost.** No network after setup, no hosted model, no key. Inference on the
-3-second clip is roughly one second on a CPU. The only persistent bytes are
-the 99 KB fixture and the gitignored light engine: 41 MiB downloaded, about
+6-second clip is roughly one to three seconds on a CPU. The only persistent bytes are
+the 196 KB fixture and the gitignored light engine: 41 MiB downloaded, about
 62 MiB unpacked into `.speech-smoke/`. CI restores that folder from a cache
 keyed by the pinned release + model digest.
 
