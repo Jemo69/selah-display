@@ -159,6 +159,9 @@ async function prepareModel(modelsDir, { force }) {
   return { bytes: buffer.length, downloaded: true };
 }
 
+/** Records the hash of the binary this script installed, so cache hits can self-check. */
+const BINARY_MARKER = '.smoke-binary.sha256';
+
 /** Download and unpack the pinned whisper.cpp binary for this platform. */
 async function prepareBinary(binDir, { force }) {
   const asset = engineAssetFor(process.platform, process.arch);
@@ -170,9 +173,26 @@ async function prepareBinary(binDir, { force }) {
     return { installed: false, reason: 'unsupported-platform' };
   }
 
+  const binaryName = process.platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli';
+  const binaryPath = path.join(binDir, binaryName);
+  const markerPath = path.join(binDir, BINARY_MARKER);
+
   if (!force && hasEngineBinary(binDir, process.platform)) {
-    console.log(`  binary        whisper.cpp already present in ${path.relative(process.cwd(), binDir)}`);
-    return { installed: false, reason: 'already-present' };
+    const actual = sha256(readFileSync(binaryPath));
+    const recorded = existsSync(markerPath) ? readFileSync(markerPath, 'utf8').trim() : '';
+    if (!recorded) {
+      // A binary installed by Selah rather than this script: trust it once and
+      // record its hash, so the next cache hit can detect corruption.
+      mkdirSync(binDir, { recursive: true });
+      writeFileSync(markerPath, `${actual}\n`);
+      console.log(`  binary        whisper.cpp already present in ${path.relative(process.cwd(), binDir)}`);
+      return { installed: false, reason: 'already-present' };
+    }
+    if (recorded === actual) {
+      console.log(`  binary        whisper.cpp already present in ${path.relative(process.cwd(), binDir)} (sha256 verified)`);
+      return { installed: false, reason: 'already-present' };
+    }
+    console.log('  binary        cached whisper.cpp does not match its recorded digest — reinstalling');
   }
 
   console.log(`  binary        downloading whisper.cpp ${ENGINE_RELEASE.version} (${path.basename(asset.file)}) from github.com`);
@@ -184,6 +204,7 @@ async function prepareBinary(binDir, { force }) {
   });
 
   if (!result.ok) throw new Error(`Engine install failed (${result.code}): ${result.message}`);
+  writeFileSync(markerPath, `${sha256(readFileSync(binaryPath))}\n`);
   return { installed: true, version: result.version, bytes: result.bytes };
 }
 

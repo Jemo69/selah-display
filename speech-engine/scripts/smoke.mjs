@@ -54,7 +54,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 
-import { SAMPLE_RATE } from '../../shared/speech/protocol.js';
+import { BYTES_PER_FRAME, SAMPLE_RATE } from '../../shared/speech/protocol.js';
 import { werDetail } from '../../shared/wer.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -69,8 +69,11 @@ const DEFAULT_REFERENCE = 'The Lord is my shepherd, I shall not want.';
 /** The lightest English model in Selah's catalog. `prepare-smoke.mjs` fetches it. */
 const DEFAULT_MODEL = 'tiny.en-q5_1';
 
-/** 100 ms of 16 kHz mono Int16 — one contract frame. 3200 bytes. */
-const FRAME_BYTES = 3200;
+/** 100 ms of 16 kHz mono Int16 — one contract frame. */
+const FRAME_BYTES = BYTES_PER_FRAME;
+
+/** Int16 = two bytes per sample, fixed by the protocol. */
+const BYTES_PER_SAMPLE = 2;
 
 /** Startup includes a Windows PowerShell probe; 30 s is generous, not loose. */
 const START_TIMEOUT_MS = 30_000;
@@ -356,6 +359,11 @@ function httpRequest(base, token, method, route, body) {
     }
     if (json === null) throw new Error(`${method} ${route} returned a non-JSON body.`);
     return json;
+  }, (error) => {
+    // A refusal/early death between `ready` and the first request is rare but
+    // silent in the default fetch error. Name the route and the OS cause.
+    const cause = error?.cause?.code || error?.message || 'network error';
+    throw new Error(`${method} ${route} failed (${cause}).`);
   });
 }
 
@@ -430,7 +438,7 @@ async function main() {
   const wav = parseWav(readFileSync(audioPath));
   const rms = assertAudible(wav.pcm);
   const frames = toFrames(wav.pcm);
-  const audioSeconds = wav.pcm.length / (SAMPLE_RATE * 2);
+  const audioSeconds = wav.pcm.length / (SAMPLE_RATE * BYTES_PER_SAMPLE);
 
   console.log('Selah speech smoke test');
   console.log(`  engine        ${engine} (light mode)`);
