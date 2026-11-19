@@ -92,6 +92,20 @@ async function prepareModel(modelsDir, { force }) {
   }
 
   const target = path.join(modelsDir, row.fileName);
+  const backup = `${target}.old`;
+
+  // A previous Windows replacement may have died after moving the old file
+  // aside. Put it back before deciding anything, so a cache is never left with
+  // no model at all.
+  if (!existsSync(target) && existsSync(backup)) {
+    try {
+      renameSync(backup, target);
+      console.log(`  model         restored ${MODEL_ID} from a previous interrupted replacement`);
+    } catch {
+      // If this fails, the download below is still a valid recovery path.
+    }
+  }
+
   if (!force && existsSync(target)) {
     const existing = readFileSync(target);
     if (sha256(existing) === row.sha256) {
@@ -117,9 +131,9 @@ async function prepareModel(modelsDir, { force }) {
   const part = `${target}.part`;
   writeFileSync(part, buffer);
   // POSIX rename() replaces atomically; Windows refuses to rename onto an
-  // existing file. Try the atomic path first and only clear the target when
-  // the platform makes that unavoidable, so an interruption never leaves the
-  // models directory with neither the old file nor the new one on POSIX.
+  // existing file. Try the atomic path first. On Windows, move the old file to
+  // a backup and restore it if the new rename fails, so there is always one
+  // usable model on disk (the next run also restores the backup at startup).
   try {
     renameSync(part, target);
   } catch (error) {
@@ -127,8 +141,20 @@ async function prepareModel(modelsDir, { force }) {
       rmSync(part, { force: true });
       throw error;
     }
-    rmSync(target, { force: true });
-    renameSync(part, target);
+    if (!existsSync(target)) {
+      renameSync(part, target);
+      return { bytes: buffer.length, downloaded: true };
+    }
+    rmSync(backup, { force: true });
+    renameSync(target, backup);
+    try {
+      renameSync(part, target);
+      rmSync(backup, { force: true });
+    } catch (renameError) {
+      rmSync(part, { force: true });
+      try { renameSync(backup, target); } catch { /* next run restores it */ }
+      throw renameError;
+    }
   }
   return { bytes: buffer.length, downloaded: true };
 }

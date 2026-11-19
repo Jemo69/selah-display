@@ -460,6 +460,13 @@ async function main() {
 
     const health = await httpRequest(base, token, 'GET', '/v1/health');
     if (health.status !== 'ok') throw new Error(`Engine health is ${health.status ?? 'missing'}, not ok.`);
+    const expectedBackend = engine === 'whisper' ? 'whispercpp' : 'osdevice';
+    if (health.backend !== expectedBackend) {
+      throw new Error(
+        `Asked for the ${engine} engine but health reports backend "${health.backend ?? 'missing'}" ` +
+        `(expected "${expectedBackend}"). Refusing to call canned or wrong-engine text a voice pass.`
+      );
+    }
     if (engine === 'whisper' && (health.binaryReady !== true || health.weightsReady !== true)) {
       throw new Error(
         `The engine is not ready (binaryReady=${health.binaryReady}, weightsReady=${health.weightsReady}). ` +
