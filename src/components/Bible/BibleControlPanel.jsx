@@ -70,6 +70,8 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
     getFormattedReference,
     getVerseText,
     bibleHistory = [],
+    bibleVerseLog = [],
+    clearBibleVerseLog,
     settings,
     ui = { libraryCollapsed: false, sidePanelCollapsed: false, historyCollapsed: true, selectionCollapsed: false, sidePanelWidth: 380 },
     setUIState
@@ -729,6 +731,49 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
                     ))}
                   </div>
                 )}
+              </section>
+            )}
+
+            {/* Verse Request Log — plain reference strings only (e.g. "Matthew 1:1") */}
+            {bibleVerseLog.length > 0 && (
+              <section className={`flex-shrink-0 overflow-hidden rounded-2xl border shadow-sm ${darkMode ? 'border-gray-700 bg-gray-900/60' : 'border-gray-200 bg-white'}`} data-testid="bible-verse-log">
+                <div className={`w-full flex items-center justify-between px-4 py-3 text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-gray-400 bg-gray-800/50' : 'text-gray-500 bg-gray-50'}`}>
+                  <div className="flex items-center gap-2">
+                    <BookOpen className="h-4 w-4" />
+                    Verse Log
+                  </div>
+                  <button
+                    onClick={() => clearBibleVerseLog?.()}
+                    className={`rounded px-2 py-1 text-[10px] font-bold uppercase tracking-wider transition-colors ${darkMode ? 'text-gray-500 hover:text-gray-200 hover:bg-gray-700' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-200'}`}
+                    title="Clear verse log"
+                  >
+                    Clear
+                  </button>
+                </div>
+                <div className={`max-h-40 overflow-y-auto p-2 grid grid-cols-1 gap-1 ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+                  {bibleVerseLog.map((loggedReference) => (
+                    <button
+                      key={loggedReference}
+                      onClick={() => {
+                        const baseBible = currentBible || (activeBibleId ? bibles[activeBibleId] : null) || Object.values(bibles)[0];
+                        if (baseBible) {
+                          const results = searchBibleExperimental(baseBible, loggedReference, bibles, 5, defaultBibleId, true);
+                          if (results.length > 0) {
+                            handleSearchResultClick(results[0]);
+                            setExpandedBooks(prev => ({ ...prev, [results[0].book]: true }));
+                            return;
+                          }
+                          setQuery(loggedReference);
+                          setSearchResults(searchBibleExperimental(baseBible, loggedReference, bibles, 20, defaultBibleId, Boolean(searchAll)));
+                        }
+                      }}
+                      className={`truncate rounded-lg border px-3 py-2 text-left text-sm font-medium transition-colors ${darkMode ? 'border-gray-700 text-gray-200 hover:bg-gray-700' : 'border-gray-100 text-gray-800 hover:bg-gray-50 hover:border-gray-200'}`}
+                      title={loggedReference}
+                    >
+                      {loggedReference}
+                    </button>
+                  ))}
+                </div>
               </section>
             )}
           </div>

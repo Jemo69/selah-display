@@ -151,7 +151,7 @@ const LyricDisplayApp = () => {
     // Live content indicator — what is actually loaded/displayed (song vs bible),
     // independent of which sidebar tab is open.
     const liveContentMode = useLyricsStore((s) => s.contentMode);
-    const { addBible, setActiveBible, activeBibleId, activeReference, selectedVerses, setReference, setSelectedVerses, getVerseText, getFormattedReference, bibles, addToBibleHistory, bibleMetadata, defaultBibleId } = useBibleStore();
+    const { addBible, setActiveBible, activeBibleId, activeReference, selectedVerses, setReference, setSelectedVerses, getVerseText, getFormattedReference, bibles, addToBibleHistory, logBibleVerseRequest, bibleMetadata, defaultBibleId } = useBibleStore();
 
     const bibleIds = useMemo(
         () => orderBibleMetadata(bibleMetadata, defaultBibleId).map((m) => m.id),
@@ -359,6 +359,7 @@ const LyricDisplayApp = () => {
         queueMicrotask(() => {
             if (selectedSlideIndex === 0) {
                 addToBibleHistory(verseData.reference, fullVerseText, structuredReference);
+                logBibleVerseRequest(verseData.reference);
             }
 
             if (isDesktopApp && !setlistFiles.some(f => f.displayName === verseData.reference)) {
@@ -376,7 +377,7 @@ const LyricDisplayApp = () => {
                 }]);
             }
         });
-    }, [setLyrics, setLyricsFileName, setBibleVersion, setRawLyricsContent, selectLine, emitLineUpdate, emitLyricsLoad, emitBibleVerseLoaded, emitFileNameUpdate, addToBibleHistory, isDesktopApp, setlistFiles, emitSetlistAdd, socket, autoTurnOnOutput, isOutputOn, setOutputState]);
+    }, [setLyrics, setLyricsFileName, setBibleVersion, setRawLyricsContent, selectLine, emitLineUpdate, emitLyricsLoad, emitBibleVerseLoaded, emitFileNameUpdate, addToBibleHistory, logBibleVerseRequest, isDesktopApp, setlistFiles, emitSetlistAdd, socket, autoTurnOnOutput, isOutputOn, setOutputState]);
 
     // Hiding the parallel translation mid-service must take effect on the
     // verse already on screen, not just the next one sent. Re-broadcast the

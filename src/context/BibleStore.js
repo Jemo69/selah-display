@@ -70,6 +70,9 @@ const useBibleStore = create(
       selectedVerses: [[1]],
       searchResults: [],
       bibleHistory: [],
+      // Verse request log: plain reference strings only (e.g. "Matthew 1:1").
+      // Nothing more — no verse text, no translation name, no metadata.
+      bibleVerseLog: [],
       searchIndex: null,
       settings: {
         referenceDivider: ':',
@@ -435,6 +438,18 @@ const useBibleStore = create(
 
       clearBibleHistory: () => set({ bibleHistory: [] }),
 
+      logBibleVerseRequest: (reference) => set((state) => {
+        const cleaned = typeof reference === 'string' ? reference.trim() : '';
+        if (!cleaned) return state;
+        // Skip consecutive duplicates (slide navigation re-sends verse 1).
+        if (state.bibleVerseLog[0] === cleaned) return state;
+        return {
+          bibleVerseLog: [cleaned, ...state.bibleVerseLog].slice(0, 100)
+        };
+      }),
+
+      clearBibleVerseLog: () => set({ bibleVerseLog: [] }),
+
       reset: () => set({
         activeReference: null,
         selectedVerses: [[1]],
@@ -449,6 +464,7 @@ const useBibleStore = create(
         linkedBibleId: state.linkedBibleId,
         parallelHidden: state.parallelHidden,
         bibleHistory: state.bibleHistory,
+        bibleVerseLog: state.bibleVerseLog,
         settings: state.settings,
         ui: state.ui
       }),
