@@ -90,6 +90,12 @@ export const HISTORY_SESSION_CAP = 500;
 /** At most this many excerpts per session in a search result. */
 export const SEARCH_EXCERPT_LIMIT = 5;
 
+/** Detection/action events kept per session for offline tuning (bounded). */
+export const EVENTS_PER_SESSION_CAP = 2000;
+
+/** Longest string field kept in one event (references/codes only, never text). */
+export const EVENT_STRING_LIMIT = 500;
+
 /** Characters of context on each side of a search hit inside an excerpt. */
 export const EXCERPT_RADIUS = 48;
 
@@ -154,6 +160,7 @@ export function summarizeSession(record, bytes = null) {
     where: typeof record.where === 'string' ? record.where : null,
     werEstimate: Number.isFinite(record.werEstimate) ? record.werEstimate : null,
     segmentCount: Array.isArray(record.segments) ? record.segments.length : 0,
+    eventCount: Array.isArray(record.events) ? record.events.length : 0,
     providers: providerIdsOf(record),
     bytes: Number.isFinite(bytes) ? bytes : null,
   };
@@ -190,6 +197,35 @@ export function normalizeSegment(raw, fallbackProviderId = null) {
   const noSpeechProb = clampNumber(raw.noSpeechProb, 0, 1);
   if (noSpeechProb !== null) segment.noSpeechProb = noSpeechProb;
   return segment;
+}
+
+/**
+ * Coerce ONE detection/action event into the stored shape.
+ *
+ * This is a deliberately small whitelist. Transcript text already lives in
+ * `segments`; an event carries only the facts needed to tune the detector:
+ * what fired, on which lane, how confident, what the operator did. Unknown
+ * fields and free text are dropped, not persisted.
+ */
+export function normalizeEvent(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const type = typeof raw.type === 'string' ? raw.type.trim().slice(0, 64) : '';
+  if (!type) return null;
+  const event = { type };
+  const atMs = clampNumber(raw.atMs, 0, Number.MAX_SAFE_INTEGER);
+  if (atMs !== null) event.atMs = Math.floor(atMs);
+  const startMs = clampNumber(raw.tStartMs, 0, Number.MAX_SAFE_INTEGER);
+  const endMs = clampNumber(raw.tEndMs, 0, Number.MAX_SAFE_INTEGER);
+  if (startMs !== null) event.tStartMs = Math.floor(startMs);
+  if (endMs !== null) event.tEndMs = Math.floor(endMs);
+  const confidence = clampNumber(raw.confidence, 0, 1);
+  if (confidence !== null) event.confidence = confidence;
+  for (const key of ['lane', 'action', 'reference', 'detector', 'code', 'modelId', 'providerId']) {
+    if (typeof raw[key] === 'string' && raw[key].trim()) {
+      event[key] = raw[key].trim().slice(0, EVENT_STRING_LIMIT);
+    }
+  }
+  return event;
 }
 
 /** An excerpt around the first `query` hit, with ellipses when clipped. */
@@ -325,7 +361,17 @@ export function renderTextExport(records, exportedAt = new Date().toISOString())
     lines.push(`Provider: ${summary.providerId ?? 'unknown'} (where: ${summary.where ?? 'unknown'})`);
     lines.push('WER: not benchmarked');
     lines.push(`Segments: ${summary.segmentCount}`);
+    lines.push(`Events: ${summary.eventCount}`);
     lines.push('');
+    for (const event of record.events ?? []) {
+      lines.push(
+        `[event${event.atMs != null ? ` ${formatClock(event.atMs)}` : ''}] ${event.type}` +
+        `${event.lane ? ` lane=${event.lane}` : ''}` +
+        `${event.reference ? ` ref=${event.reference}` : ''}` +
+        `${event.action ? ` action=${event.action}` : ''}` +
+        `${event.confidence != null ? ` conf=${event.confidence}` : ''}`
+      );
+    }
     for (const segment of record.segments ?? []) {
       lines.push(
         `[${formatClock(segment.tStartMs)}] (${segment.providerId ?? 'unknown'}) ${segment.text}`
@@ -560,6 +606,8 @@ export function createSpeechHistoryStore({
       // Designed in from day one so Phase 3 fills it instead of migrating.
       werEstimate: null,
       segments: [],
+      // Detection/action events for offline tuning; bounded, local only.
+      events: [],
     };
     const write = await writeSessionRecord(record);
     if (!write.ok) return write;
@@ -599,6 +647,30 @@ export function createSpeechHistoryStore({
       return write;
     }
     return { ok: true, stored: true, segmentCount: record.segments.length, bytes: write.bytes };
+  }
+
+  /**
+   * Append ONE detection/action event for offline tuning. Bounded per
+   * session; once the cap is reached the oldest event rotates out. This is a
+   * metadata path only — no transcript or audio is accepted here.
+   */
+  async function appendEvent(sessionId, rawEvent) {
+    if (typeof sessionId !== 'string' || !sessionId.trim()) {
+      return { ok: false, code: 'invalid-argument', field: 'sessionId' };
+    }
+    const record = await readRecord(sessionId).catch(() => null);
+    if (!record) return { ok: false, code: 'session-not-found', sessionId };
+    const event = normalizeEvent(rawEvent);
+    if (!event) return { ok: false, code: 'invalid-event', field: 'event' };
+    record.events = Array.isArray(record.events) ? record.events : [];
+    record.events.push(event);
+    while (record.events.length > EVENTS_PER_SESSION_CAP) record.events.shift();
+    const write = await writeSessionRecord(record);
+    if (!write.ok) {
+      record.events.pop();
+      return write;
+    }
+    return { ok: true, stored: true, eventCount: record.events.length, bytes: write.bytes };
   }
 
   /**
@@ -772,6 +844,7 @@ export function createSpeechHistoryStore({
     historyDir,
     beginSession,
     appendSegment,
+    appendEvent,
     endSession,
     listSessions,
     getSession,

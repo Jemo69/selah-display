@@ -21,6 +21,7 @@ import ProviderPicker from './ProviderPicker';
 import InstallEngineWizard from './InstallEngineWizard';
 import ModelCatalogList from './ModelCatalogList';
 import ModelBenchmarkPanel from './ModelBenchmarkPanel';
+import SpeechTuningDataCard from './SpeechTuningDataCard';
 import SermonAssistSafetyPanel from './SermonAssistSafetyPanel';
 import AudioSourcePicker from './AudioSourcePicker';
 
@@ -479,6 +480,7 @@ const SpeechSettingsSection = ({ darkMode = false }) => {
                 Deliberately AFTER the list — the catalog says what exists, this
                 says which one this computer can actually keep up with. */}
             <ModelBenchmarkPanel darkMode={darkMode} />
+            <SpeechTuningDataCard darkMode={darkMode} cardClass="rounded-xl border p-5 space-y-4 mt-4" titleClass="text-[11px] font-bold uppercase tracking-wider" />
           </div>
 
           {/* ---------------------------------------------------------- (d2)
