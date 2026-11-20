@@ -34,6 +34,7 @@ import useModal from '../hooks/useModal';
 import { Tooltip } from '@/components/ui/tooltip';
 import { hasValidTimestamps } from '../utils/timestampHelpers';
 import { splitBibleTextIntoSlides, resolveBibleGeometry } from '../utils/bibleSplitter';
+import { shouldLogBibleVerseRequest } from '../utils/bibleVerseLog.js';
 import { sanitizeParallelPayload } from '../utils/bibleParallel.js';
 import { slugifyOutputName, isReservedOutputSlug } from '../utils/outputs';
 import { runAllOutputActions } from '../utils/outputAutomation';
@@ -313,6 +314,10 @@ const LyricDisplayApp = () => {
 
         // Atomic bible switch — one store action, no transient Song. Only valid commands.
         const store = useLyricsStore.getState();
+        // Capture what is currently displayed before this send replaces it:
+        // a later-slide send of the same verse is slide navigation, while a
+        // later-slide send of another verse is a new request worth logging.
+        const previousReference = store.lyricsFileName;
         if (store.loadBibleVerse) {
           store.loadBibleVerse({
             reference: verseData.reference,
@@ -357,7 +362,7 @@ const LyricDisplayApp = () => {
         } catch { /* ignore */ }
 
         queueMicrotask(() => {
-            if (selectedSlideIndex === 0) {
+            if (shouldLogBibleVerseRequest({ slideIndex: selectedSlideIndex, reference: verseData.reference, previousReference })) {
                 addToBibleHistory(verseData.reference, fullVerseText, structuredReference);
                 logBibleVerseRequest(verseData.reference);
             }

@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   setParallelHidden: vi.fn(),
   setUIState: vi.fn(),
   showToast: vi.fn(),
+  bibleVerseLog: [],
+  clearBibleVerseLog: vi.fn(),
   // Both stores are built inside vi.hoisted: the vi.mock factories run before
   // module-level declarations, so these cannot live at the top level.
   bibleStoreState: null,
@@ -55,6 +57,8 @@ mocks.bibleStoreState = () => ({
   activeReference: null,
   selectedVerses: [[1]],
   bibleHistory: [],
+  bibleVerseLog: mocks.bibleVerseLog,
+  clearBibleVerseLog: mocks.clearBibleVerseLog,
   settings: {},
   ui: mocks.ui,
   setActiveBible: vi.fn(),
@@ -126,6 +130,7 @@ describe('BibleControlPanel parallel display placement', () => {
     mocks.linkedBibleId = null;
     mocks.parallelHidden = false;
     mocks.ui = { parallelControlCollapsed: false };
+    mocks.bibleVerseLog = [];
     // jsdom has no Worker; the search worker is irrelevant to placement.
     globalThis.Worker = class {
       postMessage() {}
@@ -182,5 +187,45 @@ describe('BibleControlPanel parallel display placement', () => {
     expect(screen.getByTestId('bible-live-tray')).toBeTruthy();
     expect(screen.getByTestId('parallel-bible-link')).toBeTruthy();
     expect(screen.queryByTestId('parallel-bible-link-body')).toBeNull();
+  });
+});
+
+describe('BibleControlPanel verse request log', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.bibleVerseLog = [];
+    globalThis.Worker = class {
+      postMessage() {}
+      terminate() {}
+    };
+  });
+
+  afterEach(() => {
+    delete globalThis.Worker;
+  });
+
+  it('lists just the requested references — nothing more', () => {
+    mocks.bibleVerseLog = ['Matthew 1:1', 'John 3:16'];
+    render(<BibleControlPanel darkMode={false} />);
+
+    const section = screen.getByTestId('bible-verse-log');
+    expect(section).toBeTruthy();
+    expect(section.textContent).toContain('Matthew 1:1');
+    expect(section.textContent).toContain('John 3:16');
+  });
+
+  it('clears the log from the Clear button', () => {
+    mocks.bibleVerseLog = ['Matthew 1:1'];
+    render(<BibleControlPanel darkMode={false} />);
+
+    fireEvent.click(screen.getByTitle('Clear verse log'));
+    expect(mocks.clearBibleVerseLog).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides the section when nothing was requested yet', () => {
+    mocks.bibleVerseLog = [];
+    render(<BibleControlPanel darkMode={false} />);
+
+    expect(screen.queryByTestId('bible-verse-log')).toBeNull();
   });
 });

@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import { createLogger } from '../utils/logger.js';
 import { diagInfo, diagTime } from '../utils/diagnosticsLog.js';
 import { bibleDb } from '../utils/db.js';
+import { normalizeVerseLogReference } from '../utils/bibleVerseLog.js';
 import { getBibleVerseText } from 'shared/bible';
 import {
   resolveVersificationOffset,
@@ -439,11 +440,11 @@ const useBibleStore = create(
       clearBibleHistory: () => set({ bibleHistory: [] }),
 
       logBibleVerseRequest: (reference) => set((state) => {
-        const cleaned = typeof reference === 'string' ? reference.trim() : '';
+        // Repeats are kept on purpose: each entry is one send. The caller
+        // (LyricDisplayApp via shouldLogBibleVerseRequest) already filters
+        // out same-reference slide navigation.
+        const cleaned = normalizeVerseLogReference(reference);
         if (!cleaned) return state;
-        // Every request is logged, including repeats: slide navigation
-        // never reaches here (LyricDisplayApp only logs the first slide),
-        // so each entry is a genuine new send.
         return {
           bibleVerseLog: [cleaned, ...state.bibleVerseLog].slice(0, 100)
         };
