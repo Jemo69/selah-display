@@ -36,6 +36,7 @@ import crypto from 'node:crypto';
 import {
   SPEECH_PROTOCOL_VERSION,
   ALLOWED_ORIGINS,
+  isAllowedOrigin,
   TOKEN_HEADER,
   ENGINE_ROUTES,
   ENGINE_HTTP_METHODS,
@@ -240,7 +241,7 @@ export function createSpeechEngineServer(options = {}) {
 
   async function handle(req, res) {
     const origin = req.headers.origin;
-    const originAllowed = origin === undefined || allowedOrigins.includes(origin);
+    const originAllowed = isAllowedOrigin(origin, allowedOrigins);
 
     // 1. Origin gate — before anything else, and including preflight.
     if (!originAllowed) {

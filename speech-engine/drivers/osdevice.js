@@ -55,6 +55,20 @@ export const OSDEVICE_MODEL = 'os-device';
 const RECOGNIZE_TIMEOUT_MS = 60_000;
 
 /**
+ * Below this recognizer confidence, no transcript is emitted at all.
+ *
+ * System.Speech's confidence is a real signal, not decoration. On the same
+ * real-mic clip that whisper transcribed faithfully, the OS recognizer
+ * returned three fragments at 0.02-0.03 confidence, one of which the verse
+ * detector then turned into Obadiah 1:5. A wrong reference on the rail is
+ * worse than no reference, so the driver drops low-confidence output before
+ * it can reach the detector. The synthetic validation clip scores ~0.46.
+ * When the script joins several utterances it reports the MINIMUM confidence,
+ * so one low-confidence fragment cannot hide behind a confident neighbor.
+ */
+export const OSDEVICE_MIN_CONFIDENCE = 0.25;
+
+/**
  * Which OS backend (if any) can transcribe on this platform.
  *
  * win32 only, on purpose: System.Speech ships in-box with desktop Windows
@@ -137,12 +151,14 @@ export const PROBE_ARGS = Object.freeze([
  * Build the per-segment PowerShell recognition script.
  *
  * Linear on purpose: load assembly, pick recognizer (requested culture or
- * default), dictation grammar, file input, blocking Recognize, one
- * single-line JSON object on stdout. A recognition with no result prints
- * nothing and exits 0 — the driver reports that as a no-transcript error,
- * exactly like the whisper driver's empty-stdout path. Anything the try
- * block throws prints `ERROR:<message>` on stderr and exits 2; a missing
- * recognizer prints `ERROR:no recognizer` and exits 3.
+ * default), dictation grammar, file input, then Recognize in a loop until
+ * EOF so a chunk with more than one utterance is not truncated to its first
+ * phrase. The loop writes one single-line JSON object with the joined text
+ * and minimum confidence. A recognition with no result prints nothing and
+ * exits 0 — the driver reports that as a no-transcript error, exactly like
+ * the whisper driver's empty-stdout path. Anything the try block throws
+ * prints `ERROR:<message>` on stderr and exits 2; a missing recognizer prints
+ * `ERROR:no recognizer` and exits 3.
  *
  * NOTE on `New-Object ... -ArgumentList $culture`: the parenthesised form
  * `New-Object Type($arg)` is parsed as a COMMAND invocation, so it throws
@@ -159,7 +175,7 @@ export function recognizeScript({ wavPath, language = 'auto' } = {}) {
       `catch { $rec = New-Object System.Speech.Recognition.SpeechRecognitionEngine };`
     : `$rec = New-Object System.Speech.Recognition.SpeechRecognitionEngine;`;
   return [
-    `try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; } catch { },`,
+    `try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; } catch { };`,
     `$ErrorActionPreference = 'Stop';`,
     `Add-Type -AssemblyName System.Speech;`,
     `try {`,
@@ -167,10 +183,20 @@ export function recognizeScript({ wavPath, language = 'auto' } = {}) {
     `if ($null -eq $rec) { [Console]::Error.WriteLine('ERROR:no recognizer'); exit 3 }`,
     `$rec.LoadGrammar((New-Object System.Speech.Recognition.DictationGrammar));`,
     `$rec.SetInputToWaveFile('${String(wavPath).replace(/'/g, "''")}');`,
-    `$res = $rec.Recognize();`,
+    `$texts = @();`,
+    `$confs = @();`,
+    `while ($true) {`,
+    `try { $res = $rec.Recognize() } catch {`,
+    `if ($_.Exception.Message -notmatch 'No audio input') { [Console]::Error.WriteLine(\"ERROR:$($_.Exception.Message)\"); exit 2 }`,
+    `break`,
+    `}`,
+    `if ($null -eq $res) { break }`,
+    `if ($res.Text) { $texts += $res.Text; $confs += $res.Confidence }`,
+    `}`,
     `$rec.Dispose();`,
-    `if ($null -eq $res) { exit 0 }`,
-    `$out = @{ text = $res.Text; confidence = [Math]::Round($res.Confidence, 3) };`,
+    `if ($texts.Count -eq 0) { exit 0 }`,
+    `$min = [Math]::Round(($confs | Measure-Object -Minimum).Minimum, 3);`,
+    `$out = @{ text = ($texts -join ' '); confidence = $min };`,
     `Write-Output ($out | ConvertTo-Json -Compress);`,
     `} catch {`,
     `[Console]::Error.WriteLine("ERROR:$($_.Exception.Message)");`,
@@ -459,6 +485,27 @@ export function createOsDeviceEngine({
                   sessionId,
                   code: 'no-transcript',
                   message: 'The OS speech engine decoded this segment but produced no transcript.',
+                  fatal: false,
+                },
+              ],
+            };
+          }
+
+          if (recognition.confidence < OSDEVICE_MIN_CONFIDENCE) {
+            if (sessions.has(sessionId)) {
+              elapsed.set(sessionId, offsetMs + audioDurationMs);
+            }
+            return {
+              sessionId,
+              messages: [
+                ...created,
+                {
+                  t: 'error',
+                  sessionId,
+                  code: 'low-confidence',
+                  message:
+                    'The OS recognizer was not confident enough to offer a transcript. ' +
+                    'Use whisper.cpp for this audio, or speak closer to the microphone.',
                   fatal: false,
                 },
               ],

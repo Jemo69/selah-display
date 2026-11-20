@@ -84,9 +84,9 @@ jobs:
           # retired, and a job requesting a retired label does not fail — it
           # sits in `queued` forever with no runner assigned, which reads as a
           # busy queue rather than a config error. Only the x64 leg needs the
-          # Intel image; macos-14/15 are arm64.
+          # Intel image; macos-15 (without the suffix) is arm64.
           - { os: macos-15-intel, target: mac-x64 }
-          - { os: macos-14, target: mac-arm64 }
+          - { os: macos-15, target: mac-arm64 }
           - { os: ubuntu-latest, target: linux-x64 }
     steps:
       - name: Checkout code

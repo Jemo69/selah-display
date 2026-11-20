@@ -1,0 +1,53 @@
+{
+  "id": "smoke-esv-excerpt",
+  "name": "Smoke ESV excerpt",
+  "books": [
+    {
+      "number": 43,
+      "name": "John",
+      "chapters": [
+        {
+          "number": 3,
+          "verses": [
+            {
+              "number": 16,
+              "text": "For God so loved the world, that he gave his only Son, that whoever believes in him should not perish but have eternal life."
+            }
+          ]
+        },
+        {
+          "number": 10,
+          "verses": [
+            {
+              "number": 8,
+              "text": "All who came before me are thieves and robbers, but the sheep did not listen to them."
+            },
+            {
+              "number": 9,
+              "text": "I am the door. If anyone enters by me, he will be saved and will go in and out and find pasture."
+            },
+            {
+              "number": 10,
+              "text": "The thief comes only to steal and kill and destroy. I came that they may have life and have it abundantly."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "number": 19,
+      "name": "Psalm",
+      "chapters": [
+        {
+          "number": 23,
+          "verses": [
+            {
+              "number": 1,
+              "text": "The LORD is my shepherd; I shall not want."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

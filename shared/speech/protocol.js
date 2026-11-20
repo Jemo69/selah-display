@@ -485,8 +485,36 @@ export const TOKEN_HEADER = 'x-ld-speech-token';
 /** Origins the engine accepts browser requests from (dev servers). */
 export const ALLOWED_ORIGINS = Object.freeze([
   'http://127.0.0.1:4000',
+  'http://localhost:4000',
+  'http://127.0.0.1:5174',
   'http://localhost:5174'
 ]);
+
+/**
+ * Is this browser Origin allowed to speak to the engine?
+ *
+ * The exact list above is the fast path. The packaged app serves its renderer
+ * from the loopback backend on a configurable PORT (default 4000), and a
+ * side-by-side/dogfood boot uses another port. Pinning only 4000 made the WS
+ * upgrade 403 in the packaged app, so the rail could listen forever with no
+ * transcript. Any http(s) origin on a loopback hostname is therefore allowed:
+ * the launch token is still required on every request, and a LAN origin never
+ * reaches the token check.
+ *
+ * @param {string|undefined} origin
+ * @param {readonly string[]} [allowedOrigins]
+ * @returns {boolean}
+ */
+export function isAllowedOrigin(origin, allowedOrigins = ALLOWED_ORIGINS) {
+  if (origin === undefined) return true; // non-browser client: token still gates
+  if (allowedOrigins.includes(origin)) return true;
+  try {
+    const parsed = new URL(origin);
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && isLoopbackHost(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * 32 random bytes as 64 lowercase hex characters.

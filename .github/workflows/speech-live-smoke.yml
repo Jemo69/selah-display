@@ -1,0 +1,122 @@
+name: Speech Live Smoke
+
+# The conformance suites prove the engine CONTRACT with fake shells and canned
+# messages. This workflow proves the other half: real spoken audio through the
+# real recognizer, on every change that can affect it.
+#
+# COST. No hosted API, no key, no per-run model download. The first run downloads
+# a pinned whisper.cpp binary (10 MiB), Tiny English Q5_1 (31 MiB), and the
+# public-domain KJV (4.1 MiB), then unpacks them into the gitignored
+# .speech-smoke/ folder (~66 MiB on disk). actions/cache restores that folder
+# on later runs. The committed clip is 196 KB, and inference plus a full-KJV
+# verse scan takes a few seconds on a CPU. There is no GPU and no cloud
+# dependency.
+#
+# WHY THIS IS A SEPARATE WORKFLOW. It should be visible as its own check, not
+# buried inside a platform build, and a cache/download failure should fail one
+# clearly named job rather than every installer. It also keeps the engine's
+# plugin workflow (build-speech-engine.yml) independent of the app build.
+
+on:
+  pull_request:
+    paths:
+      - 'speech-engine/**'
+      - 'shared/speech/**'
+      - 'shared/wer.js'
+      - 'main/speechArchive.js'
+      - 'main/speech*.js'
+      - '.github/workflows/speech-live-smoke.yml'
+  push:
+    branches:
+      - master
+    paths:
+      - 'speech-engine/**'
+      - 'shared/speech/**'
+      - 'shared/wer.js'
+      - 'main/speechArchive.js'
+      - 'main/speech*.js'
+      - '.github/workflows/speech-live-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: speech-live-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live-whisper-smoke:
+    name: Real voice → John 10:10 (Linux whisper)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The cache key includes the pinned release, the model catalog (which
+      # carries the model digest), and the installer (which carries the binary
+      # digest). Bumping any of them invalidates the cache deliberately.
+      - name: Restore the light engine
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: .speech-smoke
+          key: speech-smoke-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('speech-engine/scripts/prepare-smoke.mjs', 'main/speechEngineInstaller.js', 'shared/speech/models.catalog.json') }}
+
+      # Idempotent: on a cache hit it hashes the existing model, binary, and
+      # Bible and returns without network I/O. On a miss it downloads, verifies
+      # all three SHA-256 digests, and unpacks the pinned payload.
+      - name: Fetch the pinned engine, light model, and KJV
+        run: node speech-engine/scripts/prepare-smoke.mjs
+
+      # Forks the real index.js, sends the committed 6.3 s John 10:10 clip over
+      # the real HTTP contract, then runs rankVerses + detectVerse over the
+      # full KJV. Fails unless the transcript is within the WER budget AND the
+      # detected reference is exactly John 10:10.
+      - name: Transcribe the clip and detect John 10:10
+        run: node speech-engine/scripts/smoke.mjs
+
+      # A cache that silently stopped being populated is a slow leak in CI
+      # minutes, not a correctness bug. Make it visible without failing a PR.
+      - name: Report cache status
+        if: always()
+        run: |
+          echo "cache-hit=${{ steps.cache.outputs.cache-hit || 'false' }}"
+          du -sh .speech-smoke 2>/dev/null || true
+
+  # The OS on-device provider needs no model and no binary. This job downloads
+  # only the pinned 4.1 MiB KJV (cached) so its verse detection searches the
+  # same 31,102 verses as the Linux leg. It is the one CI path that exercises
+  # the Windows System.Speech backend with real audio. GitHub's windows-2022
+  # image ships desktop Windows with System.Speech; if a future image drops
+  # the recognizer, this job fails loudly instead of skipping the feature.
+  live-osdevice-smoke:
+    name: Real voice → John 10:10 (Windows OS on-device)
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Restore the KJV
+        uses: actions/cache@v4
+        with:
+          path: .speech-smoke/bibles
+          key: speech-bible-${{ runner.os }}-${{ hashFiles('speech-engine/scripts/prepare-smoke.mjs') }}
+
+      - name: Fetch the pinned KJV
+        run: node speech-engine/scripts/prepare-smoke.mjs --bible-only
+
+      - name: Transcribe the clip and detect John 10:10
+        run: node speech-engine/scripts/smoke.mjs --engine=osdevice --language=en

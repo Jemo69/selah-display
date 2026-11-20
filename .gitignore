@@ -88,6 +88,8 @@ backend/*.json
 # and any weight file anywhere in the repo, must never enter git history.)
 speech-engine/bin/
 speech-engine/models/
+# Light external model + binary fetched by speech-engine/scripts/prepare-smoke.mjs
+.speech-smoke/
 *.bin
 *.onnx
 *.gguf

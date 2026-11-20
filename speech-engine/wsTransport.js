@@ -61,6 +61,7 @@
 import crypto from 'node:crypto';
 import {
   ALLOWED_ORIGINS,
+  isAllowedOrigin,
   FRAME_MS,
   SILENCE_FINALIZE_MS,
   HARD_SEGMENT_CAP_MS,
@@ -255,7 +256,7 @@ export function attachWebSocketTransport(server, options = {}) {
 
     // 2. Origin gate — an Origin that is not ours never reaches the token check.
     const origin = req.headers.origin;
-    if (origin !== undefined && !allowedOrigins.includes(origin)) {
+    if (!isAllowedOrigin(origin, allowedOrigins)) {
       rejectUpgrade(socket, 403, 'origin-not-allowed');
       return;
     }
