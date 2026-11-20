@@ -8,6 +8,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { resetBenchmarkClipCache } from '@/speech/benchmarkClip.js';
 import ModelBenchmarkPanel from '@/components/Speech/ModelBenchmarkPanel';
 import useSpeechStore, { speechDefaults } from '@/context/SpeechStore';
 
@@ -49,6 +52,8 @@ const UNMEASURED = {
   lastThirdRtf: null,
 };
 
+const WAV = readFileSync(path.join(process.cwd(), 'speech-engine/test/fixtures/voice-smoke-16k.wav'));
+
 const resetStore = () => {
   useSpeechStore.setState({
     ...speechDefaults(),
@@ -69,12 +74,19 @@ function installBridge(benchmark) {
 describe('ModelBenchmarkPanel', () => {
   beforeEach(() => {
     localStorage.clear();
+    resetBenchmarkClipCache();
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      arrayBuffer: async () => WAV.buffer.slice(WAV.byteOffset, WAV.byteOffset + WAV.byteLength),
+    })));
     resetStore();
     window.electronAPI = undefined;
   });
 
   afterEach(() => {
     delete window.electronAPI;
+    resetBenchmarkClipCache();
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -103,7 +115,7 @@ describe('ModelBenchmarkPanel', () => {
     await waitFor(() => {
       expect(screen.getByTestId('benchmark-unmeasured-large-v3')).toBeInTheDocument();
     });
-    expect(benchmark).toHaveBeenCalledWith({ modelId: 'large-v3' });
+    expect(benchmark).toHaveBeenCalledWith(expect.objectContaining({ modelId: 'large-v3', clip: expect.any(Object) }));
 
     // The reason is shown verbatim, so the operator knows WHAT is wrong.
     expect(screen.getByTestId('benchmark-unmeasured-large-v3')).toHaveTextContent(

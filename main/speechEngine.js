@@ -1344,6 +1344,7 @@ export async function startSpeechEngine(options = {}) {
           ...(resolvedBinDir ? { LD_SPEECH_BIN_DIR: resolvedBinDir } : {}),
           ...(resolvedModelsDir ? { LD_SPEECH_MODELS_DIR: resolvedModelsDir } : {}),
           ...(modelId ? { LD_SPEECH_MODEL: modelId } : {}),
+          ...(process.env.LD_SPEECH_DRIVER ? { LD_SPEECH_DRIVER: process.env.LD_SPEECH_DRIVER } : {}),
         },
         stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
       });

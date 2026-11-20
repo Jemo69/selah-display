@@ -42,7 +42,7 @@ import { werDetail } from '../shared/wer.js';
  * eliminate — and a provider that fails to report its capabilities gets the
  * conservative behaviour for the same reason (D11).
  */
-export const TRUSTED_ENGINE_KINDS = Object.freeze(['whispercpp', 'whisper.cpp', 'sherpaonnx', 'vosk', 'faster-whisper']);
+export const TRUSTED_ENGINE_KINDS = Object.freeze(['whispercpp', 'whispercpp-server', 'whisper.cpp', 'sherpaonnx', 'vosk', 'faster-whisper']);
 
 /**
  * Read an engine's declared kind, tolerating the field being absent entirely.

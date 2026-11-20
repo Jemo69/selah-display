@@ -285,6 +285,47 @@ describe('POST /v1/benchmark', () => {
     assert.equal(result.json.wer, 0);
   });
 
+  test('refuses to label the loaded model with a different model id', async () => {
+    const engine = realEngine({ model: 'tiny.en' });
+    const { port } = await startServer(engine);
+    const result = await post(port, '/v1/benchmark', { modelId: 'large-v3', clip: CLIP });
+    assert.equal(result.status, 200);
+    assert.equal(result.json.measured, false);
+    assert.match(result.json.reason, /select large-v3 before benchmarking/i);
+    assert.equal(result.json.wer, null);
+  });
+
+  test('adapts the session/frames driver and a JSON Buffer clip', async () => {
+    let sessions = 0;
+    const engine = {
+      kind: 'whispercpp',
+      backend: 'whispercpp',
+      createSession() {
+        sessions += 1;
+        return { session: { sessionId: 's' }, messages: [] };
+      },
+      closeSession() {},
+      async transcribe({ frames }) {
+        assert.ok(Array.isArray(frames) && frames.length > 0, 'frames reached the driver');
+        return { messages: [{ t: 'final', text: 'the lord is my shepherd' }] };
+      },
+    };
+    const { port } = await startServer(engine);
+    const result = await post(port, '/v1/benchmark', {
+      modelId: 'm',
+      clip: {
+        pcm: { type: 'Buffer', data: [...CLIP.pcm] },
+        transcript: CLIP.transcript,
+        sampleRate: 16000,
+      },
+    });
+    assert.equal(result.status, 200);
+    assert.equal(result.json.measured, true);
+    assert.equal(result.json.wer, 0);
+    assert.equal(typeof result.json.rtf, 'number');
+    assert.equal(sessions, 1, 'one session per benchmark, closed after');
+  });
+
   test('requires the launch token', async () => {
     const { port } = await startServer(realEngine());
     const payload = JSON.stringify({ modelId: 'm', clip: CLIP });

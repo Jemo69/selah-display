@@ -165,6 +165,63 @@ function readJsonBody(req) {
   });
 }
 
+/** JSON transports carry Buffers as {type:'Buffer',data:[...]}; accept both. */
+function pcmBuffer(value) {
+  if (Buffer.isBuffer(value)) return value;
+  if (value && value.type === 'Buffer' && Array.isArray(value.data)) return Buffer.from(value.data);
+  if (Array.isArray(value)) return Buffer.from(value);
+  if (typeof value === 'string' && value.length > 0) {
+    try { return Buffer.from(value, 'base64'); } catch { return Buffer.alloc(0); }
+  }
+  return Buffer.alloc(0);
+}
+
+/** Return benchmark-shaped PCM as contract frames (3200 bytes each). */
+function pcmFrames(pcm, frameBytes = 3200) {
+  const frames = [];
+  for (let offset = 0; offset < pcm.length; offset += frameBytes) {
+    const slice = pcm.subarray(offset, offset + frameBytes);
+    frames.push(slice.length === frameBytes ? slice : Buffer.concat([slice, Buffer.alloc(frameBytes - slice.length)]));
+  }
+  return frames;
+}
+
+/**
+ * The benchmark harness calls `transcribe({ pcm })` and expects `{ text }`.
+ * The real drivers speak the session/frames contract, so adapt here rather
+ * than adding a second shape to every driver. Without this, the first real
+ * benchmark reported `measured:true, wer:1` because no text was ever read.
+ */
+function benchmarkEngineAdapter(engine) {
+  if (!engine || typeof engine.transcribe !== 'function' || typeof engine.createSession !== 'function') {
+    return engine;
+  }
+  return {
+    kind: engine.kind,
+    backend: engine.backend,
+    ...(typeof engine.loadModel === 'function' ? { loadModel: engine.loadModel.bind(engine) } : {}),
+    async transcribe({ pcm } = {}) {
+      const frames = pcmFrames(pcmBuffer(pcm));
+      if (frames.length === 0) return { text: '' };
+      const opened = engine.createSession({});
+      try {
+        const result = await engine.transcribe({
+          sessionId: opened.session.sessionId,
+          frames,
+        });
+        const text = (result?.messages || [])
+          .filter((message) => message?.t === 'final')
+          .map((message) => message.text)
+          .join(' ')
+          .trim();
+        return { text, backend: engine.backend };
+      } finally {
+        try { engine.closeSession(opened.session.sessionId); } catch { /* best effort */ }
+      }
+    },
+  };
+}
+
 /**
  * Create the engine HTTP server.
  *
@@ -360,6 +417,37 @@ export function createSpeechEngineServer(options = {}) {
       requireMethod(req, res, ENGINE_HTTP_METHODS.benchmark, cors);
       if (res.writableEnded) return;
       const body = await readJsonBody(req);
+      // A JSON Buffer arrives as {type:'Buffer',data:[...]}; normalize once so
+      // both audioDurationMsOf() and the adapter see a real Buffer.
+      const benchmarkClip = body?.clip && typeof body.clip === 'object'
+        ? { ...body.clip, pcm: pcmBuffer(body.clip.pcm) }
+        : (body?.clip ?? null);
+      // A benchmark measures the model the engine has LOADED. The drivers do
+      // not hot-swap weights, so benchmarking "large-v3" while tiny is running
+      // would label tiny's numbers as large-v3 — the exact fabrication this
+      // harness exists to prevent. Refuse with a sentence the panel can show.
+      const activeModel = activeEngine?.model ?? null;
+      const canned = /fake|canned/i.test(String(activeEngine?.kind ?? ''));
+      if (!canned && body?.modelId && activeModel && body.modelId !== activeModel) {
+        sendJson(res, 200, {
+          ok: true,
+          measured: false,
+          modelId: body.modelId,
+          engineKind: activeEngine?.kind ?? null,
+          reason: `The engine is running ${activeModel}. Select ${body.modelId} before benchmarking it.`,
+          wer: null,
+          rtf: null,
+          firstPartialMs: null,
+          backend: null,
+          loadTimeMs: null,
+          gpuUtilMean: null,
+          gpuUtilPeak: null,
+          peakRssBytes: null,
+          firstThirdRtf: null,
+          lastThirdRtf: null,
+        }, cors);
+        return;
+      }
       // Phase 3: a real harness run, not a stub. `clip` carries the audio AND
       // its hand-verified transcript; a missing transcript is refused rather
       // than guessed, because scoring against an invented reference would
@@ -367,9 +455,9 @@ export function createSpeechEngineServer(options = {}) {
       let outcome;
       try {
         outcome = await runBenchmark({
-          engine: activeEngine,
+          engine: benchmarkEngineAdapter(activeEngine),
           modelId: body?.modelId,
-          clip: body?.clip ?? null,
+          clip: benchmarkClip,
           onProgress: (progress) => {
             // Progress rides the message bus, so a subscriber on any transport
             // (WebSocket, or the parent-process mirror) sees the stages.
