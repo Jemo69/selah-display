@@ -75,7 +75,7 @@ right words on this machine?" — that needs real audio through the real engine.
 - it forks the real `index.js`, creates a real session, sends 63 PCM frames
   over the real HTTP contract, and compares the returned final transcript to
   the spoken sentence using `shared/wer.js`
-- it then runs the app's **real verse detector** (`rankVerses` + `detectVerse`)
+- it then runs the app's **real verse detector** (`createVerseSearcher`'s indexed search + `detectVerse`)
   over the full 31,102-verse KJV and asserts the transcript resolves to
   **John 10:10** — text is not enough; the reference must come out
 - it exits nonzero when the engine is missing, returns an error, returns no

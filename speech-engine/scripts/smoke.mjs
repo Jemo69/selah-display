@@ -91,7 +91,7 @@ const TRANSCRIBE_TIMEOUT_MS = 90_000;
 const DEFAULT_MAX_WER = 0.25;
 
 // The verse detector lives in src/speech and uses the app's Vite `shared/`
-// alias. Register the tiny resolver before the dynamic import below, so plain
+// alias. Register the tiny resolver before the dynamic imports below, so plain
 // `node smoke.mjs` can call the real detector with no flags.
 const { resolveAlias } = await import('./alias-hooks.mjs');
 if (typeof nodeModule.registerHooks === 'function') {
@@ -99,6 +99,11 @@ if (typeof nodeModule.registerHooks === 'function') {
 } else {
   nodeModule.register(new URL('./alias-hooks.mjs', import.meta.url));
 }
+
+// One searcher for the whole run, created outside detection so its index is
+// built once and reused — the same lifecycle the app's verse-search worker has.
+const { createVerseSearcher } = await import('../../src/speech/verseSearchEngine.js');
+const searcher = createVerseSearcher();
 
 /**
  * Parse `--key=value`, `--key value`, and bare `--flag` arguments.
@@ -586,9 +591,8 @@ async function main() {
     // verse. Printing both tells the operator which half failed.
     let detected = null;
     if (detectReference) {
-      const { rankVerses } = await import('../../src/speech/verseCorpus.js');
       const { detectVerse } = await import('../../src/speech/detectVerse.js');
-      const searchResults = rankVerses(transcript, bible);
+      const searchResults = searcher.search(bible, transcript, { currentReference: null }) || [];
       detected = detectVerse(transcript, { searchResults });
       if (!detected) {
         throw new Error(
