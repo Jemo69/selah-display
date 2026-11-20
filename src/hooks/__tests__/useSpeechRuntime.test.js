@@ -141,6 +141,22 @@ describe('deriveSuggestions', () => {
     expect(out.note.content).toContain('the Lord is my shepherd');
   });
 
+  it('lane 2: a reference in the recent tail survives the next sentence', () => {
+    const out = deriveSuggestions({
+      segments: [
+        segment('Isaiah chapter 45 verse 2.'),
+        segment('I will go before you and lead the mountains.'),
+      ],
+      lyrics: LYRICS,
+      selectedIndex: 0,
+      lanes: LYRIC_LANES,
+      dismissed: [],
+      note: null,
+    });
+    expect(out.verse).not.toBeNull();
+    expect(out.verse.verse.reference).toBe('Isaiah 45:2');
+  });
+
   /**
    * The fake engine ignores the audio bytes and replays a canned sentence. It
    * is NOT noisy, NOT repetitive, and reports whatever confidence the fake

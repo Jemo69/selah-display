@@ -273,6 +273,15 @@ export function deriveSuggestions({
   if (!gate.ok) return { lyric: null, verse: null, note: null, gateReason };
 
   const transcript = latest && typeof latest.text === 'string' ? latest.text : '';
+  // Verse detection needs the recent TAIL, not only the newest sentence. A
+  // preacher says "Isaiah chapter 45 verse 2" and then reads the verse; by the
+  // next final the reference is no longer in `latest`, so using `latest` alone
+  // made the card unreachable exactly when the reading started. The worker
+  // already searches this same tail; this keeps detectors 1/2 aligned with it.
+  const detectionTail = segments
+    .map((segment) => (segment && typeof segment.text === 'string' ? segment.text : ''))
+    .join(' ')
+    .slice(-600);
   const lyricLane = findLane(lanes, 'lyric');
   const verseLane = findLane(lanes, 'verse');
   const noteLane = findLane(lanes, 'note');
@@ -294,12 +303,13 @@ export function deriveSuggestions({
   //
   // So the worker is consulted only if the cheap path produced nothing — it is
   // never on the critical path of a spoken reference.
-  const cheap = verseLane && verseLane.enabled && transcript
-    ? detectVerseFromSegment(latest, { locale })
+  const detectionSegment = latest ? { ...latest, text: detectionTail || transcript } : null;
+  const cheap = verseLane && verseLane.enabled && detectionSegment && detectionSegment.text
+    ? detectVerseFromSegment(detectionSegment, { locale })
     : null;
   const detected = cheap || (
-    verseLane && verseLane.enabled && transcript && searchResults.length > 0
-      ? detectVerseFromSegment(latest, { searchResults, locale })
+    verseLane && verseLane.enabled && detectionSegment && detectionSegment.text && searchResults.length > 0
+      ? detectVerseFromSegment(detectionSegment, { searchResults, locale })
       : null
   );
   const reference = detected && detected.verse ? detected.verse.reference : null;
