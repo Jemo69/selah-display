@@ -581,21 +581,19 @@ async function main() {
     console.log(`  WER           ${(detail.wer * 100).toFixed(1)}% (${detail.substitutions} sub, ${detail.deletions} del, ${detail.insertions} ins)`);
     console.log(`  inference     ${inferenceMs} ms (${rtf.toFixed(2)}× real time)`);
 
-    if (detail.wer > maxWer) {
-      throw new Error(
-        `WER ${(detail.wer * 100).toFixed(1)}% is above the ${(maxWer * 100).toFixed(0)}% budget. ` +
-        'The engine returned text, but not the words that were spoken.'
-      );
-    }
-
+    // Detect before enforcing WER: a real microphone transcript can carry a
+    // few substitutions while still containing enough signal to identify the
+    // verse. Printing both tells the operator which half failed.
+    let detected = null;
     if (detectReference) {
       const { rankVerses } = await import('../../src/speech/verseCorpus.js');
       const { detectVerse } = await import('../../src/speech/detectVerse.js');
       const searchResults = rankVerses(transcript, bible);
-      const detected = detectVerse(transcript, { searchResults });
+      detected = detectVerse(transcript, { searchResults });
       if (!detected) {
         throw new Error(
-          `The transcript was correct, but the verse detector found nothing (expected ${detectReference}).`
+          `The verse detector found nothing (expected ${detectReference}). ` +
+          `Transcript: ${JSON.stringify(transcript)}`
         );
       }
       console.log(
@@ -606,6 +604,17 @@ async function main() {
           `The verse detector returned ${detected.verse.reference}, not ${detectReference}.`
         );
       }
+    }
+
+    if (detail.wer > maxWer) {
+      throw new Error(
+        `WER ${(detail.wer * 100).toFixed(1)}% is above the ${(maxWer * 100).toFixed(0)}% budget. ` +
+        'The engine returned text, but not the words that were spoken.' +
+        (detected ? ` The verse was still identified as ${detected.verse.reference}.` : '')
+      );
+    }
+
+    if (detected) {
       console.log(`PASS: real voice became text, and the verse detector found ${detectReference}.`);
     } else {
       console.log('PASS: real voice became the expected text through the real engine.');
