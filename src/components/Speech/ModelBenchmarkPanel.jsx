@@ -257,6 +257,7 @@ const ModelBenchmarkPanel = ({ darkMode = true, cardClass, titleClass }) => {
         {models.map((model) => {
           const result = results.find((r) => r.modelId === model.id) ?? null;
           const isRunning = runningId === model.id;
+          const canRun = model.id === currentModelId;
           const notes = result?.measured ? warningsFor(result) : [];
           const gatedOut = result?.measured === true && !passesRtfGate(result);
 
@@ -285,6 +286,8 @@ const ModelBenchmarkPanel = ({ darkMode = true, cardClass, titleClass }) => {
                   <button
                     type="button"
                     data-testid={`benchmark-run-${model.id}`}
+                    disabled={!canRun}
+                    title={canRun ? undefined : 'Select this model first'}
                     onClick={() => run(model.id)}
                     className={`rounded-md border px-2 py-1 font-semibold ${
                       darkMode
@@ -292,7 +295,7 @@ const ModelBenchmarkPanel = ({ darkMode = true, cardClass, titleClass }) => {
                         : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
                     }`}
                   >
-                    {result ? 'Re-run' : 'Run benchmark'}
+                    {isRunning ? 'Cancel run' : result ? 'Re-run' : canRun ? 'Run benchmark' : 'Select first'}
                   </button>
                 )}
               </div>
