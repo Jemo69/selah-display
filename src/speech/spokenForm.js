@@ -339,9 +339,12 @@ export function normalizeSpokenReference(text, locale) {
     .replace(/(\d+)\s+-\s+(\d+)/g, '$1-$2');
 
   return ranged
-    // "3 verse 16" / "3 verse 16-18" -> "3:16" / "3:16-18"
+    // "3 verse 16" / "3, verse 16" / "3 verse 16-18" -> "3:16" /
+    // "3:16-18". ASR punctuation puts a comma after the chapter; without
+    // allowing it the verse keyword is treated as a bare ":16" and the
+    // reference silently falls back to verse 1.
     .replace(
-      new RegExp(`(\\d+)\\s+(?:${versePluralAlt}|${verseAlt})\\s+(\\d+)(?:\\s*-\\s*(\\d+))?`, 'giu'),
+      new RegExp(`(\\d+)\\s*[,;.]?\\s*(?:${versePluralAlt}|${verseAlt})\\s*(\\d+)(?:\\s*-\\s*(\\d+))?`, 'giu'),
       (_m, chapter, start, end) => `${chapter}:${start}${end ? `-${end}` : ''}`
     )
     // a bare "verse 16" with no chapter -> ":16" (only useful mid-reference)

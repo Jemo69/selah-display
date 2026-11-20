@@ -57,6 +57,14 @@ describe('the plan examples, verbatim', () => {
   });
 });
 
+describe('ASR punctuation', () => {
+  it('a comma after the chapter does not silently fall back to verse 1', () => {
+    expect(detectVerse('Isaiah chapter 45, verse 2, NIV').verse.reference).toBe('Isaiah 45:2');
+    expect(detectVerse('Matthew chapter 17, verse 21.').verse.reference).toBe('Matthew 17:21');
+    expect(detectVerse('Genesis chapter 27, verses 38 to 40.').verse.reference).toBe('Genesis 27:38-40');
+  });
+});
+
 describe('detector ordering: strict, first that fires wins', () => {
   it('detector 1 wins even when the table AND a fuzzy hit also match', () => {
     // "Psalm" is BOTH canonical (detector 1) and an alias-table row
