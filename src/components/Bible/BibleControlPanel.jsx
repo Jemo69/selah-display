@@ -76,6 +76,9 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
     ui = { libraryCollapsed: false, sidePanelCollapsed: false, historyCollapsed: true, selectionCollapsed: false, sidePanelWidth: 380 },
     setUIState
   } = useBibleStore();
+  // Persisted state from older versions (or a corrupt store) may not be an
+  // array — normalize once so the list below never throws.
+  const verseLogList = Array.isArray(bibleVerseLog) ? bibleVerseLog : [];
   const selectionCollapsed = ui.selectionCollapsed ?? false;
   const sidePanelWidth = ui.sidePanelWidth ?? 380;
   const verseLayout = ui.verseLayout ?? 'grid';
@@ -735,8 +738,7 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
             )}
 
             {/* Verse Request Log — plain reference strings only (e.g. "Matthew 1:1") */}
-            {bibleVerseLog.length > 0 && (
-              <section className={`flex-shrink-0 overflow-hidden rounded-2xl border shadow-sm ${darkMode ? 'border-gray-700 bg-gray-900/60' : 'border-gray-200 bg-white'}`} data-testid="bible-verse-log">
+            <section className={`flex-shrink-0 overflow-hidden rounded-2xl border shadow-sm ${darkMode ? 'border-gray-700 bg-gray-900/60' : 'border-gray-200 bg-white'}`} data-testid="bible-verse-log">
                 <div className={`w-full flex items-center justify-between px-4 py-3 text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-gray-400 bg-gray-800/50' : 'text-gray-500 bg-gray-50'}`}>
                   <div className="flex items-center gap-2">
                     <BookOpen className="h-4 w-4" />
@@ -750,8 +752,9 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
                     Clear
                   </button>
                 </div>
+                {verseLogList.length > 0 ? (
                 <div className={`max-h-40 overflow-y-auto p-2 grid grid-cols-1 gap-1 ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
-                  {bibleVerseLog.map((loggedReference, index) => (
+                  {verseLogList.map((loggedReference, index) => (
                     <button
                       key={`${loggedReference}-${index}`}
                       // Re-run the reference through verse search: the query
@@ -765,8 +768,12 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
                     </button>
                   ))}
                 </div>
-              </section>
-            )}
+                ) : (
+                <div className={`px-4 py-3 text-xs ${darkMode ? 'bg-gray-800 text-gray-500' : 'bg-white text-gray-400'}`}>
+                  No verses logged yet — verses you send to display will appear here.
+                </div>
+                )}
+            </section>
           </div>
           )}
 

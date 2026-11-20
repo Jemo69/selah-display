@@ -222,10 +222,19 @@ describe('BibleControlPanel verse request log', () => {
     expect(mocks.clearBibleVerseLog).toHaveBeenCalledTimes(1);
   });
 
-  it('hides the section when nothing was requested yet', () => {
+  it('shows an empty state instead of hiding when nothing was logged yet', () => {
     mocks.bibleVerseLog = [];
     render(<BibleControlPanel darkMode={false} />);
 
-    expect(screen.queryByTestId('bible-verse-log')).toBeNull();
+    const section = screen.getByTestId('bible-verse-log');
+    expect(section.textContent).toContain('No verses logged yet');
+  });
+
+  it('survives a corrupt persisted log without throwing', () => {
+    mocks.bibleVerseLog = 'Matthew 1:1';
+    render(<BibleControlPanel darkMode={false} />);
+
+    const section = screen.getByTestId('bible-verse-log');
+    expect(section.textContent).toContain('No verses logged yet');
   });
 });

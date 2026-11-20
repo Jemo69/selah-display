@@ -47,4 +47,10 @@ describe('BibleStore bibleVerseLog (reference-only request log)', () => {
     useBibleStore.getState().clearBibleVerseLog();
     expect(useBibleStore.getState().bibleVerseLog).toEqual([]);
   });
+
+  it('recovers when persisted state is not an array', () => {
+    useBibleStore.setState({ bibleVerseLog: 'Matthew 1:1' });
+    useBibleStore.getState().logBibleVerseRequest('John 3:16');
+    expect(useBibleStore.getState().bibleVerseLog).toEqual(['John 3:16']);
+  });
 });

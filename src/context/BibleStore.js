@@ -445,8 +445,11 @@ const useBibleStore = create(
         // out same-reference slide navigation.
         const cleaned = normalizeVerseLogReference(reference);
         if (!cleaned) return state;
+        // Persisted state from older versions (or a corrupt store) may not
+        // be an array — normalize so the next request never throws.
+        const prior = Array.isArray(state.bibleVerseLog) ? state.bibleVerseLog : [];
         return {
-          bibleVerseLog: [cleaned, ...state.bibleVerseLog].slice(0, 100)
+          bibleVerseLog: [cleaned, ...prior].slice(0, 100)
         };
       }),
 
