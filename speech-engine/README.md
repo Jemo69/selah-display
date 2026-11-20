@@ -144,7 +144,9 @@ The indexed scorer (`verseIndex` + `verseScore`) was already built but not
 wired to the worker. The worker now uses it: the same windows produced five
 matches, all actual sermon references (John 10:35, Numbers 23:19, Genesis
 27:38–40), with no containment false positives. Building the index costs
-~330 ms and ~100 MB in the worker, once per translation.
+~330 ms and ~100 MB in the worker, once per translation. This audits
+detector retrieval against real sermon language, not ASR: YouTube blocked the
+audio download, so the ASR half still needs a local recording.
 
 **Cost.** No network after setup, no hosted model, no key. Inference on the
 6-second clip is roughly one to three seconds on a CPU, and the full-KJV

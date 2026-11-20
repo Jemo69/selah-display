@@ -16,7 +16,9 @@ import { scoreVerses } from './verseScore.js';
 /**
  * One searcher per worker. The index is keyed by the bible object identity:
  * a re-import produces a new object and rebuilds; repeated transcript tails
- * against the same translation reuse the index.
+ * against the same translation reuse the index. Only the current translation's
+ * index is retained — switching replaces it, so memory is bounded to one
+ * corpus rather than growing with every translation the operator opens.
  *
  * @returns {{search: Function, indexed: boolean, reset: Function}}
  */

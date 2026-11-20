@@ -94,6 +94,24 @@ describe('createVerseSearcher', () => {
     expect(results[0].reference).toBe('John 3:17');
   });
 
+  it('returns one result, not a list of competing cards', () => {
+    const searcher = createVerseSearcher();
+    const results = searcher.search(
+      BIBLE,
+      'for God so loved the world that he gave his only begotten Son'
+    );
+    expect(results).toHaveLength(1);
+    expect(results[0].source).toBe('index');
+  });
+
+  it('reset drops the retained index', () => {
+    const searcher = createVerseSearcher();
+    searcher.search(BIBLE, 'for God so loved the world that he gave his only begotten Son');
+    expect(searcher.indexed).toBe(true);
+    searcher.reset();
+    expect(searcher.indexed).toBe(false);
+  });
+
   it('returns null for unusable input', () => {
     const searcher = createVerseSearcher();
     expect(searcher.search(null, 'for God so loved the world')).toBeNull();
