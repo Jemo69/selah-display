@@ -214,6 +214,14 @@ describe('BibleControlPanel verse request log', () => {
     expect(section.textContent).toContain('John 3:16');
   });
 
+  it('re-runs a logged reference through verse search on click', () => {
+    mocks.bibleVerseLog = ['Matthew 1:1'];
+    const { container } = render(<BibleControlPanel darkMode={false} />);
+
+    fireEvent.click(screen.getByTitle('Matthew 1:1'));
+    expect(container.querySelector('[data-bible-search-input]').value).toBe('Matthew 1:1');
+  });
+
   it('clears the log from the Clear button', () => {
     mocks.bibleVerseLog = ['Matthew 1:1'];
     render(<BibleControlPanel darkMode={false} />);
