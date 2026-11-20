@@ -201,7 +201,12 @@ export function createWhisperServerEngine({
       try { child.kill('SIGKILL'); } catch { /* already gone */ }
       starting = null;
       throw Object.assign(new Error('whisper-server did not become ready'), { code: 'server-start-failed' });
-    })();
+    })().catch((error) => {
+      // Do not leave a permanently rejected promise in `starting`: the next
+      // segment must be allowed to retry (e.g. a transient port collision).
+      starting = null;
+      throw error;
+    });
 
     return starting;
   }
