@@ -12,8 +12,14 @@
 // The bible corpus is retained across messages so the renderer can omit
 // `currentBible` on subsequent sends, and pruned when the renderer evicts
 // inactive translations — same retention rules as the existing worker.
+//
+// Detector 3 uses the INVERTED INDEX (verseIndex + verseScore), not the
+// containment counter: the index weighs rare words and phrase adjacency, which
+// is what separates a real reading from a handful of common words.
 
-import { rankVerses } from '../speech/verseCorpus.js';
+import { createVerseSearcher } from '../speech/verseSearchEngine.js';
+
+const searcher = createVerseSearcher();
 
 let cachedBibles = {};
 let cachedCurrentBible = null;
@@ -23,11 +29,9 @@ self.onmessage = function (e) {
     currentBible,
     query,
     allBibles,
-    maxResults,
+    currentReference,
     refreshBibles,
     pruneBibles,
-    minScore,
-    minMatches,
   } = e.data ?? {};
 
   try {
@@ -50,8 +54,8 @@ self.onmessage = function (e) {
       return;
     }
 
-    const results = rankVerses(query, activeBible, { maxResults, minScore, minMatches });
-    self.postMessage(results.length > 0 ? results : null);
+    const results = searcher.search(activeBible, query, { currentReference });
+    self.postMessage(results);
   } catch {
     // A search failure during a service is silence, never an exception
     // that could take the rail down mid-sermon.

@@ -136,6 +136,16 @@ John 10:10 recording exposed two limits worth knowing:
   refuses one- and two-word tails. A low-confidence OS result is reported as
   `low-confidence`, never as a verse.
 
+A 24-minute live-sermon stream (auto-captions, 15-second windows) exposed a
+third problem in the detector rather than the ASR: the worker was using
+`rankVerses`, a containment counter that scored four wrong references
+(1 Kings 1:47, 1 Chronicles 16:35, Psalms 106:47, Luke 10:21) at 0.62–0.73.
+The indexed scorer (`verseIndex` + `verseScore`) was already built but not
+wired to the worker. The worker now uses it: the same windows produced five
+matches, all actual sermon references (John 10:35, Numbers 23:19, Genesis
+27:38–40), with no containment false positives. Building the index costs
+~330 ms and ~100 MB in the worker, once per translation.
+
 **Cost.** No network after setup, no hosted model, no key. Inference on the
 6-second clip is roughly one to three seconds on a CPU, and the full-KJV
 scan adds about a quarter second. The only persistent bytes are the 196 KB
