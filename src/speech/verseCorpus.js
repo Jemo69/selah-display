@@ -62,6 +62,12 @@ function contentTokens(text) {
 export function textOverlapScore(query, text, minMatches = THRESHOLDS.verseSearch.minMatches) {
   const queryTokens = contentTokens(query);
   if (queryTokens.length === 0) return 0;
+  // A tail shorter than the evidence floor is not a verse reading. Without
+  // this guard a one-word tail ("But leave") satisfies the old
+  // Math.min(minMatches, queryTokens.length) check and can score 1.0 against
+  // a verse that happens to contain that word — the exact false positive a
+  // low-confidence OS transcript produced in the smoke test.
+  if (queryTokens.length < minMatches) return 0;
 
   const verseTokens = new Set(contentTokens(text));
   let matched = 0;
@@ -69,7 +75,7 @@ export function textOverlapScore(query, text, minMatches = THRESHOLDS.verseSearc
     if (verseTokens.has(token)) matched += 1;
   }
 
-  if (matched < Math.min(minMatches, queryTokens.length)) return 0;
+  if (matched < minMatches) return 0;
   return Math.round((matched / queryTokens.length) * 1000) / 1000;
 }
 

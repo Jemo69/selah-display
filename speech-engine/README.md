@@ -120,6 +120,22 @@ node speech-engine/scripts/smoke.mjs \
 Use `--detect=none` to check transcription only, or `--bible=/path/kjv.json`
 to run the verse search against another translation.
 
+### What real recordings showed
+
+The committed clip is synthetic, so CI is deterministic. A real 13-second
+John 10:10 recording exposed two limits worth knowing:
+
+- **tiny.en Q5_1 is a CI floor, not a production model.** It transcribed the
+  real clip at 38% WER and the detector found nothing; the same audio with a
+  larger local model (not used in this test) cleared the errors and resolved
+  John 10:10. Most deployments should choose a larger model.
+- **System.Speech is old and cautious.** On that same real clip the OS
+  recognizer returned fragments at 0.02–0.03 confidence, and one fragment
+  could have become a false Obadiah 1:5. The driver now refuses anything below
+  `OSDEVICE_MIN_CONFIDENCE` instead of forwarding a guess, and the scorer
+  refuses one- and two-word tails. A low-confidence OS result is reported as
+  `low-confidence`, never as a verse.
+
 **Cost.** No network after setup, no hosted model, no key. Inference on the
 6-second clip is roughly one to three seconds on a CPU, and the full-KJV
 scan adds about a quarter second. The only persistent bytes are the 196 KB

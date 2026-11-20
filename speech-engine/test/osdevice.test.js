@@ -149,6 +149,9 @@ test('recognizeScript wires file input, dictation grammar, and single-line JSON 
   assert.ok(script.includes('exit 2;'), 'script errors exit 2 with ERROR: on stderr');
   assert.ok(script.includes('C:\\tmp\\segment.wav'), 'the staged WAV path');
   assert.ok(!script.includes('$culture'), 'auto uses the default recognizer');
+  assert.ok(script.includes('while ($true)'), 'loops until the WAV reaches EOF');
+  assert.ok(script.includes('$texts += $res.Text'), 'keeps every utterance in the chunk');
+  assert.ok(script.includes("join ' '"), 'joins utterances into one transcript');
 });
 
 test('recognizeScript quotes paths and cultures, and honors a requested language', () => {
@@ -212,6 +215,24 @@ test('a recognition becomes a contract-valid final spanning the chunk', async ()
   const fileIndex = captured[0].argv.indexOf('-File');
   assert.ok(fileIndex !== -1, 'script runs from -File');
   assert.match(captured[0].argv[fileIndex + 1], /\.ps1$/);
+});
+
+test('low-confidence recognition is refused, never forwarded as text', async () => {
+  const engine = createOsDeviceEngine({
+    bus: null,
+    platform: 'win32',
+    spawnImpl: installFakePowershell([], {
+      stdout: '{"text":"But leave","confidence":0.02}',
+    }),
+    spawnSyncImpl: () => windowsProbeOk(),
+  });
+
+  const result = await engine.transcribe({ frames: [frame()] });
+  assert.equal(result.messages.some((m) => m.t === 'final'), false, 'no final reaches the rail');
+  const error = result.messages.find((m) => m.t === 'error');
+  assert.equal(error.code, 'low-confidence');
+  assert.equal(error.fatal, false);
+  assert.ok(validateMessage(error).ok, 'low-confidence error passes the wire schema');
 });
 
 test('timestamps advance across utterances on one session', async () => {
