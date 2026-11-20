@@ -21,6 +21,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import useSpeechStore from '../../context/SpeechStore';
+import { loadBenchmarkClip } from '../../speech/benchmarkClip.js';
 import { modelsForProvider } from '../../../shared/speech/index.js';
 import {
   recommendModel,
@@ -51,12 +52,14 @@ const rowId = (result) => result.modelId;
 
 const ModelBenchmarkPanel = ({ darkMode = true, cardClass, titleClass }) => {
   const providerId = useSpeechStore((state) => state.providerId);
+  const currentModelId = useSpeechStore((state) => state.modelId);
   const results = useSpeechStore((state) => state.benchmarkResults) ?? [];
   const runningId = useSpeechStore((state) => state.benchmarkRunningId) ?? null;
 
   /** Per-model failure text, kept local: transient UI, never persisted. */
   const [errors, setErrors] = useState({});
   const [notice, setNotice] = useState(null);
+  const [selecting, setSelecting] = useState(false);
   // A cancel is a REQUEST. Resolving it does not mean the run stopped, and the
   // engine says so explicitly — so we show what it reported rather than
   // pretending the work was killed.
@@ -99,10 +102,21 @@ const ModelBenchmarkPanel = ({ darkMode = true, cardClass, titleClass }) => {
       setErrors((prev) => ({ ...prev, [modelId]: null }));
       setNotice(null);
 
+      let clip;
+      try {
+        clip = await loadBenchmarkClip();
+      } catch {
+        setErrors((prev) => ({
+          ...prev,
+          [modelId]: 'The benchmark reference clip could not be loaded.',
+        }));
+        return;
+      }
+
       useSpeechStore.getState().setBenchmarkRunning(modelId);
       let reply;
       try {
-        reply = await speech.benchmark({ modelId });
+        reply = await speech.benchmark({ modelId, clip });
       } catch (error) {
         if (mountedRef.current) {
           setErrors((prev) => ({
@@ -141,6 +155,22 @@ const ModelBenchmarkPanel = ({ darkMode = true, cardClass, titleClass }) => {
     },
     []
   );
+
+  const useSuggested = useCallback(async () => {
+    const speech = bridge();
+    if (!speech || typeof speech.selectModel !== 'function' || !recommendation.modelId) return;
+    setSelecting(true);
+    try {
+      const reply = await speech.selectModel({ modelId: recommendation.modelId });
+      if (reply && reply.ok === false) {
+        setNotice(reply.message ?? 'The suggested model could not be selected.');
+      } else {
+        setNotice(`Using ${recommendation.modelId}.`);
+      }
+    } finally {
+      if (mountedRef.current) setSelecting(false);
+    }
+  }, [recommendation.modelId]);
 
   const cancel = useCallback(async (modelId) => {
     const speech = bridge();
@@ -182,7 +212,24 @@ const ModelBenchmarkPanel = ({ darkMode = true, cardClass, titleClass }) => {
           data-testid="benchmark-recommendation"
           className={`rounded-lg border p-3 text-xs leading-relaxed ${border}`}
         >
-          <span className="font-semibold">Suggested: {recommendation.modelId}</span>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <span className="font-semibold">Suggested: {recommendation.modelId}</span>
+            {recommendation.modelId !== currentModelId ? (
+              <button
+                type="button"
+                data-testid="benchmark-use-suggested"
+                disabled={selecting}
+                onClick={useSuggested}
+                className={`rounded-md border px-2 py-1 font-semibold disabled:opacity-50 ${
+                  darkMode
+                    ? 'border-gray-700 bg-gray-900 text-gray-200 hover:bg-gray-800'
+                    : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                {selecting ? 'Selecting…' : 'Use suggested model'}
+              </button>
+            ) : null}
+          </div>
           <p className={`mt-1 ${muted}`}>{recommendation.reason}</p>
         </div>
       ) : (
