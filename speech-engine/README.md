@@ -155,6 +155,31 @@ fixture and the gitignored light engine: 45 MiB downloaded, about 66 MiB
 unpacked into `.speech-smoke/`. CI restores that folder from a cache keyed by
 the pinned release, model, and Bible digests.
 
+## Persistent server driver (production model path)
+
+The CLI driver spawns `whisper-cli` once per segment. That is fine for a 31 MiB
+tiny model, but a production model is hundreds of MiB and model load dominates
+a 15-second chunk. `drivers/whisperServer.js` keeps `whisper-server` alive for
+the engine session and posts each WAV to `/inference` on loopback.
+
+`index.js` uses the server when `whisper-server` is present (the installer
+ships it) and falls back to the CLI for older installs:
+
+```sh
+node index.js --engine=whisper --driver=server   # force persistent server
+node index.js --engine=whisper --driver=cli      # old per-segment process
+node index.js --engine=whisper                   # auto: server if present
+```
+
+Measured on the real 24-minute sermon with large-v3-turbo Q8 on a 12-core CPU:
+~1.15x real time on a 35 s chunk even with the model loaded. The server removes
+model-reload overhead; it does not turn a CPU that is too slow into a GPU. The
+app still needs benchmark-based model selection and GPU builds for large models.
+
+Silence is skipped before the model is called: a segment below the energy floor
+returns no final, so a whisper hallucination like "you" cannot become a rail
+entry.
+
 ## Transport decision (Phase 2)
 
 The v1 plan's renderer↔engine transport is WebSocket. Adding `ws` would cost
@@ -172,6 +197,7 @@ supervisor, which relays them to the renderer over `speech:*` IPC channels.
 | `index.js` | CLI entry: args/env, fake-vs-whisper mode, listen, fork-IPC handshake |
 | `server.js` | HTTP server: origin/token gates, route table, loopback enforcement |
 | `fakeEngine.js` | canned engine: sessions, canned segment, canned metrics |
+| `drivers/whisperServer.js` | persistent whisper-server driver for production models |
 | `bus.js` | message-emission seam + schema validation (`validateMessage`) |
 | `scripts/smoke.mjs` | real voice → real engine → checked transcript, CI-friendly |
 | `scripts/prepare-smoke.mjs` | fetch/verify the pinned light engine into `.speech-smoke/` |
