@@ -422,6 +422,32 @@ export function createSpeechEngineServer(options = {}) {
       const benchmarkClip = body?.clip && typeof body.clip === 'object'
         ? { ...body.clip, pcm: pcmBuffer(body.clip.pcm) }
         : (body?.clip ?? null);
+      // A benchmark measures the model the engine has LOADED. The drivers do
+      // not hot-swap weights, so benchmarking "large-v3" while tiny is running
+      // would label tiny's numbers as large-v3 — the exact fabrication this
+      // harness exists to prevent. Refuse with a sentence the panel can show.
+      const activeModel = activeEngine?.model ?? null;
+      const canned = /fake|canned/i.test(String(activeEngine?.kind ?? ''));
+      if (!canned && body?.modelId && activeModel && body.modelId !== activeModel) {
+        sendJson(res, 200, {
+          ok: true,
+          measured: false,
+          modelId: body.modelId,
+          engineKind: activeEngine?.kind ?? null,
+          reason: `The engine is running ${activeModel}. Select ${body.modelId} before benchmarking it.`,
+          wer: null,
+          rtf: null,
+          firstPartialMs: null,
+          backend: null,
+          loadTimeMs: null,
+          gpuUtilMean: null,
+          gpuUtilPeak: null,
+          peakRssBytes: null,
+          firstThirdRtf: null,
+          lastThirdRtf: null,
+        }, cors);
+        return;
+      }
       // Phase 3: a real harness run, not a stub. `clip` carries the audio AND
       // its hand-verified transcript; a missing transcript is refused rather
       // than guessed, because scoring against an invented reference would

@@ -285,6 +285,16 @@ describe('POST /v1/benchmark', () => {
     assert.equal(result.json.wer, 0);
   });
 
+  test('refuses to label the loaded model with a different model id', async () => {
+    const engine = realEngine({ model: 'tiny.en' });
+    const { port } = await startServer(engine);
+    const result = await post(port, '/v1/benchmark', { modelId: 'large-v3', clip: CLIP });
+    assert.equal(result.status, 200);
+    assert.equal(result.json.measured, false);
+    assert.match(result.json.reason, /select large-v3 before benchmarking/i);
+    assert.equal(result.json.wer, null);
+  });
+
   test('adapts the session/frames driver and a JSON Buffer clip', async () => {
     let sessions = 0;
     const engine = {
