@@ -44,7 +44,7 @@ import {
 import { fileURLToPath, URL as NodeURL } from 'node:url';
 import { render, cleanup } from '@testing-library/react';
 import { createElement } from 'react';
-import { isLoopbackHost, ALLOWED_ORIGINS } from '../../shared/speech/protocol.js';
+import { isLoopbackHost, isAllowedOrigin, ALLOWED_ORIGINS } from '../../shared/speech/protocol.js';
 import { decidePermission } from '../../main/permissionPolicy.js';
 import useSpeechStore, { speechDefaults } from '../../src/context/SpeechStore.js';
 import SermonAssistPanel from '../../src/components/Speech/SermonAssistPanel.jsx';
@@ -1325,11 +1325,19 @@ describe('invariant 5: audio stays local unless cloud is chosen', () => {
     }
   });
 
-  it('ALLOWED_ORIGINS is exactly the two loopback dev origins — no wildcard, no LAN origin', () => {
+  it('origins are loopback only — the dev server and the packaged backend, no wildcard, no LAN origin', () => {
     expect([...ALLOWED_ORIGINS]).toEqual([
       'http://127.0.0.1:4000',
+      'http://localhost:4000',
+      'http://127.0.0.1:5174',
       'http://localhost:5174',
     ]);
+    // A custom PORT (dogfood/side-by-side) is still loopback and still carries
+    // the per-launch token; a LAN or file origin never reaches the token gate.
+    expect(isAllowedOrigin('http://localhost:4321')).toBe(true);
+    expect(isAllowedOrigin('http://192.168.1.5:4000')).toBe(false);
+    expect(isAllowedOrigin('file:///tmp/index.html')).toBe(false);
+    expect(isAllowedOrigin('http://evil.example.com')).toBe(false);
   });
 
   it('no speech module binds 0.0.0.0, "::", or INADDR_ANY', () => {
