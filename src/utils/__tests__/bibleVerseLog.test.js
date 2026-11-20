@@ -13,8 +13,13 @@ describe('shouldLogBibleVerseRequest (verse-log send wiring)', () => {
   });
 
   it('skips same-reference slide navigation', () => {
-    expect(shouldLogBibleVerseRequest({ slideIndex: 1, reference: 'Matthew 1:1', previousReference: 'Matthew 1:1' })).toBe(false);
-    expect(shouldLogBibleVerseRequest({ slideIndex: 3, reference: 'Matthew 1:1', previousReference: '  Matthew 1:1 ' })).toBe(false);
+    expect(shouldLogBibleVerseRequest({ slideIndex: 1, reference: 'Matthew 1:1', previousReference: 'Matthew 1:1', previousContentMode: 'bible' })).toBe(false);
+    expect(shouldLogBibleVerseRequest({ slideIndex: 3, reference: 'Matthew 1:1', previousReference: '  Matthew 1:1 ', previousContentMode: 'bible' })).toBe(false);
+  });
+
+  it('never lets a same-named song suppress logging', () => {
+    expect(shouldLogBibleVerseRequest({ slideIndex: 2, reference: 'Matthew 1:1', previousReference: 'Matthew 1:1', previousContentMode: 'lyrics' })).toBe(true);
+    expect(shouldLogBibleVerseRequest({ slideIndex: 2, reference: 'Matthew 1:1', previousReference: 'Matthew 1:1', previousContentMode: undefined })).toBe(true);
   });
 
   it('rejects empty references and logs when the slide is unknown', () => {

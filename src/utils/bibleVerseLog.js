@@ -10,12 +10,15 @@ export function normalizeVerseLogReference(reference) {
  * True when sending this verse counts as a new request worth logging.
  * First-slide sends always log (including intentional re-sends). Sends
  * that start on a later slide (previous-verse landing, direct slide pick)
- * log only when they show a different reference than what is already
- * displayed — same-reference slide navigation is not a new request.
+ * log only when they show a different reference than the verse already
+ * displayed — same-reference slide navigation is not a new request. The
+ * reference comparison only applies when Bible content is displayed; a
+ * song or note that happens to share the name never suppresses logging.
  */
-export function shouldLogBibleVerseRequest({ slideIndex, reference, previousReference }) {
+export function shouldLogBibleVerseRequest({ slideIndex, reference, previousReference, previousContentMode }) {
   const cleaned = normalizeVerseLogReference(reference);
   if (!cleaned) return false;
   if (!Number.isInteger(slideIndex) || slideIndex === 0) return true;
+  if (previousContentMode !== 'bible') return true;
   return normalizeVerseLogReference(previousReference) !== cleaned;
 }

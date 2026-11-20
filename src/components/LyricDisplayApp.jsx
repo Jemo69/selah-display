@@ -318,6 +318,7 @@ const LyricDisplayApp = () => {
         // a later-slide send of the same verse is slide navigation, while a
         // later-slide send of another verse is a new request worth logging.
         const previousReference = store.lyricsFileName;
+        const previousContentMode = store.contentMode;
         if (store.loadBibleVerse) {
           store.loadBibleVerse({
             reference: verseData.reference,
@@ -362,7 +363,7 @@ const LyricDisplayApp = () => {
         } catch { /* ignore */ }
 
         queueMicrotask(() => {
-            if (shouldLogBibleVerseRequest({ slideIndex: selectedSlideIndex, reference: verseData.reference, previousReference })) {
+            if (shouldLogBibleVerseRequest({ slideIndex: selectedSlideIndex, reference: verseData.reference, previousReference, previousContentMode })) {
                 addToBibleHistory(verseData.reference, fullVerseText, structuredReference);
                 logBibleVerseRequest(verseData.reference);
             }
