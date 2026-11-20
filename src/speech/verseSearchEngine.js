@@ -33,7 +33,7 @@ export function createVerseSearcher() {
      * @param {{currentReference?: string|null}} [options]
      * @returns {Array|null} one scored result, or null when nothing clears the floor
      */
-    search(currentBible, query, { currentReference = null } = {}) {
+    search(currentBible, query, { currentReference = null, minScore = 0 } = {}) {
       if (!currentBible || !Array.isArray(currentBible.books)) return null;
       if (currentBible !== cachedBible) {
         cachedBible = currentBible;
@@ -42,10 +42,15 @@ export function createVerseSearcher() {
       if (!cachedIndex) return null;
 
       const result = scoreVerses(cachedIndex, query, { currentReference });
-      if (!result) return null;
+      if (!result || result.score < minScore) return null;
       // `detectVerse` only discloses a runner-up for an index-backed result;
       // without this tag the ambiguity warning is silently dropped.
-      return [{ ...result, source: 'index' }];
+      return [{
+        ...result,
+        source: 'index',
+        bibleId: currentBible.id ?? null,
+        bibleName: currentBible.name ?? null,
+      }];
     },
 
     get indexed() {
