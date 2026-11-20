@@ -4,8 +4,9 @@
  * speech engine (Phase 2 scaffold).
  *
  * Usage:
- *   node index.js [--engine=fake|whisper] [--host=127.0.0.1] [--port=4731]
+ *   node index.js [--engine=fake|whisper|osdevice] [--host=127.0.0.1] [--port=4731]
  *                 [--bin-dir=DIR] [--models-dir=DIR] [--model=ID]
+ *                 [--driver=auto|server|cli]
  *
  * Environment (set by Selah's supervisor when it forks us):
  *   LD_SPEECH_TOKEN   per-launch secret required on every request (REQUIRED
@@ -53,6 +54,7 @@ import os from 'node:os';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createWhisperEngine, hasBinary, resolveWeights, WHISPER_ROWS } from './drivers/whispercpp.js';
+import { createWhisperServerEngine, hasServerBinary } from './drivers/whisperServer.js';
 import { createOsDeviceEngine } from './drivers/osdevice.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -99,8 +101,9 @@ const env = process.env;
 const binDir = String(args['bin-dir'] ?? env.LD_SPEECH_BIN_DIR ?? resolveDefaultBinDir());
 const modelsDir = String(args['models-dir'] ?? args.modelsDir ?? env.LD_SPEECH_MODELS_DIR ?? resolveDefaultModelsDir());
 
-// Default to whisper if the real binary is installed and at least one model has weights; otherwise fallback to fake.
-const defaultEngine = (hasBinary(binDir) && WHISPER_ROWS.some((m) => Boolean(resolveWeights(modelsDir, m.id))))
+// Default to whisper if either driver is installed and at least one model has
+// weights; otherwise fallback to fake.
+const defaultEngine = ((hasBinary(binDir) || hasServerBinary(binDir)) && WHISPER_ROWS.some((m) => Boolean(resolveWeights(modelsDir, m.id))))
   ? 'whisper'
   : 'fake';
 
@@ -135,7 +138,23 @@ function buildEngine() {
   if (engineKind === 'fake') return createFakeEngine({ bus });
 
   if (engineKind === 'whisper') {
+    const requestedDriver = String(args.driver ?? env.LD_SPEECH_DRIVER ?? 'auto').toLowerCase();
+    if (!['auto', 'server', 'cli'].includes(requestedDriver)) {
+      console.error(`speech-engine: unknown driver "${requestedDriver}". Use auto, server, or cli.`);
+      process.exit(2);
+    }
+    const useServer = requestedDriver === 'server'
+      || (requestedDriver === 'auto' && hasServerBinary(binDir));
     try {
+      if (useServer) {
+        return createWhisperServerEngine({
+          bus,
+          binDir,
+          modelsDir,
+          modelId: typeof args.model === 'string' ? args.model : (env.LD_SPEECH_MODEL || undefined),
+          language: typeof args.lang === 'string' ? args.lang : (env.LD_SPEECH_LANG || undefined),
+        });
+      }
       return createWhisperEngine({
         bus,
         binDir,
