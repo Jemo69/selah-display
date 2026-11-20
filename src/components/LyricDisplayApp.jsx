@@ -34,6 +34,7 @@ import useModal from '../hooks/useModal';
 import { Tooltip } from '@/components/ui/tooltip';
 import { hasValidTimestamps } from '../utils/timestampHelpers';
 import { splitBibleTextIntoSlides, resolveBibleGeometry } from '../utils/bibleSplitter';
+import { shouldLogBibleVerseRequest } from '../utils/bibleVerseLog.js';
 import { sanitizeParallelPayload } from '../utils/bibleParallel.js';
 import { slugifyOutputName, isReservedOutputSlug } from '../utils/outputs';
 import { runAllOutputActions } from '../utils/outputAutomation';
@@ -151,7 +152,7 @@ const LyricDisplayApp = () => {
     // Live content indicator — what is actually loaded/displayed (song vs bible),
     // independent of which sidebar tab is open.
     const liveContentMode = useLyricsStore((s) => s.contentMode);
-    const { addBible, setActiveBible, activeBibleId, activeReference, selectedVerses, setReference, setSelectedVerses, getVerseText, getFormattedReference, bibles, addToBibleHistory, bibleMetadata, defaultBibleId } = useBibleStore();
+    const { addBible, setActiveBible, activeBibleId, activeReference, selectedVerses, setReference, setSelectedVerses, getVerseText, getFormattedReference, bibles, addToBibleHistory, logBibleVerseRequest, bibleMetadata, defaultBibleId } = useBibleStore();
 
     const bibleIds = useMemo(
         () => orderBibleMetadata(bibleMetadata, defaultBibleId).map((m) => m.id),
@@ -313,6 +314,11 @@ const LyricDisplayApp = () => {
 
         // Atomic bible switch — one store action, no transient Song. Only valid commands.
         const store = useLyricsStore.getState();
+        // Capture what is currently displayed before this send replaces it:
+        // a later-slide send of the same verse is slide navigation, while a
+        // later-slide send of another verse is a new request worth logging.
+        const previousReference = store.lyricsFileName;
+        const previousContentMode = store.contentMode;
         if (store.loadBibleVerse) {
           store.loadBibleVerse({
             reference: verseData.reference,
@@ -357,8 +363,9 @@ const LyricDisplayApp = () => {
         } catch { /* ignore */ }
 
         queueMicrotask(() => {
-            if (selectedSlideIndex === 0) {
+            if (shouldLogBibleVerseRequest({ slideIndex: selectedSlideIndex, reference: verseData.reference, previousReference, previousContentMode })) {
                 addToBibleHistory(verseData.reference, fullVerseText, structuredReference);
+                logBibleVerseRequest(verseData.reference);
             }
 
             if (isDesktopApp && !setlistFiles.some(f => f.displayName === verseData.reference)) {
@@ -376,7 +383,7 @@ const LyricDisplayApp = () => {
                 }]);
             }
         });
-    }, [setLyrics, setLyricsFileName, setBibleVersion, setRawLyricsContent, selectLine, emitLineUpdate, emitLyricsLoad, emitBibleVerseLoaded, emitFileNameUpdate, addToBibleHistory, isDesktopApp, setlistFiles, emitSetlistAdd, socket, autoTurnOnOutput, isOutputOn, setOutputState]);
+    }, [setLyrics, setLyricsFileName, setBibleVersion, setRawLyricsContent, selectLine, emitLineUpdate, emitLyricsLoad, emitBibleVerseLoaded, emitFileNameUpdate, addToBibleHistory, logBibleVerseRequest, isDesktopApp, setlistFiles, emitSetlistAdd, socket, autoTurnOnOutput, isOutputOn, setOutputState]);
 
     // Hiding the parallel translation mid-service must take effect on the
     // verse already on screen, not just the next one sent. Re-broadcast the

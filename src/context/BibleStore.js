@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import { createLogger } from '../utils/logger.js';
 import { diagInfo, diagTime } from '../utils/diagnosticsLog.js';
 import { bibleDb } from '../utils/db.js';
+import { normalizeVerseLogReference } from '../utils/bibleVerseLog.js';
 import { getBibleVerseText } from 'shared/bible';
 import {
   resolveVersificationOffset,
@@ -70,6 +71,9 @@ const useBibleStore = create(
       selectedVerses: [[1]],
       searchResults: [],
       bibleHistory: [],
+      // Verse request log: plain reference strings only (e.g. "Matthew 1:1").
+      // Nothing more — no verse text, no translation name, no metadata.
+      bibleVerseLog: [],
       searchIndex: null,
       settings: {
         referenceDivider: ':',
@@ -435,6 +439,22 @@ const useBibleStore = create(
 
       clearBibleHistory: () => set({ bibleHistory: [] }),
 
+      logBibleVerseRequest: (reference) => set((state) => {
+        // Repeats are kept on purpose: each entry is one send. The caller
+        // (LyricDisplayApp via shouldLogBibleVerseRequest) already filters
+        // out same-reference slide navigation.
+        const cleaned = normalizeVerseLogReference(reference);
+        if (!cleaned) return state;
+        // Persisted state from older versions (or a corrupt store) may not
+        // be an array — normalize so the next request never throws.
+        const prior = Array.isArray(state.bibleVerseLog) ? state.bibleVerseLog : [];
+        return {
+          bibleVerseLog: [cleaned, ...prior].slice(0, 100)
+        };
+      }),
+
+      clearBibleVerseLog: () => set({ bibleVerseLog: [] }),
+
       reset: () => set({
         activeReference: null,
         selectedVerses: [[1]],
@@ -449,6 +469,7 @@ const useBibleStore = create(
         linkedBibleId: state.linkedBibleId,
         parallelHidden: state.parallelHidden,
         bibleHistory: state.bibleHistory,
+        bibleVerseLog: state.bibleVerseLog,
         settings: state.settings,
         ui: state.ui
       }),

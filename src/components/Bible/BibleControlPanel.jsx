@@ -70,10 +70,15 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
     getFormattedReference,
     getVerseText,
     bibleHistory = [],
+    bibleVerseLog = [],
+    clearBibleVerseLog,
     settings,
     ui = { libraryCollapsed: false, sidePanelCollapsed: false, historyCollapsed: true, selectionCollapsed: false, sidePanelWidth: 380 },
     setUIState
   } = useBibleStore();
+  // Persisted state from older versions (or a corrupt store) may not be an
+  // array — normalize once so the list below never throws.
+  const verseLogList = Array.isArray(bibleVerseLog) ? bibleVerseLog : [];
   const selectionCollapsed = ui.selectionCollapsed ?? false;
   const sidePanelWidth = ui.sidePanelWidth ?? 380;
   const verseLayout = ui.verseLayout ?? 'grid';
@@ -731,6 +736,44 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
                 )}
               </section>
             )}
+
+            {/* Verse Request Log — plain reference strings only (e.g. "Matthew 1:1") */}
+            <section className={`flex-shrink-0 overflow-hidden rounded-2xl border shadow-sm ${darkMode ? 'border-gray-700 bg-gray-900/60' : 'border-gray-200 bg-white'}`} data-testid="bible-verse-log">
+                <div className={`w-full flex items-center justify-between px-4 py-3 text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-gray-400 bg-gray-800/50' : 'text-gray-500 bg-gray-50'}`}>
+                  <div className="flex items-center gap-2">
+                    <BookOpen className="h-4 w-4" />
+                    Verse Log
+                  </div>
+                  <button
+                    onClick={() => clearBibleVerseLog?.()}
+                    className={`rounded px-2 py-1 text-[10px] font-bold uppercase tracking-wider transition-colors ${darkMode ? 'text-gray-500 hover:text-gray-200 hover:bg-gray-700' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-200'}`}
+                    title="Clear verse log"
+                  >
+                    Clear
+                  </button>
+                </div>
+                {verseLogList.length > 0 ? (
+                <div className={`max-h-40 overflow-y-auto p-2 grid grid-cols-1 gap-1 ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+                  {verseLogList.map((loggedReference, index) => (
+                    <button
+                      key={`${loggedReference}-${index}`}
+                      // Re-run the reference through verse search: the query
+                      // effect resolves it when a translation is loaded, and
+                      // the reference stays visible when none is yet.
+                      onClick={() => setQuery(loggedReference)}
+                      className={`truncate rounded-lg border px-3 py-2 text-left text-sm font-medium transition-colors ${darkMode ? 'border-gray-700 text-gray-200 hover:bg-gray-700' : 'border-gray-100 text-gray-800 hover:bg-gray-50 hover:border-gray-200'}`}
+                      title={loggedReference}
+                    >
+                      {loggedReference}
+                    </button>
+                  ))}
+                </div>
+                ) : (
+                <div className={`px-4 py-3 text-xs ${darkMode ? 'bg-gray-800 text-gray-500' : 'bg-white text-gray-400'}`}>
+                  No verses logged yet — verses you send to display will appear here.
+                </div>
+                )}
+            </section>
           </div>
           )}
 
