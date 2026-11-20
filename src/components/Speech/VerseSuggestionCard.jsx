@@ -40,6 +40,7 @@ import useHotkeysStore from '../../context/HotkeysStore';
 import useSpeechRuntimeStore from '../../context/SpeechRuntimeStore';
 import { DEFAULT_BINDINGS } from '../../constants/hotkeyBindings';
 import { describeMatch } from '../../speech/matchVerdict';
+import { recordTuningEvent } from '../../speech/tuningData.js';
 import {
   buildVersePayload,
   enableStageOutput,
@@ -119,7 +120,7 @@ const VerseCardHotkeys = ({ sendCombo, dismissCombo, onSend, onDismiss }) => {
   return null;
 };
 
-const VerseSuggestionCard = ({ darkMode = false, suggestion = null }) => {
+const VerseSuggestionCard = ({ darkMode = false, suggestion = null, sessionId = null }) => {
   const dismiss = useSpeechRuntimeStore((state) => state.dismissVerse);
   const sendCombo = useHotkeysStore((state) => resolveCombo(state.bindings, 'verseSendLive'));
   const dismissCombo = useHotkeysStore((state) => resolveCombo(state.bindings, 'verseDismiss'));
@@ -200,6 +201,10 @@ const VerseSuggestionCard = ({ darkMode = false, suggestion = null }) => {
     }
     if (sendVerseLive(payload)) {
       setFeedback(`${payload.reference} sent to the output.`);
+      recordTuningEvent(sessionId, {
+        type: 'action', lane: 'verse', action: 'send',
+        reference: payload.reference, confidence: suggestion?.confidence,
+      });
     }
   };
 
@@ -210,9 +215,17 @@ const VerseSuggestionCard = ({ darkMode = false, suggestion = null }) => {
     }
     enableStageOutput();
     setFeedback('Staged in the Bible panel with the Stage output on. The main outputs did not change.');
+    recordTuningEvent(sessionId, {
+      type: 'action', lane: 'verse', action: 'stage',
+      reference: verse.reference, confidence: suggestion?.confidence,
+    });
   };
 
   const dismissCard = () => {
+    recordTuningEvent(sessionId, {
+      type: 'action', lane: 'verse', action: 'dismiss',
+      reference: verse.reference, confidence: suggestion?.confidence,
+    });
     dismiss(verse.reference);
   };
 

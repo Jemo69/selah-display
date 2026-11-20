@@ -36,6 +36,7 @@ import {
   searchSessionRecords,
   summarizeSession,
   normalizeSegment,
+  normalizeEvent,
   safeSessionFileName,
   renderTextExport,
   HISTORY_DIR_SEGMENTS,
@@ -396,6 +397,38 @@ describe('session round trip', () => {
     expect(reply.session.segments).toHaveLength(1);
     expect(JSON.stringify(reply.session)).not.toContain('provisional text');
     expect(reply.session.segments[0].kind).toBe('final');
+  });
+
+  it('stores bounded tuning events and exports them beside the transcript', async () => {
+    expect(normalizeEvent({
+      type: 'suggestion', lane: 'verse', reference: 'John 10:10', detector: 'fuzzy',
+      confidence: 0.81, text: 'free transcript text must be dropped',
+    })).toEqual({
+      type: 'suggestion', lane: 'verse', reference: 'John 10:10', detector: 'fuzzy', confidence: 0.81,
+    });
+    expect(normalizeEvent({ type: '' })).toBeNull();
+    expect(normalizeEvent({ text: 'no type' })).toBeNull();
+
+    await store.beginSession({ sessionId: 'svc-events', startedAt: 100 });
+    await store.appendSegment('svc-events', segment({ text: 'the lord is my shepherd' }));
+    const appended = await store.appendEvent('svc-events', {
+      type: 'action', lane: 'verse', action: 'send', reference: 'Psalm 23:1', confidence: 0.9,
+    });
+    expect(appended).toMatchObject({ ok: true, stored: true, eventCount: 1 });
+    await store.endSession('svc-events', { endedAt: 2000 });
+
+    const reply = await store.getSession('svc-events');
+    expect(reply.session.events).toHaveLength(1);
+    expect(reply.session.events[0]).toMatchObject({
+      type: 'action', lane: 'verse', action: 'send', reference: 'Psalm 23:1',
+    });
+    const [summary] = await store.listSessions();
+    expect(summary.eventCount).toBe(1);
+
+    const exported = await store.exportHistory({ format: 'json', sessionId: 'svc-events' });
+    expect(exported.ok).toBe(true);
+    const content = JSON.parse(fs.readFileSync(exported.path, 'utf8'));
+    expect(content.sessions[0].events[0].action).toBe('send');
   });
 
   it('accepts a WER estimate on endSession (the Phase 3 fill-in path)', async () => {

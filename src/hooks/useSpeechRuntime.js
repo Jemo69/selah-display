@@ -113,6 +113,9 @@ export function useSpeechRuntime(enabled = false) {
           : 'The speech engine reported a problem.'
       );
       if (payload.fatal === true) store.setStatus('error');
+      if (payload.sessionId) {
+        recordTuningEvent(payload.sessionId, { type: 'engine_error', code: payload.code });
+      }
       diagWarn('sermon-assist', 'engine error received', {
         code: payload.code,
         fatal: payload.fatal === true,

@@ -400,6 +400,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       export: (payload) => ipcRenderer.invoke('speech:history:export', payload),
       erase: () => ipcRenderer.invoke('speech:history:erase'),
       append: (payload) => ipcRenderer.invoke('speech:history:append', payload),
+      event: (sessionId, event) => ipcRenderer.invoke('speech:history:append', { op: 'event', sessionId, event }),
     },
     onHealth: (callback) => onSpeechEvent('speech:health', callback),
     onTranscript: (callback) => onSpeechEvent('speech:transcript', callback),

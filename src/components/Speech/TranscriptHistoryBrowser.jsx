@@ -224,6 +224,10 @@ const TranscriptHistoryBrowser = ({ darkMode = false }) => {
           Every transcribed session is stored on this computer — browsable, searchable, exportable,
           and erasable. One file per session, capped, and never written to the app log.
         </p>
+        <p className={mutedClass} data-testid="history-tuning-note">
+          JSON exports also include detection and action events — lane, reference, detector,
+          confidence, and send/stage/dismiss — for offline tuning.
+        </p>
       </div>
 
       {notice ? (

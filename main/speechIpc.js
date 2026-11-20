@@ -1001,6 +1001,19 @@ export function registerSpeechIpc({
         return historyFailure(error);
       }
     }
+    if (op === 'event') {
+      if (typeof payload.sessionId !== 'string' || !payload.sessionId) {
+        return invalidArgument('sessionId');
+      }
+      if (payload.event === null || typeof payload.event !== 'object') {
+        return invalidArgument('event');
+      }
+      try {
+        return await history.appendEvent(payload.sessionId, payload.event);
+      } catch (error) {
+        return historyFailure(error);
+      }
+    }
     if (op === 'end') {
       if (typeof payload.sessionId !== 'string' || !payload.sessionId) {
         return invalidArgument('sessionId');
@@ -1015,7 +1028,7 @@ export function registerSpeechIpc({
       ok: false,
       code: 'invalid-argument',
       field: 'op',
-      message: 'op must be one of begin, segment, or end',
+      message: 'op must be one of begin, segment, event, or end',
     };
   });
 

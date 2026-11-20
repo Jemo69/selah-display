@@ -21,12 +21,13 @@
  * selector in zustand returns a fresh reference every call and re-renders the
  * rail forever.
  */
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import useSpeechStore from '../../context/SpeechStore';
 import useLyricsStore from '../../context/LyricsStore';
 import useSpeechRuntimeStore from '../../context/SpeechRuntimeStore';
 import { capabilitiesForProviderId, deriveSuggestions } from '../../hooks/useSpeechRuntime';
 import { useCurrentBibleReference, useVerseSearchWorker, resolveSpeechLocale } from '../../hooks/useVerseSearchWorker';
+import { recordTuningEvent } from '../../speech/tuningData.js';
 import NextLyricSuggestion from './NextLyricSuggestion';
 import VerseSuggestionCard from './VerseSuggestionCard';
 import SermonNoteSuggestion from './SermonNoteSuggestion';
@@ -86,6 +87,8 @@ const SuggestionLanes = ({ darkMode = false, cardClass, titleClass }) => {
   // from the same state the card renders from, so the prior and the display
   // cannot disagree.
   const transcript = segments.map((segment) => segment?.text || '').join(' ').slice(-600);
+  const sessionId = segments.at(-1)?.sessionId ?? null;
+  const lastSuggestionRef = useRef('');
   const currentReference = useCurrentBibleReference();
   const { results: searchResults } = useVerseSearchWorker({
     enabled: Boolean(lanes.find((lane) => lane.id === 'verse')?.enabled),
@@ -111,6 +114,39 @@ const SuggestionLanes = ({ darkMode = false, cardClass, titleClass }) => {
     // Phase 7 — dismissed quotes, kept apart from dismissed verse references.
     dismissedQuotes,
   });
+
+  useEffect(() => {
+    if (!sessionId) return;
+    const verse = suggestions.verse;
+    const signature = verse
+      ? `verse|${verse.verse?.reference ?? ''}|${verse.detector ?? ''}|${verse.confidence ?? ''}`
+      : suggestions.quote
+        ? `quote|${String(suggestions.quote.content ?? '').slice(0, 48)}`
+        : suggestions.lyric
+          ? `lyric|${suggestions.lyric.match?.index ?? ''}`
+          : suggestions.note
+            ? 'note'
+            : '';
+    if (!signature || signature === lastSuggestionRef.current) return;
+    lastSuggestionRef.current = signature;
+    if (verse) {
+      recordTuningEvent(sessionId, {
+        type: 'suggestion',
+        lane: 'verse',
+        reference: verse.verse?.reference,
+        detector: verse.detector,
+        confidence: verse.confidence,
+        tStartMs: segments.at(-1)?.tStartMs,
+        tEndMs: segments.at(-1)?.tEndMs,
+      });
+    } else if (suggestions.quote) {
+      recordTuningEvent(sessionId, { type: 'suggestion', lane: 'quote' });
+    } else if (suggestions.lyric) {
+      recordTuningEvent(sessionId, { type: 'suggestion', lane: 'lyric' });
+    } else if (suggestions.note) {
+      recordTuningEvent(sessionId, { type: 'suggestion', lane: 'note' });
+    }
+  }, [sessionId, suggestions, segments]);
 
   const card = cardClass ?? 'rounded-xl border p-5 space-y-4';
   const title = titleClass ?? 'text-[11px] font-bold uppercase tracking-wider';
@@ -168,6 +204,7 @@ const SuggestionLanes = ({ darkMode = false, cardClass, titleClass }) => {
           key={suggestions.verse.verse?.reference ?? 'verse'}
           darkMode={darkMode}
           suggestion={suggestions.verse}
+          sessionId={sessionId}
         />
       ) : null}
 
