@@ -751,9 +751,9 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
                   </button>
                 </div>
                 <div className={`max-h-40 overflow-y-auto p-2 grid grid-cols-1 gap-1 ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
-                  {bibleVerseLog.map((loggedReference) => (
+                  {bibleVerseLog.map((loggedReference, index) => (
                     <button
-                      key={loggedReference}
+                      key={`${loggedReference}-${index}`}
                       onClick={() => {
                         const baseBible = currentBible || (activeBibleId ? bibles[activeBibleId] : null) || Object.values(bibles)[0];
                         if (baseBible) {
@@ -765,6 +765,11 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
                           }
                           setQuery(loggedReference);
                           setSearchResults(searchBibleExperimental(baseBible, loggedReference, bibles, 20, defaultBibleId, Boolean(searchAll)));
+                        } else {
+                          // No Bible loaded — surface the reference in the
+                          // search box so the request stays visible and
+                          // resolves as soon as a translation is imported.
+                          setQuery(loggedReference);
                         }
                       }}
                       className={`truncate rounded-lg border px-3 py-2 text-left text-sm font-medium transition-colors ${darkMode ? 'border-gray-700 text-gray-200 hover:bg-gray-700' : 'border-gray-100 text-gray-800 hover:bg-gray-50 hover:border-gray-200'}`}

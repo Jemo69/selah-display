@@ -441,8 +441,9 @@ const useBibleStore = create(
       logBibleVerseRequest: (reference) => set((state) => {
         const cleaned = typeof reference === 'string' ? reference.trim() : '';
         if (!cleaned) return state;
-        // Skip consecutive duplicates (slide navigation re-sends verse 1).
-        if (state.bibleVerseLog[0] === cleaned) return state;
+        // Every request is logged, including repeats: slide navigation
+        // never reaches here (LyricDisplayApp only logs the first slide),
+        // so each entry is a genuine new send.
         return {
           bibleVerseLog: [cleaned, ...state.bibleVerseLog].slice(0, 100)
         };
