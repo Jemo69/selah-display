@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * speech-engine/scripts/prepare-smoke.mjs — fetch the light smoke-test engine.
+ * speech-engine/scripts/prepare-smoke.mjs — fetch the light smoke-test inputs.
  *
  * WHAT THIS IS. The one-time setup for `smoke.mjs` on a machine that has no
- * speech engine installed. It downloads two external, pinned artifacts into
+ * speech engine installed. It downloads three external, pinned artifacts into
  * `.speech-smoke/` (gitignored):
  *
  *   1. whisper.cpp's prebuilt CLI for this platform, from the same pinned
@@ -11,16 +11,20 @@
  *      SHA-256, and unpacked with the same archive reader.
  *   2. Tiny English Q5_1 — the lightest English whisper model in Selah's
  *      catalog. 31 MiB on disk, runs on CPU, no GPU and no cloud.
+ *   3. The King James Bible as JSON (public domain, 4.1 MiB), so the verse
+ *      detector can search a real 31,102-verse corpus instead of a toy
+ *      excerpt. The smoke test converts it to Selah's bible shape in memory;
+ *      no app data is touched.
  *
- * Both are external artifacts that run locally. Nothing here calls a hosted
- * API, and nothing is written into the app's user data, so this cannot change
- * what an installed Selah uses.
+ * All three are external artifacts that run locally. Nothing here calls a
+ * hosted API, and nothing is written into the app's user data, so this cannot
+ * change what an installed Selah uses.
  *
  * WHY CACHE AND IDEMPOTENCE MATTER. CI runs this on every speech change. The
  * workflow caches `.speech-smoke/`; on a hit this script verifies what is
  * already there and returns without a network request. On a miss the whole
- * download is ~41 MiB — one 31 MiB model plus a 10 MiB binary — paid once per
- * cache key, not once per run.
+ * download is ~45 MiB — 31 MiB model, 10 MiB binary, 4.1 MiB Bible — paid once
+ * per cache key, not once per run.
  *
  * USAGE
  *   node speech-engine/scripts/prepare-smoke.mjs
@@ -55,6 +59,25 @@ const CACHE_ROOT = path.join(REPO_ROOT, '.speech-smoke');
 /** The lightest English model in the catalog — 31 MiB, CPU-friendly. */
 const MODEL_ID = 'tiny.en-q5_1';
 
+/**
+ * Public-domain KJV JSON, pinned to one commit and one digest.
+ *
+ * Source: https://github.com/thiagobodruk/bible (json/en_kjv.json). The file
+ * is an array of books, each with chapters of verse strings; smoke.mjs maps
+ * that into the `{ books: [{ name, chapters: [{ number, verses }] }] }` shape
+ * the detector consumes. Pinned to a commit so a force-push upstream cannot
+ * change what CI proves.
+ */
+const KJV = Object.freeze({
+  name: 'KJV',
+  url: 'https://raw.githubusercontent.com/thiagobodruk/bible/df0860fe0921b5b899d1b554041900ab072cd4c4/json/en_kjv.json',
+  sha256: 'f627b3c24a617013a4514ab24b6dd1bb305b09af237994c018f74cb9c7e71f41',
+  fileName: 'kjv.json',
+});
+
+/** Records the hash of the binary this script installed, so cache hits can self-check. */
+const BINARY_MARKER = '.smoke-binary.sha256';
+
 function parseArgs(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i += 1) {
@@ -80,60 +103,14 @@ function formatMiB(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
-/**
- * Download the pinned light model, verify its published digest, and place it
- * atomically in the models directory.
- */
-async function prepareModel(modelsDir, { force }) {
-  const row = (catalog.models || []).find((model) => model.id === MODEL_ID && model.providerId === 'whispercpp');
-  if (!row) throw new Error(`The catalog no longer has the ${MODEL_ID} model row.`);
-  if (!row.url || !row.sha256) {
-    throw new Error(`The ${MODEL_ID} row must have both a URL and a pinned SHA-256 to be fetched safely.`);
-  }
-
-  const target = path.join(modelsDir, row.fileName);
-  const backup = `${target}.old`;
-
-  // A previous Windows replacement may have died after moving the old file
-  // aside. Put it back before deciding anything, so a cache is never left with
-  // no model at all.
-  if (!existsSync(target) && existsSync(backup)) {
-    try {
-      renameSync(backup, target);
-      console.log(`  model         restored ${MODEL_ID} from a previous interrupted replacement`);
-    } catch {
-      // If this fails, the download below is still a valid recovery path.
-    }
-  }
-
-  if (!force && existsSync(target)) {
-    const existing = readFileSync(target);
-    if (sha256(existing) === row.sha256) {
-      console.log(`  model         ${MODEL_ID} already present (${formatMiB(existing.length)}, sha256 verified)`);
-      return { bytes: existing.length, downloaded: false };
-    }
-    console.log(`  model         ${MODEL_ID} is present but does not match its digest — replacing it`);
-  }
-
-  mkdirSync(modelsDir, { recursive: true });
-  console.log(`  model         downloading ${MODEL_ID} (${row.downloadLabel || formatMiB(row.downloadBytes || 0)}) from huggingface.co`);
-  const response = await fetch(row.url, { redirect: 'follow' });
-  if (!response.ok) throw new Error(`Model download failed (HTTP ${response.status}).`);
-
-  const buffer = Buffer.from(await response.arrayBuffer());
-  const digest = sha256(buffer);
-  if (digest !== row.sha256) {
-    throw new Error(
-      `Model digest mismatch (expected ${row.sha256}, got ${digest}). Nothing was installed.`
-    );
-  }
-
+/** Replace `target` with `buffer`, keeping a recoverable old copy on Windows. */
+function replaceAtomically(target, buffer, backup) {
   const part = `${target}.part`;
   writeFileSync(part, buffer);
   // POSIX rename() replaces atomically; Windows refuses to rename onto an
   // existing file. Try the atomic path first. On Windows, move the old file to
   // a backup and restore it if the new rename fails, so there is always one
-  // usable model on disk (the next run also restores the backup at startup).
+  // usable file on disk (the next run also restores the backup at startup).
   try {
     renameSync(part, target);
   } catch (error) {
@@ -143,7 +120,7 @@ async function prepareModel(modelsDir, { force }) {
     }
     if (!existsSync(target)) {
       renameSync(part, target);
-      return { bytes: buffer.length, downloaded: true };
+      return;
     }
     rmSync(backup, { force: true });
     renameSync(target, backup);
@@ -156,11 +133,99 @@ async function prepareModel(modelsDir, { force }) {
       throw renameError;
     }
   }
+}
+
+/**
+ * Ensure one external file exists and matches its pinned SHA-256.
+ *
+ * Idempotent: a matching file is reported and left alone. A mismatch is
+ * replaced. The download only becomes the final file after its digest passes.
+ */
+async function ensureVerifiedFile({
+  url,
+  expectedSha256,
+  target,
+  force,
+  kind,
+  name,
+  host,
+  sizeLabel,
+}) {
+  const backup = `${target}.old`;
+
+  // A previous Windows replacement may have died after moving the old file
+  // aside. Put it back before deciding anything, so a cache is never left with
+  // no usable file at all.
+  if (!existsSync(target) && existsSync(backup)) {
+    try {
+      renameSync(backup, target);
+      console.log(`  ${kind.padEnd(13)} restored ${name} from a previous interrupted replacement`);
+    } catch {
+      // If this fails, the download below is still a valid recovery path.
+    }
+  }
+
+  if (!force && existsSync(target)) {
+    const existing = readFileSync(target);
+    if (sha256(existing) === expectedSha256) {
+      console.log(`  ${kind.padEnd(13)} ${name} already present (${formatMiB(existing.length)}, sha256 verified)`);
+      return { bytes: existing.length, downloaded: false };
+    }
+    console.log(`  ${kind.padEnd(13)} ${name} is present but does not match its digest — replacing it`);
+  }
+
+  mkdirSync(path.dirname(target), { recursive: true });
+  console.log(
+    `  ${kind.padEnd(13)} downloading ${name} (${sizeLabel}) from ${host || 'the pinned source'}`
+  );
+  const response = await fetch(url, { redirect: 'follow' });
+  if (!response.ok) throw new Error(`${name} download failed (HTTP ${response.status}).`);
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+  const digest = sha256(buffer);
+  if (digest !== expectedSha256) {
+    throw new Error(
+      `${name} digest mismatch (expected ${expectedSha256}, got ${digest}). Nothing was installed.`
+    );
+  }
+
+  replaceAtomically(target, buffer, backup);
   return { bytes: buffer.length, downloaded: true };
 }
 
-/** Records the hash of the binary this script installed, so cache hits can self-check. */
-const BINARY_MARKER = '.smoke-binary.sha256';
+/** Download the pinned light model into the models directory. */
+async function prepareModel(modelsDir, { force }) {
+  const row = (catalog.models || []).find((model) => model.id === MODEL_ID && model.providerId === 'whispercpp');
+  if (!row) throw new Error(`The catalog no longer has the ${MODEL_ID} model row.`);
+  if (!row.url || !row.sha256) {
+    throw new Error(`The ${MODEL_ID} row must have both a URL and a pinned SHA-256 to be fetched safely.`);
+  }
+
+  return ensureVerifiedFile({
+    url: row.url,
+    expectedSha256: row.sha256,
+    target: path.join(modelsDir, row.fileName),
+    force,
+    kind: 'model',
+    name: MODEL_ID,
+    host: 'huggingface.co',
+    sizeLabel: row.downloadLabel || formatMiB(row.downloadBytes || 0),
+  });
+}
+
+/** Download the pinned public-domain KJV used by the verse-detection check. */
+async function prepareBible(biblesDir, { force }) {
+  return ensureVerifiedFile({
+    url: KJV.url,
+    expectedSha256: KJV.sha256,
+    target: path.join(biblesDir, KJV.fileName),
+    force,
+    kind: 'bible',
+    name: KJV.name,
+    host: 'github.com',
+    sizeLabel: '4.1 MiB',
+  });
+}
 
 /** Download and unpack the pinned whisper.cpp binary for this platform. */
 async function prepareBinary(binDir, { force }) {
@@ -211,27 +276,37 @@ async function prepareBinary(binDir, { force }) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
-    console.log('Usage: node speech-engine/scripts/prepare-smoke.mjs [--force] [--bin-dir=DIR] [--models-dir=DIR]');
+    console.log(
+      'Usage: node speech-engine/scripts/prepare-smoke.mjs ' +
+      '[--force] [--bin-dir=DIR] [--models-dir=DIR] [--bibles-dir=DIR]'
+    );
     return;
   }
 
   const force = args.force === true || args.force === 'true';
   const binDir = path.resolve(String(args['bin-dir'] || path.join(CACHE_ROOT, 'bin')));
   const modelsDir = path.resolve(String(args['models-dir'] || path.join(CACHE_ROOT, 'models')));
+  const biblesDir = path.resolve(String(args['bibles-dir'] || path.join(CACHE_ROOT, 'bibles')));
 
   console.log('Preparing the light speech smoke test');
   console.log(`  cache         ${path.relative(process.cwd(), CACHE_ROOT) || '.'}`);
 
   const binary = await prepareBinary(binDir, { force });
   const model = await prepareModel(modelsDir, { force });
+  const bible = await prepareBible(biblesDir, { force });
 
-  const total = model.bytes + (binary.installed ? binary.bytes : 0);
+  const downloadedBytes =
+    (model.downloaded ? model.bytes : 0) +
+    (bible.downloaded ? bible.bytes : 0) +
+    (binary.installed ? binary.bytes : 0);
 
   console.log(`  bin dir       ${path.relative(process.cwd(), binDir)}`);
   console.log(`  models dir    ${path.relative(process.cwd(), modelsDir)}`);
+  console.log(`  bibles dir    ${path.relative(process.cwd(), biblesDir)}`);
   console.log(
-    `READY: ${model.downloaded || binary.installed ? 'downloaded' : 'cached'} ` +
-    `${formatMiB(total)} of external artifacts. Run: npm run speech-smoke`
+    downloadedBytes > 0
+      ? `READY: downloaded ${formatMiB(downloadedBytes)} of verified artifacts. Run: npm run speech-smoke`
+      : 'READY: cache hit, nothing downloaded. Run: npm run speech-smoke'
   );
 }
 

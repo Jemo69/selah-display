@@ -75,12 +75,16 @@ right words on this machine?" — that needs real audio through the real engine.
 - it forks the real `index.js`, creates a real session, sends 63 PCM frames
   over the real HTTP contract, and compares the returned final transcript to
   the spoken sentence using `shared/wer.js`
+- it then runs the app's **real verse detector** (`rankVerses` + `detectVerse`)
+  over the full 31,102-verse KJV and asserts the transcript resolves to
+  **John 10:10** — text is not enough; the reference must come out
 - it exits nonzero when the engine is missing, returns an error, returns no
-  transcript, or returns the wrong words
+  transcript, returns the wrong words, or detects the wrong verse
 
 ```sh
-# Light mode: fetch the pinned whisper.cpp binary + tiny.en Q5_1 (31 MiB)
-# into the gitignored .speech-smoke/ folder, once. CI caches the same folder.
+# Light mode: fetch the pinned whisper.cpp binary, tiny.en Q5_1 (31 MiB),
+# and the public-domain KJV (4.1 MiB) into the gitignored .speech-smoke/
+# folder, once. CI caches the same folder.
 npm run speech-smoke:setup
 npm run speech-smoke
 ```
@@ -103,11 +107,25 @@ needs no model and no binary at all:
 node speech-engine/scripts/smoke.mjs --engine=osdevice
 ```
 
+A recording from a real microphone works too. Tell the script what was said
+and which reference it must resolve to:
+
+```sh
+node speech-engine/scripts/smoke.mjs \
+  --audio=/path/john-10-10.wav \
+  --expect="The thief comes only to steal and kill and destroy. I came that they may have life, and have it abundantly." \
+  --detect="John 10:10"
+```
+
+Use `--detect=none` to check transcription only, or `--bible=/path/kjv.json`
+to run the verse search against another translation.
+
 **Cost.** No network after setup, no hosted model, no key. Inference on the
-6-second clip is roughly one to three seconds on a CPU. The only persistent bytes are
-the 196 KB fixture and the gitignored light engine: 41 MiB downloaded, about
-62 MiB unpacked into `.speech-smoke/`. CI restores that folder from a cache
-keyed by the pinned release + model digest.
+6-second clip is roughly one to three seconds on a CPU, and the full-KJV
+scan adds about a quarter second. The only persistent bytes are the 196 KB
+fixture and the gitignored light engine: 45 MiB downloaded, about 66 MiB
+unpacked into `.speech-smoke/`. CI restores that folder from a cache keyed by
+the pinned release, model, and Bible digests.
 
 ## Transport decision (Phase 2)
 

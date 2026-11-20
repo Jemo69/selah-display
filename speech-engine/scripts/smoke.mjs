@@ -53,6 +53,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
+import * as nodeModule from 'node:module';
 
 import { BYTES_PER_FRAME, SAMPLE_RATE } from '../../shared/speech/protocol.js';
 import { werDetail } from '../../shared/wer.js';
@@ -62,6 +63,11 @@ const ENGINE_ROOT = path.resolve(HERE, '..');
 const REPO_ROOT = path.resolve(ENGINE_ROOT, '..');
 const INDEX_JS = path.join(ENGINE_ROOT, 'index.js');
 const DEFAULT_AUDIO = path.join(ENGINE_ROOT, 'test', 'fixtures', 'voice-smoke-16k.wav');
+const DEFAULT_BIBLE = path.join(ENGINE_ROOT, 'test', 'fixtures', 'verse-smoke-bible.json');
+const CACHED_KJV = path.join(REPO_ROOT, '.speech-smoke', 'bibles', 'kjv.json');
+
+/** The reference the spoken verse must resolve to. */
+const DEFAULT_DETECT_REFERENCE = 'John 10:10';
 
 /** The sentence spoken in the committed clip. Keep in step with the fixture. */
 const DEFAULT_REFERENCE = 'The thief comes only to steal and kill and destroy. I came that they may have life, and have it abundantly.';
@@ -83,6 +89,16 @@ const TRANSCRIBE_TIMEOUT_MS = 90_000;
 
 /** WER budget. Tiny models sometimes drop "the"; more than this is not working. */
 const DEFAULT_MAX_WER = 0.25;
+
+// The verse detector lives in src/speech and uses the app's Vite `shared/`
+// alias. Register the tiny resolver before the dynamic import below, so plain
+// `node smoke.mjs` can call the real detector with no flags.
+const { resolveAlias } = await import('./alias-hooks.mjs');
+if (typeof nodeModule.registerHooks === 'function') {
+  nodeModule.registerHooks({ resolve: resolveAlias });
+} else {
+  nodeModule.register(new URL('./alias-hooks.mjs', import.meta.url));
+}
 
 /**
  * Parse `--key=value`, `--key value`, and bare `--flag` arguments.
@@ -384,6 +400,37 @@ async function stopEngine(child) {
   }
 }
 
+/** Read either Selah's bible shape or the pinned thiagobodruk array shape. */
+function loadBible(file) {
+  const raw = JSON.parse(readFileSync(file, 'utf8'));
+  if (raw && Array.isArray(raw.books)) return raw;
+  if (Array.isArray(raw)) {
+    return {
+      id: 'smoke-kjv',
+      name: 'KJV',
+      books: raw.map((book, bookIndex) => ({
+        number: bookIndex + 1,
+        name: book.name || book.abbrev || `Book ${bookIndex + 1}`,
+        chapters: (Array.isArray(book.chapters) ? book.chapters : []).map((verses, chapterIndex) => ({
+          number: chapterIndex + 1,
+          verses: (Array.isArray(verses) ? verses : []).map((text, verseIndex) => ({
+            number: verseIndex + 1,
+            text: String(text),
+          })),
+        })),
+      })),
+    };
+  }
+  throw new Error(`Unrecognised Bible fixture shape in ${file}.`);
+}
+
+function countVerses(bible) {
+  return bible.books.reduce(
+    (total, book) => total + book.chapters.reduce((sum, chapter) => sum + chapter.verses.length, 0),
+    0
+  );
+}
+
 function help() {
   console.log(`Selah speech smoke test — real audio through the real engine.
 
@@ -395,6 +442,9 @@ Options:
   --audio=PATH               WAV to transcribe (default: the committed 6.3 s clip)
   --expect="TEXT"            what the clip says (default follows the committed clip)
   --max-wer=0.25             highest acceptable word error rate
+  --detect=REF               verse the transcript must resolve to (default: John 10:10)
+  --detect=none              skip verse detection (custom audio)
+  --bible=PATH               Bible JSON used for full-text detection
   --model=ID                 whisper model id (default: tiny.en-q5_1, 31 MiB)
   --bin-dir=DIR              whisper.cpp binary directory
   --models-dir=DIR           GGML weights directory
@@ -430,6 +480,14 @@ async function main() {
   const maxWer = args['max-wer'] === undefined ? DEFAULT_MAX_WER : Number(args['max-wer']);
   if (!Number.isFinite(maxWer) || maxWer < 0) throw new Error('--max-wer must be a non-negative number.');
 
+  const detectReference = args.detect === undefined
+    ? (audioPath === DEFAULT_AUDIO ? DEFAULT_DETECT_REFERENCE : null)
+    : (args.detect === 'none' || args.detect === false ? null : String(args.detect));
+  const biblePath = path.resolve(
+    String(args.bible || (existsSync(CACHED_KJV) ? CACHED_KJV : DEFAULT_BIBLE))
+  );
+  if (detectReference && !existsSync(biblePath)) throw new Error(`Bible file not found: ${biblePath}`);
+
   const binDir = resolveBinDir(args['bin-dir']);
   const model = String(args.model || process.env.LD_SPEECH_MODEL || DEFAULT_MODEL);
   const modelsDir = resolveModelsDir(args['models-dir'], model);
@@ -444,6 +502,10 @@ async function main() {
   console.log(`  engine        ${engine} (light mode)`);
   console.log(`  audio         ${path.relative(process.cwd(), audioPath)} (${audioSeconds.toFixed(2)}s)`);
   console.log(`  frames        ${frames.length} × ${FRAME_BYTES} bytes (RMS ${rms.toFixed(3)})`);
+  const bible = detectReference ? loadBible(biblePath) : null;
+  if (bible) {
+    console.log(`  bible         ${bible.name} (${countVerses(bible).toLocaleString('en-US')} verses)`);
+  }
   if (engine === 'whisper') {
     console.log(`  model         ${model}`);
     console.log(`  binary dir    ${binDir}`);
@@ -526,7 +588,28 @@ async function main() {
       );
     }
 
-    console.log('PASS: real voice became the expected text through the real engine.');
+    if (detectReference) {
+      const { rankVerses } = await import('../../src/speech/verseCorpus.js');
+      const { detectVerse } = await import('../../src/speech/detectVerse.js');
+      const searchResults = rankVerses(transcript, bible);
+      const detected = detectVerse(transcript, { searchResults });
+      if (!detected) {
+        throw new Error(
+          `The transcript was correct, but the verse detector found nothing (expected ${detectReference}).`
+        );
+      }
+      console.log(
+        `  verse         ${detected.verse.reference} (${detected.detector}, confidence ${detected.confidence.toFixed(2)})`
+      );
+      if (detected.verse.reference !== detectReference) {
+        throw new Error(
+          `The verse detector returned ${detected.verse.reference}, not ${detectReference}.`
+        );
+      }
+      console.log(`PASS: real voice became text, and the verse detector found ${detectReference}.`);
+    } else {
+      console.log('PASS: real voice became the expected text through the real engine.');
+    }
   } finally {
     await stopEngine(child);
   }

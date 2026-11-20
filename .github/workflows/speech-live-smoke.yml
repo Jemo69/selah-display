@@ -5,11 +5,12 @@ name: Speech Live Smoke
 # real recognizer, on every change that can affect it.
 #
 # COST. No hosted API, no key, no per-run model download. The first run downloads
-# a pinned whisper.cpp binary (10 MiB) and Tiny English Q5_1 (31 MiB), then
-# unpacks them into the gitignored .speech-smoke/ folder (~62 MiB on disk).
-# actions/cache restores that folder on later runs. The committed clip is
-# 196 KB, and inference on it takes one to three seconds on a CPU. There is no GPU
-# and no cloud dependency.
+# a pinned whisper.cpp binary (10 MiB), Tiny English Q5_1 (31 MiB), and the
+# public-domain KJV (4.1 MiB), then unpacks them into the gitignored
+# .speech-smoke/ folder (~66 MiB on disk). actions/cache restores that folder
+# on later runs. The committed clip is 196 KB, and inference plus a full-KJV
+# verse scan takes a few seconds on a CPU. There is no GPU and no cloud
+# dependency.
 #
 # WHY THIS IS A SEPARATE WORKFLOW. It should be visible as its own check, not
 # buried inside a platform build, and a cache/download failure should fail one
@@ -46,7 +47,7 @@ concurrency:
 
 jobs:
   live-whisper-smoke:
-    name: Real voice → real transcript
+    name: Real voice → John 10:10 (Linux whisper)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -68,16 +69,17 @@ jobs:
           path: .speech-smoke
           key: speech-smoke-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('speech-engine/scripts/prepare-smoke.mjs', 'main/speechEngineInstaller.js', 'shared/speech/models.catalog.json') }}
 
-      # Idempotent: on a cache hit it hashes the existing model and returns
-      # without network I/O. On a miss it downloads, verifies both SHA-256
-      # digests, and unpacks the pinned payload.
-      - name: Fetch the pinned engine and light model
+      # Idempotent: on a cache hit it hashes the existing model, binary, and
+      # Bible and returns without network I/O. On a miss it downloads, verifies
+      # all three SHA-256 digests, and unpacks the pinned payload.
+      - name: Fetch the pinned engine, light model, and KJV
         run: node speech-engine/scripts/prepare-smoke.mjs
 
-      # Forks the real index.js, sends the committed 6.3 s John 10:10 clip over the real
-      # HTTP contract, and fails unless the returned final transcript matches
-      # the spoken sentence within the WER budget.
-      - name: Transcribe the committed voice clip
+      # Forks the real index.js, sends the committed 6.3 s John 10:10 clip over
+      # the real HTTP contract, then runs rankVerses + detectVerse over the
+      # full KJV. Fails unless the transcript is within the WER budget AND the
+      # detected reference is exactly John 10:10.
+      - name: Transcribe the clip and detect John 10:10
         run: node speech-engine/scripts/smoke.mjs
 
       # A cache that silently stopped being populated is a slow leak in CI
@@ -94,7 +96,7 @@ jobs:
   # desktop Windows with System.Speech; if a future image drops the recognizer,
   # this job fails loudly instead of quietly skipping the feature.
   live-osdevice-smoke:
-    name: Real voice → OS on-device transcript (Windows)
+    name: Real voice → John 10:10 (Windows OS on-device)
     runs-on: windows-2022
     timeout-minutes: 10
     steps:
@@ -106,5 +108,5 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Transcribe the committed voice clip
+      - name: Transcribe the clip and detect John 10:10
         run: node speech-engine/scripts/smoke.mjs --engine=osdevice --language=en
