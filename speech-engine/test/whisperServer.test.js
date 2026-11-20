@@ -60,6 +60,30 @@ test('framesAreSilent rejects silence and accepts quiet speech', () => {
   assert.equal(wavIsSilent(framesToWav([Buffer.alloc(3200)])), true);
 });
 
+test('a spawn error is reported as a segment error, never an uncaught crash', async () => {
+  if (process.platform === 'win32') return; // exec-bit model is POSIX-specific
+  const base = mkdtempSync(path.join(tmpdir(), 'ld-server-fail-'));
+  try {
+    const bin = path.join(base, 'bin');
+    const models = path.join(base, 'models');
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(bin);
+    mkdirSync(models);
+    // Non-executable file: spawn emits EACCES.
+    writeFileSync(path.join(bin, serverBinaryName()), '#!/bin/sh\nexit 0\n', { mode: 0o644 });
+    writeFileSync(path.join(models, 'ggml-tiny.en.bin'), Buffer.from([1, 2, 3]));
+    const engine = createWhisperServerEngine({ binDir: bin, modelsDir: models, modelId: 'tiny.en' });
+    const frame = Buffer.alloc(3200);
+    for (let i = 0; i + 1 < frame.length; i += 2) frame.writeInt16LE(i % 4 === 0 ? 1200 : -1200, i);
+    const result = await engine.transcribe({ frames: [frame] });
+    const error = result.messages.find((m) => m.t === 'error');
+    assert.equal(error.code, 'server-start-failed');
+    engine.close();
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('the server engine refuses to construct without its binary', () => {
   assert.throws(
     () => createWhisperServerEngine({ binDir: '/definitely/missing', modelsDir: '/missing' }),

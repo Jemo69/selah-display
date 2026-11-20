@@ -151,12 +151,58 @@ export function createWhisperServerEngine({
   let isClosed = false;
   let server = null;
   let starting = null;
+  let pendingChild = null;
 
-  function startServer() {
-    if (server?.child && server.child.exitCode === null) return server;
-    if (starting) return starting;
+  function alive(child) {
+    return Boolean(child) && child.exitCode === null && child.signalCode === null;
+  }
 
-    starting = (async () => {
+  function stopServer() {
+    for (const child of new Set([server?.child, pendingChild])) {
+      if (child) {
+        try { child.kill('SIGKILL'); } catch { /* already gone */ }
+      }
+    }
+    server = null;
+    pendingChild = null;
+    starting = null;
+  }
+
+  function closedResult(sessionId, created = []) {
+    return {
+      sessionId: sessionId || '',
+      messages: [
+        ...created,
+        {
+          t: 'error',
+          sessionId: sessionId || '',
+          code: 'engine-closed',
+          message: 'Speech engine has closed.',
+          fatal: false,
+        },
+      ],
+    };
+  }
+
+  async function startServer(sessionLanguage) {
+    if (isClosed) throw Object.assign(new Error('Speech engine has closed.'), { code: 'engine-closed' });
+    if (starting) {
+      await starting;
+    }
+    const requested = typeof sessionLanguage === 'string' && sessionLanguage && sessionLanguage !== 'auto'
+      ? sessionLanguage
+      : (language || 'auto');
+
+    if (server) {
+      if (alive(server.child) && (
+        requested === 'auto' ||
+        server.language === requested ||
+        server.language === 'auto'
+      )) return server;
+      stopServer();
+    }
+
+    const attempt = (async () => {
       const port = await freePort();
       const args = [
         '-m', weights,
@@ -164,32 +210,49 @@ export function createWhisperServerEngine({
         '--host', '127.0.0.1',
         '--port', String(port),
         '-nt',
-        '-l', language || 'auto',
+        '-l', requested,
       ];
       const child = spawn(path.join(binDir, serverBinaryName()), args, {
         stdio: ['ignore', 'pipe', 'pipe'],
         shell: false,
       });
+      pendingChild = child;
       let stderr = '';
       let stdout = '';
+      let spawnError = null;
       child.stderr?.on('data', (chunk) => { stderr = (stderr + chunk).slice(-4000); });
       child.stdout?.on('data', (chunk) => { stdout = (stdout + chunk).slice(-4000); });
+      child.on('error', (error) => { spawnError = error; });
+      child.on('exit', () => {
+        if (server?.child === child) server = null;
+        if (pendingChild === child) pendingChild = null;
+      });
 
       const deadline = Date.now() + START_TIMEOUT_MS;
       while (Date.now() < deadline) {
-        if (child.exitCode !== null) {
-          throw Object.assign(new Error(`whisper-server exited ${child.exitCode} before ready`), {
+        if (isClosed) {
+          try { child.kill('SIGKILL'); } catch { /* already gone */ }
+          throw Object.assign(new Error('Speech engine has closed.'), { code: 'engine-closed' });
+        }
+        if (spawnError) {
+          throw Object.assign(new Error(`whisper-server could not start: ${spawnError.code || 'error'}`), {
             code: 'server-start-failed',
-            detail: (stderr || stdout).slice(-500),
           });
+        }
+        if (!alive(child)) {
+          throw Object.assign(
+            new Error(`whisper-server exited ${child.exitCode ?? child.signalCode ?? 'unknown'} before ready`),
+            { code: 'server-start-failed' }
+          );
         }
         try {
           const res = await fetch(`http://127.0.0.1:${port}/`, {
             signal: AbortSignal.timeout(1000),
           });
-          if (res.ok) {
-            server = { child, port };
-            starting = null;
+          const body = await res.text();
+          if (res.ok && /Whisper\.cpp/i.test(body)) {
+            pendingChild = null;
+            server = { child, port, language: requested };
             return server;
           }
         } catch {
@@ -199,16 +262,23 @@ export function createWhisperServerEngine({
       }
 
       try { child.kill('SIGKILL'); } catch { /* already gone */ }
-      starting = null;
       throw Object.assign(new Error('whisper-server did not become ready'), { code: 'server-start-failed' });
     })().catch((error) => {
       // Do not leave a permanently rejected promise in `starting`: the next
       // segment must be allowed to retry (e.g. a transient port collision).
-      starting = null;
+      if (pendingChild) {
+        try { pendingChild.kill('SIGKILL'); } catch { /* already gone */ }
+        pendingChild = null;
+      }
       throw error;
     });
 
-    return starting;
+    starting = attempt;
+    try {
+      return await attempt;
+    } finally {
+      if (starting === attempt) starting = null;
+    }
   }
 
   function createSessionInternal(options = {}) {
@@ -233,15 +303,8 @@ export function createWhisperServerEngine({
     };
   }
 
-  function stopServer() {
-    if (server?.child) {
-      try { server.child.kill('SIGKILL'); } catch { /* already gone */ }
-      server = null;
-    }
-    starting = null;
-  }
-
   async function transcribeOne(body = {}) {
+    if (isClosed) return closedResult(body.sessionId);
     const frames = Array.isArray(body.frames) ? body.frames : [];
     if (frames.length === 0) return { sessionId: body.sessionId || '', messages: [] };
 
@@ -252,6 +315,8 @@ export function createWhisperServerEngine({
       sessionId = opened.session.sessionId;
       created.push(...opened.messages);
     }
+    if (isClosed) return closedResult(sessionId, created);
+    const session = sessions.get(sessionId);
     const offsetMs = elapsed.get(sessionId) || 0;
     const wav = framesToWav(frames);
     const audioDurationMs = Math.round(((wav.length - 44) / (SAMPLE_RATE * 2)) * 1000);
@@ -264,7 +329,8 @@ export function createWhisperServerEngine({
     }
 
     try {
-      const { port } = await startServer();
+      const { port } = await startServer(session?.language);
+      if (isClosed) return closedResult(sessionId, created);
       const form = new FormData();
       form.append('file', new Blob([wav], { type: 'audio/wav' }), 'segment.wav');
       form.append('response_format', 'json');
@@ -279,6 +345,7 @@ export function createWhisperServerEngine({
         });
       }
       const text = parseServerAnswer(await response.text());
+      if (isClosed) return closedResult(sessionId, created);
       if (sessions.has(sessionId)) {
         elapsed.set(sessionId, offsetMs + audioDurationMs);
       }
@@ -313,6 +380,7 @@ export function createWhisperServerEngine({
         ],
       };
     } catch (error) {
+      if (isClosed) return closedResult(sessionId, created);
       if (sessions.has(sessionId)) {
         elapsed.set(sessionId, offsetMs + audioDurationMs);
       }
@@ -387,7 +455,7 @@ export function createWhisperServerEngine({
           }],
         });
       }
-      const task = () => transcribeOne(body);
+      const task = () => (isClosed ? Promise.resolve(closedResult(body?.sessionId)) : transcribeOne(body));
       const chained = queue.then(task, task);
       queue = chained.catch(() => {});
       return chained;
