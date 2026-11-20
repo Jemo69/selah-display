@@ -94,8 +94,8 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * "you"). Transcribing it is waste; showing it is worse. The floor is half the
  * transport's speech threshold so quiet speech still goes to the model.
  */
-export function framesAreSilent(frames, floor = 0.005) {
-  const wav = framesToWav(frames);
+/** Is an already-built WAV silent? */
+export function wavIsSilent(wav, floor = 0.005) {
   const pcm = wav.subarray(44);
   if (pcm.length < 2) return true;
   let energy = 0;
@@ -106,6 +106,11 @@ export function framesAreSilent(frames, floor = 0.005) {
     samples += 1;
   }
   return Math.sqrt(energy / samples) < floor;
+}
+
+/** Is a list of PCM frames silent? */
+export function framesAreSilent(frames, floor = 0.005) {
+  return wavIsSilent(framesToWav(frames), floor);
 }
 
 /**
@@ -248,7 +253,7 @@ export function createWhisperServerEngine({
 
     // Silence is not a segment. Do not load/query the model for it, and do not
     // emit a final that a hallucinated word could turn into a suggestion.
-    if (framesAreSilent(wav)) {
+    if (wavIsSilent(wav)) {
       if (sessions.has(sessionId)) elapsed.set(sessionId, offsetMs + audioDurationMs);
       return { sessionId, messages: created };
     }

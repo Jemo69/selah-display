@@ -11,11 +11,13 @@ import { mkdtempSync, writeFileSync, rmSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { framesToWav } from '../drivers/whispercpp.js';
 import {
   serverBinaryName,
   hasServerBinary,
   parseServerAnswer,
   framesAreSilent,
+  wavIsSilent,
   createWhisperServerEngine,
 } from '../drivers/whisperServer.js';
 
@@ -54,6 +56,8 @@ test('framesAreSilent rejects silence and accepts quiet speech', () => {
   const speech = Buffer.alloc(3200);
   for (let i = 0; i + 1 < speech.length; i += 2) speech.writeInt16LE(i % 4 === 0 ? 1200 : -1200, i);
   assert.equal(framesAreSilent([speech]), false);
+  assert.equal(wavIsSilent(framesToWav([speech])), false);
+  assert.equal(wavIsSilent(framesToWav([Buffer.alloc(3200)])), true);
 });
 
 test('the server engine refuses to construct without its binary', () => {
