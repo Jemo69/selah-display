@@ -152,6 +152,8 @@ test('recognizeScript wires file input, dictation grammar, and single-line JSON 
   assert.ok(script.includes('while ($true)'), 'loops until the WAV reaches EOF');
   assert.ok(script.includes('$texts += $res.Text'), 'keeps every utterance in the chunk');
   assert.ok(script.includes("join ' '"), 'joins utterances into one transcript');
+  assert.ok(script.includes('-Minimum'), 'reports the weakest utterance confidence, not the average');
+  assert.ok(!script.includes('-Average'), 'a confident neighbor cannot mask a weak fragment');
 });
 
 test('recognizeScript quotes paths and cultures, and honors a requested language', () => {
@@ -233,6 +235,34 @@ test('low-confidence recognition is refused, never forwarded as text', async () 
   assert.equal(error.code, 'low-confidence');
   assert.equal(error.fatal, false);
   assert.ok(validateMessage(error).ok, 'low-confidence error passes the wire schema');
+});
+
+test('a low-confidence chunk is refused without poisoning the session', async () => {
+  let call = 0;
+  const captured = [];
+  const spawnImpl = (bin, argv) => {
+    call += 1;
+    const stdout = call === 1
+      ? '{"text":"But leave","confidence":0.02}'
+      : '{"text":"amen","confidence":0.91}';
+    return installFakePowershell(captured, { stdout })(bin, argv);
+  };
+  const engine = createOsDeviceEngine({
+    bus: null,
+    platform: 'win32',
+    spawnImpl,
+    spawnSyncImpl: () => windowsProbeOk(),
+  });
+
+  const first = await engine.transcribe({ frames: [frame()] });
+  assert.ok(first.messages.some((m) => m.t === 'error' && m.code === 'low-confidence'));
+  assert.equal(first.messages.some((m) => m.t === 'final'), false);
+
+  const second = await engine.transcribe({ sessionId: first.sessionId, frames: [frame()] });
+  const final = second.messages.find((m) => m.t === 'final');
+  assert.ok(final, 'the next confident chunk still reaches the operator');
+  assert.equal(final.text, 'amen');
+  assert.ok(validateMessage(final).ok);
 });
 
 test('timestamps advance across utterances on one session', async () => {

@@ -63,6 +63,8 @@ const RECOGNIZE_TIMEOUT_MS = 60_000;
  * detector then turned into Obadiah 1:5. A wrong reference on the rail is
  * worse than no reference, so the driver drops low-confidence output before
  * it can reach the detector. The synthetic validation clip scores ~0.46.
+ * When the script joins several utterances it reports the MINIMUM confidence,
+ * so one low-confidence fragment cannot hide behind a confident neighbor.
  */
 export const OSDEVICE_MIN_CONFIDENCE = 0.25;
 
@@ -152,7 +154,7 @@ export const PROBE_ARGS = Object.freeze([
  * default), dictation grammar, file input, then Recognize in a loop until
  * EOF so a chunk with more than one utterance is not truncated to its first
  * phrase. The loop writes one single-line JSON object with the joined text
- * and average confidence. A recognition with no result prints nothing and
+ * and minimum confidence. A recognition with no result prints nothing and
  * exits 0 — the driver reports that as a no-transcript error, exactly like
  * the whisper driver's empty-stdout path. Anything the try block throws
  * prints `ERROR:<message>` on stderr and exits 2; a missing recognizer prints
@@ -193,8 +195,8 @@ export function recognizeScript({ wavPath, language = 'auto' } = {}) {
     `}`,
     `$rec.Dispose();`,
     `if ($texts.Count -eq 0) { exit 0 }`,
-    `$avg = [Math]::Round(($confs | Measure-Object -Average).Average, 3);`,
-    `$out = @{ text = ($texts -join ' '); confidence = $avg };`,
+    `$min = [Math]::Round(($confs | Measure-Object -Minimum).Minimum, 3);`,
+    `$out = @{ text = ($texts -join ' '); confidence = $min };`,
     `Write-Output ($out | ConvertTo-Json -Compress);`,
     `} catch {`,
     `[Console]::Error.WriteLine("ERROR:$($_.Exception.Message)");`,
