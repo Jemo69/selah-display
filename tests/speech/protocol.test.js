@@ -30,6 +30,7 @@ import {
   sessionClosePath,
   TOKEN_HEADER,
   ALLOWED_ORIGINS,
+  isAllowedOrigin,
   generateEngineToken,
   isLoopbackHost,
   PARTIAL_INTERVAL_MS,
@@ -361,7 +362,23 @@ describe('speech protocol: engine REST surface', () => {
 describe('speech protocol: security', () => {
   it('pins the token header and allowed origins', () => {
     expect(TOKEN_HEADER).toBe('x-ld-speech-token');
-    expect(ALLOWED_ORIGINS).toEqual(['http://127.0.0.1:4000', 'http://localhost:5174']);
+    expect(ALLOWED_ORIGINS).toEqual([
+      'http://127.0.0.1:4000',
+      'http://localhost:4000',
+      'http://127.0.0.1:5174',
+      'http://localhost:5174',
+    ]);
+  });
+
+  it('accepts the packaged backend origin and any loopback port, but never a foreign origin', () => {
+    // The packaged renderer is served from localhost:4000; /dogfood uses PORT.
+    expect(isAllowedOrigin('http://localhost:4000')).toBe(true);
+    expect(isAllowedOrigin('http://127.0.0.1:4000')).toBe(true);
+    expect(isAllowedOrigin('http://localhost:4321')).toBe(true);
+    expect(isAllowedOrigin('http://evil.example.com')).toBe(false);
+    expect(isAllowedOrigin('http://192.168.1.10:4000')).toBe(false);
+    expect(isAllowedOrigin('file:///tmp/index.html')).toBe(false);
+    expect(isAllowedOrigin(undefined)).toBe(true);
   });
 
   it('generates a 64-hex-char token that differs per call', () => {
