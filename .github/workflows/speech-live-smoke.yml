@@ -90,11 +90,12 @@ jobs:
           echo "cache-hit=${{ steps.cache.outputs.cache-hit || 'false' }}"
           du -sh .speech-smoke 2>/dev/null || true
 
-  # The OS on-device provider needs no model and no binary, so this job has no
-  # setup and no cache. It is the one CI path that exercises the Windows
-  # System.Speech backend with real audio. GitHub's windows-2022 image ships
-  # desktop Windows with System.Speech; if a future image drops the recognizer,
-  # this job fails loudly instead of quietly skipping the feature.
+  # The OS on-device provider needs no model and no binary. This job downloads
+  # only the pinned 4.1 MiB KJV (cached) so its verse detection searches the
+  # same 31,102 verses as the Linux leg. It is the one CI path that exercises
+  # the Windows System.Speech backend with real audio. GitHub's windows-2022
+  # image ships desktop Windows with System.Speech; if a future image drops
+  # the recognizer, this job fails loudly instead of skipping the feature.
   live-osdevice-smoke:
     name: Real voice → John 10:10 (Windows OS on-device)
     runs-on: windows-2022
@@ -107,6 +108,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Restore the KJV
+        uses: actions/cache@v4
+        with:
+          path: .speech-smoke/bibles
+          key: speech-bible-${{ runner.os }}-${{ hashFiles('speech-engine/scripts/prepare-smoke.mjs') }}
+
+      - name: Fetch the pinned KJV
+        run: node speech-engine/scripts/prepare-smoke.mjs --bible-only
 
       - name: Transcribe the clip and detect John 10:10
         run: node speech-engine/scripts/smoke.mjs --engine=osdevice --language=en

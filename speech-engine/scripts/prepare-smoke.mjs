@@ -278,12 +278,13 @@ async function main() {
   if (args.help) {
     console.log(
       'Usage: node speech-engine/scripts/prepare-smoke.mjs ' +
-      '[--force] [--bin-dir=DIR] [--models-dir=DIR] [--bibles-dir=DIR]'
+      '[--force] [--bible-only] [--bin-dir=DIR] [--models-dir=DIR] [--bibles-dir=DIR]'
     );
     return;
   }
 
   const force = args.force === true || args.force === 'true';
+  const bibleOnly = args['bible-only'] === true || args['bible-only'] === 'true';
   const binDir = path.resolve(String(args['bin-dir'] || path.join(CACHE_ROOT, 'bin')));
   const modelsDir = path.resolve(String(args['models-dir'] || path.join(CACHE_ROOT, 'models')));
   const biblesDir = path.resolve(String(args['bibles-dir'] || path.join(CACHE_ROOT, 'bibles')));
@@ -291,8 +292,8 @@ async function main() {
   console.log('Preparing the light speech smoke test');
   console.log(`  cache         ${path.relative(process.cwd(), CACHE_ROOT) || '.'}`);
 
-  const binary = await prepareBinary(binDir, { force });
-  const model = await prepareModel(modelsDir, { force });
+  const binary = bibleOnly ? { installed: false } : await prepareBinary(binDir, { force });
+  const model = bibleOnly ? { downloaded: false, bytes: 0 } : await prepareModel(modelsDir, { force });
   const bible = await prepareBible(biblesDir, { force });
 
   const downloadedBytes =
@@ -300,8 +301,10 @@ async function main() {
     (bible.downloaded ? bible.bytes : 0) +
     (binary.installed ? binary.bytes : 0);
 
-  console.log(`  bin dir       ${path.relative(process.cwd(), binDir)}`);
-  console.log(`  models dir    ${path.relative(process.cwd(), modelsDir)}`);
+  if (!bibleOnly) {
+    console.log(`  bin dir       ${path.relative(process.cwd(), binDir)}`);
+    console.log(`  models dir    ${path.relative(process.cwd(), modelsDir)}`);
+  }
   console.log(`  bibles dir    ${path.relative(process.cwd(), biblesDir)}`);
   console.log(
     downloadedBytes > 0
