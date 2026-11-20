@@ -30,6 +30,7 @@ self.onmessage = function (e) {
     query,
     allBibles,
     currentReference,
+    minScore,
     refreshBibles,
     pruneBibles,
   } = e.data ?? {};
@@ -54,7 +55,7 @@ self.onmessage = function (e) {
       return;
     }
 
-    const results = searcher.search(activeBible, query, { currentReference });
+    const results = searcher.search(activeBible, query, { currentReference, minScore });
     self.postMessage(results);
   } catch {
     // A search failure during a service is silence, never an exception
