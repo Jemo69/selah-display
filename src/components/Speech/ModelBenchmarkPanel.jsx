@@ -31,6 +31,7 @@ import {
   assessResult,
   THRESHOLDS,
 } from '../../speech/benchmark.js';
+import { modelGuidance } from '../../speech/modelGuidance.js';
 
 /** The bridge, or null in a browser/test with no preload. Cold on purpose. */
 const bridge = () => (typeof window === 'undefined' ? null : window.electronAPI?.speech ?? null);
@@ -60,6 +61,9 @@ const ModelBenchmarkPanel = ({ darkMode = true, cardClass, titleClass }) => {
   const [errors, setErrors] = useState({});
   const [notice, setNotice] = useState(null);
   const [selecting, setSelecting] = useState(false);
+  // Read-only accelerator probe. Until it answers, the conservative CPU
+  // guidance applies — never a guessed GPU.
+  const [gpu, setGpu] = useState(null);
   // A cancel is a REQUEST. Resolving it does not mean the run stopped, and the
   // engine says so explicitly — so we show what it reported rather than
   // pretending the work was killed.
@@ -72,6 +76,18 @@ const ModelBenchmarkPanel = ({ darkMode = true, cardClass, titleClass }) => {
     };
   }, []);
 
+  useEffect(() => {
+    let alive = true;
+    const speech = bridge();
+    if (typeof speech?.gpuCapabilities !== 'function') return undefined;
+    speech.gpuCapabilities().then((probe) => {
+      if (alive && probe) setGpu(probe);
+    }).catch(() => {
+      // No bridge answer means no evidence; CPU guidance stays in force.
+    });
+    return () => { alive = false; };
+  }, []);
+
   const models = useMemo(() => modelsForProvider(providerId), [providerId]);
 
   /**
@@ -81,12 +97,13 @@ const ModelBenchmarkPanel = ({ darkMode = true, cardClass, titleClass }) => {
    */
   const comparable = useMemo(() => gatedResults(results), [results]);
   const sorted = useMemo(() => sortByWer(comparable), [comparable]);
-  const recommendation = useMemo(() => recommendModel(results), [results]);
+  const recommendation = useMemo(() => recommendModel(results, { gpu }), [results, gpu]);
+  const guidance = useMemo(() => modelGuidance({ gpu }), [gpu]);
 
   /** Every reason any measured-but-excluded row was excluded. */
   const warningsFor = useCallback(
-    (result) => assessResult(result),
-    []
+    (result) => assessResult(result, { expectedAccel: gpu?.available === true }),
+    [gpu?.available]
   );
 
   const run = useCallback(
@@ -204,6 +221,12 @@ const ModelBenchmarkPanel = ({ darkMode = true, cardClass, titleClass }) => {
           the wrong model.
         </p>
       </div>
+
+      {/* Hardware evidence is not a speed measurement. The copy says exactly
+          what the probe found and what still has to be measured. */}
+      <p className={`text-xs ${muted}`} data-testid="benchmark-gpu-guidance">
+        <span className="font-semibold">Backend: {guidance.label}.</span> {guidance.reason}
+      </p>
 
       {/* The recommendation leads, and states its own reasoning so it can be
           disagreed with (plan 9.4). */}

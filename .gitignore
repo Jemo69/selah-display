@@ -90,6 +90,8 @@ speech-engine/bin/
 speech-engine/models/
 # Light external model + binary fetched by speech-engine/scripts/prepare-smoke.mjs
 .speech-smoke/
+# A symlink to the local smoke-test data dir is not a directory entry.
+.speech-smoke
 *.bin
 *.onnx
 *.gguf

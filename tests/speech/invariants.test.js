@@ -1199,13 +1199,18 @@ describe('invariant 4: off by default, cold by default', () => {
     const extractSpeechChannels = (relPath) =>
       [...new Set([...readText(relPath).matchAll(/'(speech:[a-z0-9:-]+)'/g)].map((m) => m[1]))].sort();
 
-    // The inventory: 22 channels — 14 renderer->main invokes and 8
+    // The inventory: 23 channels — 16 renderer->main invokes and 7
     // main->renderer events. Sorted, so the comparison is order-blind.
+    // DELIBERATE CHANGE (GPU builds): speech:gpu-capabilities is a new READ-ONLY
+    // invoke (22 -> 23). It carries probe evidence to the benchmark panel so
+    // large-model eligibility can be stated without claiming a measured speedup.
     const EXPECTED_SPEECH_CHANNELS = [
       'speech:benchmark', // INVOKE, stub: Phase 3 benchmark
       'speech:engine-selftest', // INVOKE, live: spawn whisper-cli --help and report loader failures
       'speech:error', // EVENT: one clear engine error (crash loop, bad API, spawn failure)
       'speech:get-state', // INVOKE, live: current supervisor + install state
+      // Added with GPU builds: read-only probe evidence, never a speed claim.
+      'speech:gpu-capabilities', // INVOKE, live: detected backend + evidence for large-model guidance
       'speech:health', // EVENT: engine health snapshot (apiVersion, rtf, memory, pid, uptime)
       // Decision D9 / Phase 4 — the six transcript-history invokes (added
       // with the history feature; summaries-only list, full get, bounded

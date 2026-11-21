@@ -85,6 +85,9 @@ export function useModelInstallState() {
   const [progress, setProgress] = useState({});
   const [engineProgress, setEngineProgress] = useState(null);
   const [engineInstalling, setEngineInstalling] = useState(false);
+  // The main process's actual asset-selection decision, not a guess from UI
+  // state: which backend was selected, and why a GPU/case fell back.
+  const [engineInstallResult, setEngineInstallResult] = useState(null);
   const [error, setError] = useState(null);
   const [starting, setStarting] = useState({});
 
@@ -267,6 +270,7 @@ export function useModelInstallState() {
       setEngineInstalling(false);
       await refresh();
     }
+    setEngineInstallResult(result);
     if (result && result.ok === false) {
       setError({ code: result.code, message: result.message });
     }
@@ -285,6 +289,7 @@ export function useModelInstallState() {
     progress,
     engineProgress,
     engineInstalling,
+    engineInstallResult,
     error,
     starting,
     install,
@@ -308,6 +313,7 @@ const InstallEngineWizard = ({ darkMode = false }) => {
     progress,
     engineProgress,
     engineInstalling,
+    engineInstallResult,
     error,
     install,
     installEngine,
@@ -635,8 +641,8 @@ const InstallEngineWizard = ({ darkMode = false }) => {
           <>
             <p className={mutedClass}>
               {engineSupported
-                ? 'One-time download of the official whisper.cpp build for this platform (about 9 MB), verified against its published checksum before anything is unpacked.'
-                : 'No prebuilt whisper.cpp engine is published for this platform. Install whisper-cli manually into the folder below to use Production mode.'}
+                ? 'One-time download of the official whisper.cpp build for this platform, verified against its published checksum before anything is unpacked. CPU builds are about 9 MB; a detected CUDA build can be much larger.'
+                : 'Selah cannot install a ready-made speech engine for this platform yet. No manual file copying is required or supported.'}
             </p>
             {engineSupported ? (
               <button
@@ -672,6 +678,13 @@ const InstallEngineWizard = ({ darkMode = false }) => {
             ) : null}
           </>
         )}
+
+        {engineInstallResult?.selection?.reason ? (
+          <p className={mutedClass} data-testid="speech-engine-install-backend">
+            <span className="font-semibold">Engine selection:</span>{' '}
+            {engineInstallResult.selection.reason}
+          </p>
+        ) : null}
       </div>
 
       {noModelNeeded ? (

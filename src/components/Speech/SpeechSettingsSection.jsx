@@ -18,6 +18,7 @@ import useToast from '../../hooks/useToast';
 import { useSpeechEnabled, useSpeechMode } from '../../hooks/useStoreSelectors';
 import { engineModeLabel, isCannedEngine } from '../../speech';
 import ProviderPicker from './ProviderPicker';
+import QuickSetupCard from './QuickSetupCard';
 import InstallEngineWizard from './InstallEngineWizard';
 import ModelCatalogList from './ModelCatalogList';
 import ModelBenchmarkPanel from './ModelBenchmarkPanel';
@@ -280,6 +281,13 @@ const SpeechSettingsSection = ({ darkMode = false }) => {
             </div>
           </div>
         )}
+      </div>
+
+      {/* The volunteer path is deliberately outside the inert configuration
+          wrapper: the default state is OFF, and the one button that installs
+          everything must be the brightest, reachable action on the page. */}
+      <div className="mt-6">
+        <QuickSetupCard darkMode={darkMode} />
       </div>
 
       {/* --------------------------------------------------------------

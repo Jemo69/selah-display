@@ -381,7 +381,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     install: (payload) => ipcRenderer.invoke('speech:install', payload),
     // The real engine binary (whisper.cpp). Production mode refuses to run
     // without it, so this is the control that makes the mode toggle honest.
-    installEngine: () => ipcRenderer.invoke('speech:install-engine'),
+    installEngine: (payload) => ipcRenderer.invoke('speech:install-engine', payload),
+    // Read-only accelerator evidence for the benchmark panel. No RTF claim.
+    gpuCapabilities: () => ipcRenderer.invoke('speech:gpu-capabilities'),
     // Actually spawn the installed binary once. A file that exists is not a
     // binary the OS can load (the Windows build needs the VC++ runtime), and
     // this is the only check that tells those apart.
