@@ -328,6 +328,39 @@ export function registerSpeechIpc({
   const start = async (payload) => {
     const startStartedAt = Date.now();
     const enabled = payload?.enabled === true;
+    const requestedWhere = stringField(payload?.where) ?? 'local';
+
+    // Cloud and local-network transcription have no transport in this build.
+    // Refuse BEFORE the local engine starts: otherwise the rail would label a
+    // local whisper process as "Cloud · openai" or "Remote engine" — a lie
+    // about where the sermon audio went.
+    if (enabled && requestedWhere !== 'local') {
+      const error = {
+        code: 'where-not-implemented',
+        message:
+          'Cloud and local-network transcription are not implemented in this build. ' +
+          'Choose This Device. The cloud/network choices are catalog placeholders only.',
+      };
+      publishInstallState();
+      log.info('Speech engine not started: where-not-implemented');
+      diagMain('info', 'engine', 'start refused by gate', {
+        reason: 'where-not-implemented',
+        where: requestedWhere,
+        durationMs: Date.now() - startStartedAt,
+      });
+      broadcast('speech:error', error);
+      broadcast('speech:health', null);
+      return {
+        ok: false,
+        started: false,
+        reason: 'where-not-implemented',
+        mode: engineInstallState.mode,
+        installState: buildInstallState(),
+        engine: null,
+        error,
+      };
+    }
+
     const decision = describeStartDecision({
       enabled,
       endpoint,

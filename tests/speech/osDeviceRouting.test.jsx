@@ -112,6 +112,18 @@ describe('speech:start provider routing', () => {
     expect(reply.error.message).toMatch(/whisper/i);
   });
 
+  it.each(['cloud', 'network'])('%s refuses before the local engine starts', async (where) => {
+    const reply = await ipcHandles['speech:start'](null, {
+      enabled: true,
+      engineMode: 'prod',
+      providerId: 'whispercpp',
+      where,
+    });
+    expect(reply.ok).toBe(false);
+    expect(reply.reason).toBe('where-not-implemented');
+    expect(reply.error.message).toMatch(/This Device/);
+  });
+
   it('an unwired provider refuses instead of forking the wrong engine', async () => {
     const reply = await ipcHandles['speech:start'](null, {
       enabled: true,

@@ -342,6 +342,20 @@ const SpeechSettingsSection = ({ darkMode = false }) => {
               })}
             </div>
             <p className={mutedClass}>{activeWhere.copy}</p>
+            {where !== 'local' ? (
+              <p
+                data-testid="speech-where-unavailable"
+                className={`rounded-lg border p-2.5 text-xs leading-relaxed ${
+                  darkMode
+                    ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+                    : 'border-amber-200 bg-amber-50 text-amber-800'
+                }`}
+              >
+                Not implemented in this build. Cloud and local-network transcription have no
+                transport yet; starting will refuse. Choose <strong>This Device</strong> to use the
+                local engine.
+              </p>
+            ) : null}
           </div>
 
           {/* ---------------------------------------------------------- (b2)
