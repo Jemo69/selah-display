@@ -74,39 +74,59 @@ const WHERE_OPTIONS = [
   },
 ];
 
-// Phase 5 wires these: selection is stored in `cloudProviderId` only. API keys
-// are never persisted here — see the `data-coming-soon` note below.
+// Two real cloud lanes. The remaining catalogue rows stay visible so the
+// refusal is explicit — a provider that was silently selectable but never ran
+// is exactly the lie this surface is meant to end.
 const CLOUD_PROVIDERS = [
   {
     id: 'openai',
     name: 'OpenAI',
-    copy: 'Zero setup, already-known quality, strong on accented English / chunked uploads mean more latency.',
+    available: true,
+    copy: 'Audio Transcriptions with whisper-1 (or gpt-4o-transcribe). Accurate on accented English; chunked uploads add latency.',
+    models: [
+      { id: 'whisper-1', label: 'whisper-1' },
+      { id: 'gpt-4o-transcribe', label: 'gpt-4o-transcribe' },
+    ],
+  },
+  {
+    id: 'openrouter',
+    name: 'OpenRouter · Google Gemini',
+    available: true,
+    copy: 'Documented Responses API with base64 WAV input_audio. Gemini Flash models are audio-capable; live quality is not yet verified here.',
+    models: [
+      { id: 'google/gemini-2.5-flash', label: 'google/gemini-2.5-flash' },
+      { id: 'google/gemini-3.8-flash', label: 'google/gemini-3.8-flash' },
+    ],
   },
   {
     id: 'groq',
     name: 'Groq',
-    copy: 'Whisper-large speed at low cost; best latency-per-cent / rate limits bite on long services.',
+    available: false,
+    copy: 'Not available in this build. Selecting it refuses the start — no audio is sent.',
   },
   {
     id: 'deepgram',
     name: 'Deepgram',
-    copy: 'True streaming, lowest latency / pricing is per second.',
+    available: false,
+    copy: 'Not available in this build. Selecting it refuses the start — no audio is sent.',
   },
   {
     id: 'assemblyai',
     name: 'AssemblyAI',
-    copy: 'Strong punctuation and formatting / per-second cost.',
+    available: false,
+    copy: 'Not available in this build. Selecting it refuses the start — no audio is sent.',
   },
   {
     id: 'google',
     name: 'Google Cloud STT',
-    copy: 'Best multi-dialect coverage / service-account credentials, heavier setup.',
+    available: false,
+    copy: 'Not available in this build. Selecting it refuses the start — no audio is sent.',
   },
 ];
 
 const SpeechSettingsSection = ({ darkMode = false }) => {
   const { enabled, setEnabled } = useSpeechEnabled();
-  const { where, modelId, cloudProviderId } = useSpeechMode();
+  const { where, modelId, cloudProviderId, cloudModelId } = useSpeechMode();
   const engineMode = useSpeechStore((state) => state.engineMode);
   const setEngineMode = useSpeechStore((state) => state.setEngineMode);
   const showEngineErrors = useSpeechStore((state) => state.ui.showEngineErrors) !== false;
@@ -117,6 +137,7 @@ const SpeechSettingsSection = ({ darkMode = false }) => {
   const setNetworkEndpoint = useSpeechStore((state) => state.setNetworkEndpoint);
   const setNetworkToken = useSpeechStore((state) => state.setNetworkToken);
   const setCloudProviderId = useSpeechStore((state) => state.setCloudProviderId);
+  const setCloudModelId = useSpeechStore((state) => state.setCloudModelId);
   const resetToDefaults = useSpeechStore((state) => state.resetToDefaults);
   // `speech:health`'s `backend` field. The engine that ships today is the
   // contract-conformant fake, and the operator must be able to tell that from
@@ -125,14 +146,99 @@ const SpeechSettingsSection = ({ darkMode = false }) => {
   const isCanned = isCannedEngine(engineHealth);
   const { showToast } = useToast();
 
-  // API keys live only in this component's memory for the session — Phase 5
-  // owns storage, so nothing here is written to the store or localStorage.
+  // Only the DRAFT key lives in component memory. Saving hands it to main,
+  // which stores it in the OS keychain; the renderer only ever sees a boolean
+  // status and never writes key text to the store or localStorage.
   const [draftKeys, setDraftKeys] = useState({});
   // The network token lives in session memory only (SpeechStore runtime
   // state). Test feedback is local to this component and never carries the
   // token or transcript text.
   const [networkStatus, setNetworkStatus] = useState(null);
   const [testingNetwork, setTestingNetwork] = useState(false);
+  const [keyStatus, setKeyStatus] = useState('checking'); // checking | saved | missing | error
+  const [cloudConsent, setCloudConsentState] = useState(false);
+
+  const cloudBridge = () => (typeof window === 'undefined' ? null : window.electronAPI?.speech ?? null);
+  const activeCloudProvider = CLOUD_PROVIDERS.find((p) => p.id === cloudProviderId && p.available) ?? null;
+  const activeModels = activeCloudProvider?.models ?? [];
+  const activeModel = cloudModelId ?? activeModels[0]?.id ?? null;
+
+  // Status is a boolean check on mount / on entering Cloud / on switching
+  // provider. Nothing is read back into an input and nothing is logged.
+  useEffect(() => {
+    if (where !== 'cloud' || !activeCloudProvider) return undefined;
+    let cancelled = false;
+    const bridge = cloudBridge();
+    if (!bridge?.cloudKeyStatus) {
+      setKeyStatus('missing');
+      return undefined;
+    }
+    bridge.cloudKeyStatus(activeCloudProvider.id)
+      .then((reply) => {
+        if (cancelled) return;
+        setKeyStatus(reply?.configured === true ? 'saved' : 'missing');
+      })
+      .catch(() => { if (!cancelled) setKeyStatus('error'); });
+    return () => { cancelled = true; };
+  }, [where, cloudProviderId]);
+
+  const handleSaveCloudKey = async () => {
+    const providerId = activeCloudProvider?.id;
+    const key = (draftKeys[providerId] ?? '').trim();
+    const bridge = cloudBridge();
+    if (!providerId) {
+      setKeyStatus('error');
+      showToast({ title: 'Choose a provider first', message: 'Select OpenAI or OpenRouter before saving a key.', variant: 'error' });
+      return;
+    }
+    if (!key) {
+      setKeyStatus('error');
+      showToast({ title: 'No key entered', message: `Paste your ${activeCloudProvider.name} API key before clicking Save.`, variant: 'error' });
+      return;
+    }
+    if (!bridge?.saveCloudKey) {
+      setKeyStatus('error');
+      showToast({ title: 'Secure storage unavailable', message: 'The app bridge could not save the key.', variant: 'error' });
+      return;
+    }
+    try {
+      const reply = await bridge.saveCloudKey({ provider: providerId, key });
+      if (reply?.ok !== true) throw new Error(reply?.code || 'save-failed');
+      setKeyStatus('saved');
+      setDraftKeys((previous) => ({ ...previous, [providerId]: '' }));
+      showToast({ title: 'Cloud key saved', message: `Stored in your computer’s secure keychain for ${activeCloudProvider.name}. The key is never shown again.`, variant: 'success' });
+    } catch {
+      setKeyStatus('error');
+      showToast({ title: 'Could not save key', message: 'Secure storage refused the key. Check the app logs for the storage error.', variant: 'error' });
+    }
+  };
+
+  const handleClearCloudKey = async () => {
+    const providerId = activeCloudProvider?.id;
+    const bridge = cloudBridge();
+    try {
+      if (!providerId || !bridge?.clearCloudKey) throw new Error('no-bridge');
+      const reply = await bridge.clearCloudKey({ provider: providerId });
+      if (reply?.ok !== true) throw new Error(reply?.code || 'clear-failed');
+      setKeyStatus('missing');
+      setDraftKeys((previous) => ({ ...previous, [providerId]: '' }));
+      showToast({ title: 'Cloud key cleared', message: `${activeCloudProvider.name} will refuse to start until a key is saved again.`, variant: 'info' });
+    } catch {
+      setKeyStatus('error');
+      showToast({ title: 'Could not clear key', message: 'Secure storage could not delete the saved key.', variant: 'error' });
+    }
+  };
+
+  const handleCloudConsent = async (checked) => {
+    // The checkbox is an explicit session action. Main enforces the same
+    // gate; a stale UI state can never silently start a cloud session.
+    setCloudConsentState(checked);
+    try {
+      await cloudBridge()?.setCloudConsent?.(checked);
+    } catch {
+      showToast({ title: 'Acknowledgement not saved', message: 'Cloud start will refuse until the acknowledgement can be recorded.', variant: 'error' });
+    }
+  };
 
   // Phase 6 guardrail report (limits + current trip state). One read on mount:
   // these change when the machine trips, and the engine announces that over
@@ -170,10 +276,25 @@ const SpeechSettingsSection = ({ darkMode = false }) => {
     });
   };
 
+  const handleCloudProvider = (providerId) => {
+    if (providerId === cloudProviderId) return;
+    setCloudProviderId(providerId);
+    // Consent is per egress destination. Switching lanes requires a fresh
+    // explicit acknowledgement even within the same session.
+    setCloudConsentState(false);
+    setKeyStatus('checking');
+    void cloudBridge()?.setCloudConsent?.(false);
+  };
+
   const handleWhere = (value) => {
     setWhere(value);
-    // Leaving cloud makes it unreachable: no stale cloud provider survives.
-    if (value !== 'cloud') setCloudProviderId(null);
+    // Leaving cloud makes it unreachable: no stale cloud provider survives,
+    // and the egress acknowledgement must be given again on return.
+    if (value !== 'cloud') {
+      setCloudProviderId(null);
+      setCloudConsentState(false);
+      void cloudBridge()?.setCloudConsent?.(false);
+    }
   };
 
   const handleTestNetwork = async () => {
@@ -204,6 +325,8 @@ const SpeechSettingsSection = ({ darkMode = false }) => {
     resetToDefaults();
     setDraftKeys({});
     setNetworkStatus(null);
+    setCloudConsentState(false);
+    void cloudBridge()?.setCloudConsent?.(false);
     showToast({
       title: 'Sermon Assist reset',
       message: 'All Sermon Assist settings restored to defaults. The feature stays off until you turn it on.',
@@ -378,16 +501,16 @@ const SpeechSettingsSection = ({ darkMode = false }) => {
             <p className={mutedClass}>{activeWhere.copy}</p>
             {where === 'cloud' ? (
               <p
-                data-testid="speech-where-unavailable"
+                data-testid="speech-cloud-egress-notice"
                 className={`rounded-lg border p-2.5 text-xs leading-relaxed ${
                   darkMode
                     ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
                     : 'border-amber-200 bg-amber-50 text-amber-800'
                 }`}
               >
-                Cloud transcription is not implemented in this build and starting will refuse.
-                Choose <strong>This Device</strong> for the local engine or <strong>Network
-                Device</strong> for a speech engine on your LAN.
+                Cloud is real: WAV audio is sent over HTTPS to the selected provider. It refuses
+                to start without a saved key and your explicit acknowledgement below. No local
+                model or binary is used.
               </p>
             ) : null}
           </div>
@@ -636,17 +759,16 @@ const SpeechSettingsSection = ({ darkMode = false }) => {
           </div>
 
           {/* ---------------------------------------------------------- (e)
-              Cloud block — only when `where === 'cloud'`. It sits BELOW the
-              local options so choosing local never requires scrolling past
-              it. Phase 5 wires key storage, requests, and cost metering;
-              nothing here makes a network call. */}
+              Cloud block — only when `where === 'cloud'`. OpenAI is the only
+              enabled provider; the others are shown as unavailable so the
+              refusal is visible before anyone starts a service. */}
           {where === 'cloud' && (
             <div className={`mt-6 ${cardClass}`} data-testid="speech-cloud-block">
               <div className="space-y-1.5">
                 <span className={labelClass}>Cloud provider</span>
                 <p className={mutedClass}>
-                  Audio leaves this computer. The live feed may contain audio that is not in the
-                  published recording.
+                  Audio leaves this computer and is sent to the provider over HTTPS. The live feed
+                  may contain audio that is not in the published recording.
                 </p>
               </div>
 
@@ -670,9 +792,10 @@ const SpeechSettingsSection = ({ darkMode = false }) => {
                         type="button"
                         role="radio"
                         aria-checked={selected}
+                        disabled={!provider.available}
                         data-testid={`speech-cloud-provider-${provider.id}`}
-                        onClick={() => setCloudProviderId(provider.id)}
-                        className="w-full text-left flex items-start justify-between gap-3"
+                        onClick={() => { if (provider.available) handleCloudProvider(provider.id); }}
+                        className="w-full text-left flex items-start justify-between gap-3 disabled:opacity-60 disabled:cursor-not-allowed"
                       >
                         <span className="space-y-1 min-w-0">
                           <span className={`block text-sm font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
@@ -684,54 +807,126 @@ const SpeechSettingsSection = ({ darkMode = false }) => {
                         </span>
                         <span
                           className={`${badgeBase} shrink-0 ${
-                            selected
-                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                              : darkMode
-                                ? 'bg-gray-800 text-gray-400 border border-gray-700'
-                                : 'bg-gray-100 text-gray-500 border border-gray-200'
+                            !provider.available
+                              ? 'bg-gray-100 text-gray-500 border border-gray-200'
+                              : selected
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                : darkMode
+                                  ? 'bg-gray-800 text-gray-400 border border-gray-700'
+                                  : 'bg-gray-100 text-gray-500 border border-gray-200'
                           }`}
                         >
-                          {selected ? 'Selected' : 'Select'}
+                          {provider.available ? (selected ? 'Selected' : 'Select') : 'Unavailable'}
                         </span>
                       </button>
 
-                      {/* Masked key input per provider. Session-local only:
-                          never read back, never persisted, never sent. */}
-                      <label className="flex items-center gap-2">
-                        <KeyRound className={`w-3.5 h-3.5 shrink-0 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`} />
-                        <Input
-                          type="password"
-                          autoComplete="off"
-                          spellCheck={false}
-                          value={draftKeys[provider.id] ?? ''}
-                          onChange={(event) =>
-                            setDraftKeys((previous) => ({
-                              ...previous,
-                              [provider.id]: event.target.value,
-                            }))
-                          }
-                          placeholder={`${provider.name} API key (not stored)`}
-                          aria-label={`${provider.name} API key`}
-                          className={`h-8 text-xs ${darkMode ? 'bg-gray-950 border-gray-800' : 'bg-white'}`}
-                        />
-                      </label>
+                      {provider.available ? (
+                        <div className="space-y-2">
+                          <label className="block">
+                            <span className={`block text-[11px] font-semibold mb-1 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                              Model
+                            </span>
+                            <select
+                              data-testid={`speech-cloud-model-${provider.id}`}
+                              aria-label={`${provider.name} model`}
+                              value={activeModel ?? ''}
+                              onChange={(event) => setCloudModelId(event.target.value)}
+                              className={`w-full h-8 rounded-md border px-2 text-xs ${
+                                darkMode ? 'bg-gray-950 border-gray-800 text-white' : 'bg-white border-gray-300 text-gray-900'
+                              }`}
+                            >
+                              {provider.models.map((model) => (
+                                <option key={model.id} value={model.id}>{model.label}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="flex items-center gap-2">
+                            <KeyRound className={`w-3.5 h-3.5 shrink-0 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`} />
+                            <Input
+                              type="password"
+                              autoComplete="off"
+                              spellCheck={false}
+                              value={draftKeys[provider.id] ?? ''}
+                              onChange={(event) =>
+                                setDraftKeys((previous) => ({
+                                  ...previous,
+                                  [provider.id]: event.target.value,
+                                }))
+                              }
+                              placeholder={`${provider.name} API key`}
+                              aria-label={`${provider.name} API key`}
+                              data-testid={`speech-cloud-key-input-${provider.id}`}
+                              className={`h-8 text-xs ${darkMode ? 'bg-gray-950 border-gray-800' : 'bg-white'}`}
+                            />
+                          </label>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <Button type="button" size="sm" data-testid={`speech-cloud-key-save-${provider.id}`} onClick={handleSaveCloudKey}>
+                              Save key
+                            </Button>
+                            <Button type="button" size="sm" variant="outline" data-testid={`speech-cloud-key-clear-${provider.id}`} onClick={handleClearCloudKey}>
+                              Clear key
+                            </Button>
+                            <span
+                              data-testid={`speech-cloud-key-status-${provider.id}`}
+                              className={`text-[11px] ${
+                                keyStatus === 'saved'
+                                  ? 'text-emerald-500'
+                                  : keyStatus === 'error'
+                                    ? 'text-amber-500'
+                                    : darkMode ? 'text-gray-400' : 'text-gray-600'
+                              }`}
+                            >
+                              {keyStatus === 'checking'
+                                ? 'Checking secure storage…'
+                                : keyStatus === 'saved'
+                                  ? 'Key saved in secure storage'
+                                  : keyStatus === 'error'
+                                    ? 'Secure storage error'
+                                    : 'No key saved'}
+                            </span>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   );
                 })}
               </div>
 
+              <label className={`flex items-start gap-2 rounded-lg border p-3 text-xs ${
+                darkMode ? 'border-gray-800 bg-gray-950/60' : 'border-gray-200 bg-gray-50'
+              }`}>
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={cloudConsent}
+                  data-testid="speech-cloud-consent"
+                  onChange={(event) => void handleCloudConsent(event.target.checked)}
+                />
+                <span>
+                  <span className={labelClass}>I understand audio leaves this computer</span>
+                  <p className={`${mutedClass} mt-0.5`}>
+                    Required before the first cloud start. With Production Mode, a saved key and
+                    this acknowledgement, Selah sends 16 kHz WAV segments of the live feed to the
+                    selected provider (OpenAI or OpenRouter/Gemini) for transcription. Clear this
+                    tick to stop allowing cloud starts.
+                  </p>
+                </span>
+              </label>
+
               <p
-                data-coming-soon="cloud-api-keys"
+                data-testid="speech-cloud-cost-note"
                 className={`text-[11px] leading-relaxed rounded-lg border p-3 ${
                   darkMode
                     ? 'border-gray-800 bg-gray-950/60 text-gray-400'
                     : 'border-gray-200 bg-gray-50 text-gray-500'
                 }`}
               >
-                Keys arrive with the cloud phase — nothing typed above is stored or sent, and only
-                your provider choice is kept. Running cost: cloud speech is billed per second or
-                per minute of audio, so a 40-minute sermon typically costs cents, not dollars, on
-                per-second providers and can cost more on per-minute ones during a long service.
+                Key storage uses your computer’s secure keychain (encrypted fallback when a
+                keychain is unavailable). The key is never shown again, written to localStorage,
+                or sent to this app’s servers. OpenAI and OpenRouter are the only enabled lanes;
+                each keeps its own separate key. Other providers refuse the start without sending
+                audio. Cloud speech is billed per audio uploaded, so a long service can cost more
+                than a short one.
               </p>
             </div>
           )}

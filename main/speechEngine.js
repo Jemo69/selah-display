@@ -1212,6 +1212,9 @@ export async function startSpeechEngine(options = {}) {
     where,
     binDir = null,
     modelsDir = null,
+    // Cloud fork config. Present ONLY for a cloud start; the key is passed
+    // through the child's environment and is never logged or sent to IPC.
+    cloud = null,
     onStatus = null,
     onHealth = null,
     onError = null,
@@ -1345,6 +1348,13 @@ export async function startSpeechEngine(options = {}) {
           ...(resolvedModelsDir ? { LD_SPEECH_MODELS_DIR: resolvedModelsDir } : {}),
           ...(modelId ? { LD_SPEECH_MODEL: modelId } : {}),
           ...(process.env.LD_SPEECH_DRIVER ? { LD_SPEECH_DRIVER: process.env.LD_SPEECH_DRIVER } : {}),
+          ...(cloud
+            ? {
+                LD_SPEECH_CLOUD_PROVIDER: cloud.provider,
+                LD_SPEECH_CLOUD_KEY: cloud.apiKey,
+                LD_SPEECH_CLOUD_MODEL: cloud.model,
+              }
+            : {}),
         },
         stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
       });

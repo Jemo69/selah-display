@@ -1,0 +1,551 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Speech cloud architecture — Selah</title>
+  <style>
+    :root {
+      --ink: #000000;
+      --paper: #ffffff;
+      --radius: 10px;
+      --border: 3px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { background: var(--paper); }
+
+    body {
+      margin: 0;
+      padding: 48px 40px 96px;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+      font-size: 15px;
+      line-height: 1.55;
+    }
+
+    main {
+      max-width: 1160px;
+      margin: 0 auto;
+      display: grid;
+      gap: 28px;
+    }
+
+    .masthead {
+      border: var(--border) solid var(--paper);
+      border-radius: var(--radius);
+      background: var(--ink);
+      color: var(--paper);
+      padding: 24px 28px;
+    }
+
+    .masthead .kicker,
+    .masthead h1,
+    .masthead .meta {
+      text-transform: uppercase;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+    }
+
+    .masthead .kicker { font-size: 11px; margin: 0 0 10px; }
+    .masthead h1 { font-size: clamp(28px, 4vw, 46px); line-height: 1.05; margin: 0 0 14px; }
+    .masthead .meta { font-size: 11px; margin: 0; }
+    .masthead .meta span { display: inline-block; margin-right: 18px; }
+
+    .crate {
+      border: var(--border) solid var(--ink);
+      border-radius: var(--radius);
+      background: var(--paper);
+      overflow: hidden;
+    }
+
+    .crate > .label {
+      background: var(--ink);
+      color: var(--paper);
+      border-bottom: var(--border) solid var(--ink);
+      padding: 12px 18px;
+      text-transform: uppercase;
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: 0.1em;
+    }
+
+    .crate > .body { padding: 20px 22px; }
+
+    p { margin: 0 0 14px; }
+    p:last-child { margin-bottom: 0; }
+
+    strong { font-weight: 900; }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+      background: var(--ink);
+      color: var(--paper);
+      border: 2px solid var(--ink);
+      border-radius: 6px;
+      padding: 1px 6px;
+      white-space: nowrap;
+    }
+
+    .statement {
+      border-left: 8px solid var(--ink);
+      padding-left: 18px;
+      font-size: 17px;
+      line-height: 1.5;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .tile {
+      border: 2px solid var(--ink);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+
+    .tile code {
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+    .tile h3,
+    .table-wrap h3 {
+      margin: 0 0 10px;
+      text-transform: uppercase;
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: 0.1em;
+    }
+
+    .diagram-wrap {
+      border: 2px solid var(--ink);
+      border-radius: 8px;
+      padding: 12px;
+      background: var(--paper);
+    }
+
+    svg { display: block; width: 100%; height: auto; }
+
+    .svg-label {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+      font-size: 13px;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+    }
+
+    .svg-body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .table-wrap { margin-top: 18px; }
+    .table-wrap:first-child { margin-top: 0; }
+
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      border: 2px solid var(--ink);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    th, td {
+      border-bottom: 2px solid var(--ink);
+      border-right: 2px solid var(--ink);
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th:last-child, td:last-child { border-right: 0; }
+    tr:last-child td { border-bottom: 0; }
+
+    th {
+      background: var(--ink);
+      color: var(--paper);
+      text-transform: uppercase;
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+    }
+
+    td { font-size: 13px; }
+
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 800; }
+
+    ol, ul { margin: 0 0 14px; padding-left: 22px; }
+    li { margin-bottom: 8px; }
+    li:last-child { margin-bottom: 0; }
+
+    pre {
+      margin: 0;
+      background: var(--ink);
+      color: var(--paper);
+      border: 2px solid var(--paper);
+      border-radius: 8px;
+      padding: 14px 16px;
+      overflow-x: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .proof-block + .proof-block { margin-top: 12px; }
+
+    .caution {
+      border: 2px solid var(--paper);
+      border-radius: 8px;
+      background: var(--ink);
+      color: var(--paper);
+      padding: 14px 16px;
+      margin-top: 16px;
+    }
+
+    .caution strong { text-transform: uppercase; letter-spacing: 0.08em; font-size: 12px; }
+
+    @media (max-width: 820px) {
+      body { padding: 24px 16px 64px; }
+      .grid-2 { grid-template-columns: 1fr; }
+      .diagram-wrap { overflow-x: auto; }
+      svg { min-width: 900px; }
+    }
+
+    @media print {
+      body { padding: 0; }
+      main { gap: 16px; }
+      .crate, .tile, table, .diagram-wrap { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header class="masthead">
+    <p class="kicker">Architecture report / speech system</p>
+    <h1>Real cloud transcription: OpenAI + OpenRouter</h1>
+    <p class="meta">
+      <span>Selah display</span>
+      <span>Branch: feat/speech-cloud-openai</span>
+      <span>Status: staged, open PR</span>
+    </p>
+  </header>
+
+  <section class="crate">
+    <div class="label">01 / Outcome</div>
+    <div class="body">
+      <p class="statement">Cloud mode now sends live sermon audio to either OpenAI or OpenRouter and returns a real transcript under the same engine contract as the local drivers. The renderer still captures PCM and streams it over loopback WebSocket; the forked engine encodes buffered frames into a 16 kHz WAV and either POSTs multipart to OpenAI Audio Transcriptions (<code>whisper-1</code>) or POSTs base64 <code>input_audio</code> to OpenRouter's documented Responses API with a Google Gemini model. Provider text is parsed into a contract-valid <code>final</code> segment with session-relative timestamps. There is no local-engine fallback and no fake label: provider, model, per-provider key, consent, and Production Mode are validated in main before any fork, while failures refuse with actionable codes rather than starting whisper under a cloud name.</p>
+    </div>
+  </section>
+
+  <section class="crate">
+    <div class="label">02 / Architecture</div>
+    <div class="body">
+      <div class="diagram-wrap">
+        <svg viewBox="0 0 1120 620" role="img" aria-labelledby="diagram-title diagram-desc">
+          <title id="diagram-title">Selah cloud speech architecture</title>
+          <desc id="diagram-desc">Renderer audio capture sends PCM over loopback WebSocket to the engine; the engine sends WAV over HTTPS to OpenAI and receives JSON text. The main process holds the key and enforces gates before forking.</desc>
+          <defs>
+            <marker id="arrow-black" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#000000"></path>
+            </marker>
+            <marker id="arrow-white" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#ffffff"></path>
+            </marker>
+          </defs>
+
+          <rect x="8" y="8" width="884" height="604" rx="10" fill="#ffffff" stroke="#000000" stroke-width="3" stroke-dasharray="10 7"></rect>
+          <text x="28" y="38" class="svg-label" fill="#000000">LOCAL MACHINE / NO MODEL OR BINARY REQUIRED FOR CLOUD</text>
+
+          <rect x="936" y="8" width="176" height="604" rx="10" fill="#000000" stroke="#ffffff" stroke-width="3" stroke-dasharray="10 7"></rect>
+          <text x="956" y="38" class="svg-label" fill="#ffffff">REMOTE</text>
+
+          <rect x="40" y="82" width="220" height="150" rx="10" fill="#000000" stroke="#ffffff" stroke-width="3"></rect>
+          <text x="58" y="112" class="svg-label" fill="#ffffff">RENDERER</text>
+          <text x="58" y="142" class="svg-body" fill="#ffffff">Audio capture</text>
+          <text x="58" y="166" class="svg-body" fill="#ffffff">PCM Int16 frames</text>
+          <text x="58" y="190" class="svg-body" fill="#ffffff">Speech store: cloud,</text>
+          <text x="58" y="211" class="svg-body" fill="#ffffff">openai, consent tick</text>
+
+          <rect x="330" y="82" width="220" height="150" rx="10" fill="#000000" stroke="#ffffff" stroke-width="3"></rect>
+          <text x="348" y="112" class="svg-label" fill="#ffffff">LOOPBACK WS</text>
+          <text x="348" y="142" class="svg-body" fill="#ffffff">127.0.0.1 /v1/stream</text>
+          <text x="348" y="166" class="svg-body" fill="#ffffff">Launch token + PCM</text>
+          <text x="348" y="190" class="svg-body" fill="#ffffff">Local only</text>
+          <text x="348" y="211" class="svg-body" fill="#ffffff">No audio leaves here</text>
+
+          <rect x="620" y="82" width="260" height="150" rx="10" fill="#000000" stroke="#ffffff" stroke-width="3"></rect>
+          <text x="638" y="112" class="svg-label" fill="#ffffff">ENGINE / CLOUD DRIVER</text>
+          <text x="638" y="142" class="svg-body" fill="#ffffff">Buffer until silence boundary</text>
+          <text x="638" y="166" class="svg-body" fill="#ffffff">framesToWav → 16 kHz mono</text>
+          <text x="638" y="190" class="svg-body" fill="#ffffff">Session clock → timestamps</text>
+          <text x="638" y="211" class="svg-body" fill="#ffffff">No local binary or model</text>
+
+          <rect x="956" y="82" width="136" height="150" rx="10" fill="#ffffff" stroke="#000000" stroke-width="3"></rect>
+          <text x="970" y="112" class="svg-label" fill="#000000">OPENAI</text>
+          <text x="970" y="142" class="svg-body" fill="#000000">HTTPS</text>
+          <text x="970" y="166" class="svg-body" fill="#000000">/audio/</text>
+          <text x="970" y="187" class="svg-body" fill="#000000">transcriptions</text>
+          <text x="970" y="211" class="svg-body" fill="#000000">whisper-1</text>
+
+          <rect x="956" y="270" width="136" height="190" rx="10" fill="#000000" stroke="#ffffff" stroke-width="3"></rect>
+          <text x="970" y="300" class="svg-label" fill="#ffffff">OPENROUTER</text>
+          <text x="970" y="330" class="svg-body" fill="#ffffff">/api/v1/</text>
+          <text x="970" y="351" class="svg-body" fill="#ffffff">responses</text>
+          <text x="970" y="381" class="svg-body" fill="#ffffff">base64 WAV</text>
+          <text x="970" y="405" class="svg-body" fill="#ffffff">input_audio</text>
+          <text x="970" y="435" class="svg-body" fill="#ffffff">Gemini Flash</text>
+
+          <path d="M260 150 L322 150" stroke="#000000" stroke-width="3" marker-end="url(#arrow-black)"></path>
+          <text x="252" y="70" class="svg-body" fill="#000000">PCM / loopback</text>
+          <path d="M550 150 L612 150" stroke="#000000" stroke-width="3" marker-end="url(#arrow-black)"></path>
+          <text x="548" y="70" class="svg-body" fill="#000000">PCM / loopback</text>
+          <path d="M880 150 L948 150" stroke="#000000" stroke-width="3" marker-end="url(#arrow-black)"></path>
+          <text x="884" y="62" class="svg-body" fill="#000000">WAV + bearer key</text>
+          <text x="884" y="78" class="svg-body" fill="#000000">HTTPS EGRESS</text>
+          <path d="M948 210 L880 210" stroke="#000000" stroke-width="3" marker-end="url(#arrow-black)"></path>
+          <text x="884" y="252" class="svg-body" fill="#000000">JSON text / HTTPS return</text>
+          <path d="M880 330 L948 330" stroke="#000000" stroke-width="3" marker-end="url(#arrow-black)"></path>
+          <path d="M948 440 L880 440" stroke="#000000" stroke-width="3" marker-end="url(#arrow-black)"></path>
+          <text x="884" y="486" class="svg-body" fill="#000000">output_text / HTTPS return</text>
+
+          <rect x="40" y="300" width="300" height="190" rx="10" fill="#ffffff" stroke="#000000" stroke-width="3"></rect>
+          <text x="58" y="330" class="svg-label" fill="#000000">MAIN / CONTROL PLANE</text>
+          <text x="58" y="360" class="svg-body" fill="#000000">Key in OS keychain</text>
+          <text x="58" y="384" class="svg-body" fill="#000000">(AES-256-GCM fallback)</text>
+          <text x="58" y="416" class="svg-body" fill="#000000">Renderer gets only:</text>
+          <text x="58" y="440" class="svg-body" fill="#000000">{ configured: boolean }</text>
+          <text x="58" y="472" class="svg-body" fill="#000000">No key text in IPC or logs</text>
+
+          <rect x="380" y="300" width="300" height="190" rx="10" fill="#000000" stroke="#ffffff" stroke-width="3"></rect>
+          <text x="398" y="330" class="svg-label" fill="#ffffff">PRE-FORK GATES</text>
+          <text x="398" y="360" class="svg-body" fill="#ffffff">Provider = openai or openrouter</text>
+          <text x="398" y="384" class="svg-body" fill="#ffffff">Explicit egress consent</text>
+          <text x="398" y="408" class="svg-body" fill="#ffffff">Saved key present</text>
+          <text x="398" y="432" class="svg-body" fill="#ffffff">Production Mode</text>
+          <text x="398" y="472" class="svg-body" fill="#ffffff">FAIL → REFUSE, NEVER FORK LOCAL</text>
+
+          <rect x="720" y="300" width="160" height="190" rx="10" fill="#ffffff" stroke="#000000" stroke-width="3"></rect>
+          <text x="738" y="330" class="svg-label" fill="#000000">FORK ENV</text>
+          <text x="738" y="360" class="svg-body" fill="#000000">LD_SPEECH_</text>
+          <text x="738" y="381" class="svg-body" fill="#000000">CLOUD_PROVIDER</text>
+          <text x="738" y="410" class="svg-body" fill="#000000">LD_SPEECH_CLOUD_KEY</text>
+          <text x="738" y="438" class="svg-body" fill="#000000">LD_SPEECH_CLOUD_MODEL</text>
+          <text x="738" y="472" class="svg-body" fill="#000000">Env only, never CLI</text>
+
+          <path d="M340 395 L372 395" stroke="#000000" stroke-width="3" marker-end="url(#arrow-black)"></path>
+          <path d="M680 395 L712 395" stroke="#000000" stroke-width="3" marker-end="url(#arrow-black)"></path>
+          <path d="M800 300 L800 240" stroke="#000000" stroke-width="3" marker-end="url(#arrow-black)"></path>
+          <text x="690" y="286" class="svg-body" fill="#000000">key + provider + model</text>
+
+          <rect x="40" y="520" width="840" height="66" rx="8" fill="#000000" stroke="#ffffff" stroke-width="3"></rect>
+          <text x="58" y="550" class="svg-label" fill="#ffffff">NETWORK LABEL / WHAT CROSSES</text>
+          <text x="58" y="573" class="svg-body" fill="#ffffff">Local: PCM frames + launch token + per-provider key in child env. Remote: multipart WAV or base64 WAV, model name, bearer key, and returned transcript text.</text>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <section class="crate">
+    <div class="label">03 / Openrouter lane</div>
+    <div class="body">
+      <p>OpenRouter is OpenAI-compatible in authentication, but audio input is <strong>not</strong> the <code>/v1/audio/transcriptions</code> endpoint. The documented route is the Responses API. This implementation follows OpenRouter's audio guide and Responses API reference; no model id was invented.</p>
+      <table>
+        <thead>
+          <tr><th>Item</th><th>Exact value / shape</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Endpoint</td><td class="mono">POST https://openrouter.ai/api/v1/responses</td></tr>
+          <tr><td>Headers</td><td class="mono">Authorization: Bearer &lt;OPENROUTER_KEY&gt;; Content-Type: application/json</td></tr>
+          <tr><td>Model ids</td><td><code>google/gemini-2.5-flash</code> (guide example, default) and <code>google/gemini-3.8-flash</code> (catalog row advertising audio input)</td></tr>
+          <tr><td>Request</td><td class="mono">input[0].content = [ input_text prompt, input_audio { data: base64Wav, format: "wav" } ], stream: false</td></tr>
+          <tr><td>Response parse</td><td class="mono">output[].content[] where type == "output_text"; text parts joined with newlines</td></tr>
+          <tr><td>Docs</td><td>openrouter.ai/docs/guides/overview/multimodal/audio.md and openrouter.ai/docs/api_reference/responses/overview.md</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="crate">
+    <div class="label">04 / Ins and outs</div>
+    <div class="body">
+      <div class="grid-2">
+        <div class="tile">
+          <h3>Local side</h3>
+          <ul>
+            <li>Renderer captures 16 kHz mono Int16 PCM and streams frames over the existing loopback WebSocket with the per-launch token.</li>
+            <li>The engine buffers a segment until the transport's silence endpointing, then prepends a canonical 44-byte RIFF/WAVE header using <code>framesToWav()</code>.</li>
+            <li>Session state and elapsed milliseconds are local; one segment produces one <code>final</code> message with no word timestamps.</li>
+          </ul>
+        </div>
+        <div class="tile">
+          <h3>Remote side</h3>
+          <ul>
+            <li>OpenAI lane: <code>POST https://api.openai.com/v1/audio/transcriptions</code> with multipart <code>model</code> + <code>file</code>, JSON <code>text</code> response.</li>
+            <li>OpenRouter lane: <code>POST https://openrouter.ai/api/v1/responses</code> with JSON <code>input_audio</code> base64 WAV; transcript comes from <code>output[].content[]</code> <code>output_text</code>.</li>
+            <li>Both use <code>Authorization: Bearer &lt;provider key&gt;</code> and a 120-second abort timeout. Default models are <code>whisper-1</code> and <code>google/gemini-2.5-flash</code>.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <h3>Boundary contract</h3>
+        <table>
+          <thead>
+            <tr><th>Stage</th><th>Shape</th><th>Behavior</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Input</td><td class="mono">frames: Buffer[] | string[]</td><td>Empty input emits no request and no transcript.</td></tr>
+            <tr><td>Request</td><td class="mono">multipart/form-data | JSON input_audio</td><td>Provider-specific body; injectable fetch means unit tests never touch the network.</td></tr>
+            <tr><td>Response</td><td class="mono">{ "text": "..." } | output_text[]</td><td>Empty, non-string, or unreadable transcript becomes <code>cloud-bad-response</code>; no invented transcript.</td></tr>
+            <tr><td>Timestamps</td><td class="mono">tStartMs / tEndMs</td><td>Start is the session offset; end is offset plus computed audio duration, forced to at least 1 ms so the schema relation holds.</td></tr>
+            <tr><td>Errors</td><td class="mono">t: "error"</td><td>Contract-valid message with stable <code>code</code>, operator text, and <code>fatal: false</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="crate">
+    <div class="label">05 / Key and consent security</div>
+    <div class="body">
+      <div class="grid-2">
+        <div class="tile">
+          <h3>Storage</h3>
+          <p><code>main/speechCloudKeyStore.js</code> follows the keytar-first pattern with service <code>LyricDisplaySpeechCloudKeys</code> and one account per provider: <code>openai</code> or <code>openrouter</code>. When keytar is unavailable, each provider gets its own AES-256-GCM ciphertext and 0600 random key file. Clear removes only that provider's stores, so the other key survives.</p>
+        </div>
+        <div class="tile">
+          <h3>Exposure</h3>
+          <p>IPC answers only <code>{ ok, configured, provider }</code>. The renderer never reads the key back, no key text enters localStorage, and the fork receives it only through <code>LD_SPEECH_CLOUD_KEY</code> in the child environment. Logs, health payloads, and error messages carry no key, audio, provider body, or transcript.</p>
+        </div>
+      </div>
+      <p style="margin-top:16px">Consent is an explicit checkbox in Settings → Speech &amp; AI → Cloud: “I understand audio leaves this computer.” Main keeps it in memory for the session, refuses the first cloud start until it is ticked, and revokes it when leaving Cloud, switching provider, resetting, or restarting. Test Mode plus Cloud is refused rather than allowing canned text to wear a cloud label.</p>
+    </div>
+  </section>
+
+  <section class="crate">
+    <div class="label">06 / File map</div>
+    <div class="body">
+      <table>
+        <thead>
+          <tr><th>File</th><th>Responsibility</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">speech-engine/drivers/cloudOpenAI.js</td><td>OpenAI lane: config validation, WAV multipart request, JSON text parse, error mapping, session/timing, contract messages.</td></tr>
+          <tr><td class="mono">speech-engine/drivers/cloudOpenRouter.js</td><td>OpenRouter/Gemini lane: documented Responses API base64 input_audio request, output_text parse, same contract and error taxonomy.</td></tr>
+          <tr><td class="mono">speech-engine/index.js</td><td>Engine entry: <code>--engine=cloud</code>, provider/model flags or env, env-only key, loud exit 2 on bad config.</td></tr>
+          <tr><td class="mono">main/speechIpc.js</td><td>Start gates, provider/consent/key validation, cloud fork selection, key and consent IPC handlers.</td></tr>
+          <tr><td class="mono">main/speechEngine.js</td><td>Passes cloud provider/key/model into the forked child environment.</td></tr>
+          <tr><td class="mono">main/speechCloudKeyStore.js</td><td>Provider-scoped keytar storage with encrypted fallback and explicit per-provider clear.</td></tr>
+          <tr><td class="mono">preload.js</td><td>Bridge methods: cloud key status/save/clear and consent; no key text crosses.</td></tr>
+          <tr><td class="mono">src/components/Speech/SpeechSettingsSection.jsx</td><td>Two-lane picker, per-provider model choice, Save/Clear/status, egress acknowledgement, honest cost and egress copy.</td></tr>
+          <tr><td class="mono">src/hooks/useAudioCapture.js</td><td>Adds <code>cloudProviderId</code> and <code>cloudModelId</code> to the one <code>speech:start</code> payload so main can validate them.</td></tr>
+          <tr><td class="mono">speech-engine/test/cloudOpenAI.test.js</td><td>OpenAI fake-fetch request/response/error tests and child-process startup/refusal proof.</td></tr>
+          <tr><td class="mono">speech-engine/test/cloudOpenRouter.test.js</td><td>OpenRouter fake-fetch request shape, base64 WAV, output_text parse, error mapping, and entry routing proof.</td></tr>
+          <tr><td class="mono">tests/speech/cloudOpenAiRouting.test.js</td><td>Routing, refusals, consent, history attribution, and key IPC contract.</td></tr>
+          <tr><td class="mono">tests/speech/speechCloudKeyStore.test.js</td><td>Keytar calls, encrypted fallback, file modes, cold read, clear, provider validation.</td></tr>
+          <tr><td class="mono">speech-engine/README.md</td><td>Cloud launch configuration and model choice rationale.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="crate">
+    <div class="label">07 / Failure taxonomy</div>
+    <div class="body">
+      <table>
+        <thead>
+          <tr><th>Stable code</th><th>Where</th><th>What the operator sees</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">cloud-provider-not-supported</td><td>Settings / start / entry</td><td>“Choose OpenAI or OpenRouter in Settings.” Other providers stay disabled in the UI.</td></tr>
+          <tr><td class="mono">cloud-key-missing</td><td>Start gate / entry</td><td>Names the selected lane: “No OpenAI API key is saved…” or “An OpenRouter API key is required.”</td></tr>
+          <tr><td class="mono">cloud-model-not-supported</td><td>Start gate / engine entry</td><td>Unknown model is named; a Gemini id on OpenAI (or vice versa) is refused before fork, and entry exits 2 instead of guessing.</td></tr>
+          <tr><td class="mono">cloud-egress-required</td><td>Start gate</td><td>Tick the acknowledgement in Settings → Speech &amp; AI → Cloud before the first cloud start.</td></tr>
+          <tr><td class="mono">cloud-test-mode-unsupported</td><td>Start gate</td><td>Switch to Production Mode; canned text cannot be labelled cloud transcript.</td></tr>
+          <tr><td class="mono">cloud-auth-invalid</td><td>HTTP 401 / 403</td><td>“OpenAI rejected the API key…” or “OpenRouter rejected the API key…” depending on lane.</td></tr>
+          <tr><td class="mono">cloud-rate-limited</td><td>HTTP 429</td><td>Names the selected provider and asks the operator to retry shortly.</td></tr>
+          <tr><td class="mono">cloud-provider-unavailable</td><td>HTTP 408 / 5xx</td><td>“OpenAI transcription is temporarily unavailable.” / “OpenRouter transcription is temporarily unavailable.”</td></tr>
+          <tr><td class="mono">cloud-request-failed</td><td>Other non-2xx</td><td>Request rejected, with HTTP status only; no provider body is shown.</td></tr>
+          <tr><td class="mono">cloud-bad-response</td><td>JSON parse / text field</td><td>No readable transcript text in JSON <code>text</code> or <code>output_text</code>; the segment is an error, never silence or invented words.</td></tr>
+          <tr><td class="mono">cloud-network-error</td><td>Fetch throw</td><td>“The transcription request could not reach OpenAI/OpenRouter.”</td></tr>
+          <tr><td class="mono">cloud-transcribe-failed</td><td>Unexpected driver error</td><td>Generic per-segment error; no raw exception text reaches the rail.</td></tr>
+          <tr><td class="mono">engine-closed</td><td>Transcribe after close</td><td>“Speech engine has closed.”</td></tr>
+          <tr><td class="mono">cloud-key-read-failed</td><td>Key status IPC</td><td>“The saved cloud key could not be read. Try saving it again.”</td></tr>
+          <tr><td class="mono">cloud-key-save-failed</td><td>Key save IPC</td><td>“The cloud key could not be saved to secure storage.”</td></tr>
+          <tr><td class="mono">cloud-key-clear-failed</td><td>Key clear IPC</td><td>“The saved cloud key could not be cleared.”</td></tr>
+          <tr><td class="mono">invalid-argument</td><td>Key save IPC</td><td>Empty key is refused before storage is touched.</td></tr>
+          <tr><td class="mono">where-not-implemented</td><td>Network mode</td><td>Local-network still refuses; choose This Device or configured Cloud.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="crate">
+    <div class="label">08 / Tests and exact proof</div>
+    <div class="body">
+      <div class="proof-block">
+        <pre>node --test speech-engine/
+tests 137 | suites 6 | pass 137 | fail 0</pre>
+      </div>
+      <div class="proof-block">
+        <pre>npx vitest run tests/speech src/speech src/components/Speech
+Test Files 45 passed (45)
+Tests 791 passed | 1 todo (792)</pre>
+      </div>
+      <div class="proof-block">
+        <pre>npx vitest run tests/speech/invariants.test.js
+Test Files 1 passed (1); Tests 39 passed (39)</pre>
+      </div>
+      <div class="proof-block">
+        <pre>npm run build
+✓ built in 18.81s (chunk-size warning only)
+
+node --check &lt;all changed JS files&gt;
+all OK
+
+PR #82 CI
+12 pass | 5 skipped | 0 fail | 0 pending</pre>
+      </div>
+      <div class="caution">
+        <strong>Jj / .git caveat</strong>
+        <p>This jj workspace has no <code>.git</code> directory, so three git-dependent invariant tests fail locally with “not a git repository”; the same three fail on unmodified <code>master@origin</code> here. With temporary git metadata they pass locally, and CI checks out with git. Full-suite-only failures also included one unrelated native-module failure and three unrelated search timing budgets; none touch speech.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="crate">
+    <div class="label">09 / Not verified</div>
+    <div class="body">
+      <ul>
+        <li>No request with a real OpenAI or OpenRouter key was made. Real auth acceptance, live provider error behavior, and the actual returned transcript for sermon audio remain unverified on both lanes.</li>
+        <li>OpenRouter model acceptance for live audio was checked against the public docs and models catalog, not with a keyed request. Whether Gemini returns accurate, complete transcripts for a full sermon is unverified.</li>
+        <li>Billing, data retention, and provider-side handling of recorded sermon audio were not verified.</li>
+        <li>No real sermon microphone run was performed; request/response shape and child startup are verified with fake fetch and a loopback health handshake only.</li>
+        <li>No live microphone run or before/after screen recording of the two-lane Settings form was captured for this follow-up.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="crate">
+    <div class="label">10 / Runbook</div>
+    <div class="body">
+      <ol>
+        <li><strong>Configure in the app.</strong> Open User Preferences → Experimental → Speech &amp; AI → Cloud. Select OpenAI or OpenRouter · Google Gemini, choose the model, paste that provider's key into its password field, click <strong>Save key</strong>, and confirm the status reads “Key saved in secure storage.” Keys are stored separately.</li>
+        <li><strong>Grant egress.</strong> Tick “I understand audio leaves this computer,” keep Engine Mode on Production, and arm Sermon Assist. Cloud + Test Mode refuses by design.</li>
+        <li><strong>Configure the engine directly.</strong> Set <code>LD_SPEECH_CLOUD_PROVIDER=openai</code> or <code>openrouter</code>, set the matching <code>LD_SPEECH_CLOUD_KEY</code>, and optionally set <code>LD_SPEECH_CLOUD_MODEL</code> (<code>whisper-1</code> or <code>google/gemini-2.5-flash</code>). Then run <code>node speech-engine/index.js --engine=cloud</code>. A missing key, provider, or bad model exits 2.</li>
+        <li><strong>Test locally.</strong> Run <code>node --test speech-engine/</code>, then <code>npx vitest run tests/speech src/speech src/components/Speech</code>. No key and no network are needed.</li>
+        <li><strong>Clear the key.</strong> Click <strong>Clear key</strong> for the selected provider. Only that lane's key is deleted; the other status badge is unaffected.</li>
+        <li><strong>Watch.</strong> Check the rail for <code>speech:error</code> codes, the mode indicator (“Cloud · openai” or “Cloud · openrouter”), health <code>backend: cloud-openai</code> / <code>cloud-openrouter</code>, and the per-provider key status badge. Treat rate-limit and auth codes as operator actions; never paste a key into logs or tickets.</li>
+      </ol>
+    </div>
+  </section>
+</main>
+</body>
+</html>

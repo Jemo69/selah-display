@@ -78,8 +78,34 @@ import {
 import { getModel, generateEngineToken } from '../shared/speech/index.js';
 import createMainLogger from './logger.js';
 import { diagMain } from './diagnosticsLog.js';
+import { speechCloudKeyStore } from './speechCloudKeyStore.js';
+import {
+  CLOUD_PROVIDER as OPENAI_PROVIDER,
+  DEFAULT_CLOUD_MODEL as OPENAI_DEFAULT_MODEL,
+  CLOUD_MODELS as OPENAI_MODELS,
+} from '../speech-engine/drivers/cloudOpenAI.js';
+import {
+  CLOUD_PROVIDER as OPENROUTER_PROVIDER,
+  DEFAULT_CLOUD_MODEL as OPENROUTER_DEFAULT_MODEL,
+  CLOUD_MODELS as OPENROUTER_MODELS,
+} from '../speech-engine/drivers/cloudOpenRouter.js';
 
 const log = createMainLogger('SpeechIpc');
+
+/** The only cloud lanes this build can actually run. */
+const CLOUD_PROVIDERS = Object.freeze({
+  [OPENAI_PROVIDER]: {
+    label: 'OpenAI',
+    models: OPENAI_MODELS,
+    defaultModel: OPENAI_DEFAULT_MODEL,
+  },
+  [OPENROUTER_PROVIDER]: {
+    label: 'OpenRouter',
+    models: OPENROUTER_MODELS,
+    defaultModel: OPENROUTER_DEFAULT_MODEL,
+  },
+});
+const DEFAULT_CLOUD_PROVIDER = OPENAI_PROVIDER;
 
 /**
  * The renderer's WebSocket stream path (plan section 3).
@@ -102,7 +128,7 @@ export const SPEECH_EVENT_CHANNELS = Object.freeze([
   'speech:install-state', // engine discovery + installed models + resumable partials
 ]);
 
-/** renderer -> main invoke handles. Thirteen channels, two of them stubs. */
+/** renderer -> main invoke handles. Cloud key/consent are control-plane only. */
 export const SPEECH_INVOKE_CHANNELS = Object.freeze([
   'speech:start', // LIVE: { enabled, modelId?, providerId?, where?, networkEndpoint?, networkToken? } -> { ok, started, reason, health, installState, engine }
   'speech:stop', // LIVE: -> { ok, stopped } (tears down remote sessions without killing a remote process)
@@ -122,6 +148,12 @@ export const SPEECH_INVOKE_CHANNELS = Object.freeze([
   'speech:history:export', // LIVE: { format:'json'|'text', sessionId? } -> { ok, path, bytes }
   'speech:history:erase', // LIVE: -> { ok, bytesReclaimed, sessionsRemoved, exportsRemoved }
   'speech:history:append', // LIVE: { op:'begin'|'segment'|'end', ... } -> the history write path
+  // Real OpenAI cloud: the renderer can save/check/clear a key and grant the
+  // explicit egress acknowledgement, but can never read the key back.
+  'speech:cloud:key:get', // LIVE: -> { ok, configured, provider } — never the key text
+  'speech:cloud:key:set', // LIVE: { provider, key } -> saves to the OS keychain
+  'speech:cloud:key:clear', // LIVE: { provider } -> deletes the stored key
+  'speech:cloud:consent', // LIVE: { granted } -> explicit 'audio leaves this machine' ack
 ]);
 
 /**
@@ -178,6 +210,8 @@ let registered = null;
  *   defaults to `<userData>/speech-engine/history` (Decision D9 — history
  *   on by default, stored under userData). The repo's `speech-engine/` is
  *   NEVER written to here either.
+ * @param {object} [options.cloudKeyStore] keytar-backed store injected in
+ *   tests; defaults to main/speechCloudKeyStore.js
  * @returns {{ start: Function, stop: Function, getState: Function,
  *             getInstallState: Function, publishInstallState: Function,
  *             publishProgress: Function, history: Object }}
@@ -216,6 +250,7 @@ export function registerSpeechIpc({
   binDir = null,
   modelsDir = null,
   historyDir = null,
+  cloudKeyStore = speechCloudKeyStore,
 } = {}) {
   if (registered) return registered;
 
@@ -249,6 +284,12 @@ export function registerSpeechIpc({
   const activeHistoryDir =
     typeof historyDir === 'string' && historyDir ? historyDir : resolveHistoryDir(app.getPath('userData'));
   const history = createSpeechHistoryStore({ historyDir: activeHistoryDir });
+
+  // Cloud egress consent is deliberately NOT persisted and NOT sent from the
+  // renderer on every start. Checking the box in Settings is an explicit
+  // session action; a restart or a stale localStorage blob cannot silently
+  // re-authorise sending a sermon to a third party.
+  let cloudEgressConsented = false;
 
   // The launch token (plan 7.1): ONE per-launch secret that
   // gates REST (x-ld-speech-token), the WebSocket upgrade
@@ -440,31 +481,31 @@ export function registerSpeechIpc({
   /** The one start path: renderer invoke AND app boot both land here. */
   const start = async (payload) => {
     const startStartedAt = Date.now();
+    if (setupInProgress) {
+      const error = {
+        code: 'setup-busy',
+        message: 'Sermon Assist setup is running. Wait for it to finish before starting.',
+      };
+      broadcast('speech:error', error);
+      return {
+        ok: false,
+        started: false,
+        reason: 'setup-busy',
+        mode: engineInstallState.mode,
+        installState: buildInstallState(),
+        engine: null,
+        error,
+      };
+    }
     const enabled = payload?.enabled === true;
     const requestedWhere = stringField(payload?.where) ?? 'local';
 
-    // Network has a real transport now: health-check the OTHER machine and
-    // return its dial-in. It must never fall through to the local fork — a
-    // local whisper process labelled "Remote engine" is exactly the lie
-    // this gate existed to prevent.
-    if (enabled && requestedWhere === 'network') {
-      return startRemote(payload, startStartedAt);
-    }
-
-    // Cloud still has no transport. Refuse BEFORE the local engine starts:
-    // otherwise the rail would label a local whisper process as
-    // "Cloud · openai" — a lie about where the sermon audio went.
-    if (enabled && requestedWhere !== 'local') {
-      const error = {
-        code: 'where-not-implemented',
-        message:
-          'Cloud transcription is not implemented in this build. ' +
-          'Choose This Device or Network Device. The cloud choices are catalog placeholders only.',
-      };
+    /** One honest refusal shape for every pre-fork gate. No key in payloads. */
+    const refuse = (reason, error) => {
       publishInstallState();
-      log.info('Speech engine not started: where-not-implemented');
+      log.info(`Speech engine not started: ${reason}`);
       diagMain('info', 'engine', 'start refused by gate', {
-        reason: 'where-not-implemented',
+        reason,
         where: requestedWhere,
         durationMs: Date.now() - startStartedAt,
       });
@@ -473,23 +514,92 @@ export function registerSpeechIpc({
       return {
         ok: false,
         started: false,
-        reason: 'where-not-implemented',
+        reason,
         mode: engineInstallState.mode,
         installState: buildInstallState(),
         engine: null,
+        health: null,
         error,
       };
+    };
+
+    // Network has a real transport: health-check the other machine and return
+    // its dial-in. It must never fall through to a local fork.
+    if (enabled && requestedWhere === 'network') {
+      return startRemote(payload, startStartedAt);
     }
 
-    // Past the transport gate: any successful start from here is a LOCAL
-    // engine, so a later speech:stop owns a local process again.
+    // Past the remote branch, any successful start is local or cloud, never a
+    // lingering remote transport.
     remoteActive = false;
 
-    const decision = describeStartDecision({
-      enabled,
-      endpoint,
-      engineAvailable: engineInstallState.available,
-    });
+    // Cloud configuration gate — no filesystem probe, no model requirement,
+    // no local engine. Anything missing refuses loudly with an actionable
+    // code. The key is read from the secure store here and handed only to
+    // the forked engine's environment (never logged or returned to IPC).
+    let cloud = null;
+    if (enabled && requestedWhere === 'cloud') {
+      const provider = stringField(payload?.cloudProviderId);
+      const config = CLOUD_PROVIDERS[provider];
+      if (!config) {
+        return refuse('cloud-provider-not-supported', {
+          code: 'cloud-provider-not-supported',
+          message:
+            `Cloud provider "${provider ?? 'not configured'}" is not supported. ` +
+            'Choose OpenAI or OpenRouter in Settings.',
+        });
+      }
+      if (payload?.engineMode === 'test' || payload?.engineKind === 'fake') {
+        return refuse('cloud-test-mode-unsupported', {
+          code: 'cloud-test-mode-unsupported',
+          message:
+            'Test Mode cannot run in Cloud: it would label canned text as cloud ' +
+            'transcription. Switch to Production Mode to send audio to the selected cloud provider.',
+        });
+      }
+      const model = stringField(payload?.cloudModelId) ?? config.defaultModel;
+      if (!config.models.includes(model)) {
+        return refuse('cloud-model-not-supported', {
+          code: 'cloud-model-not-supported',
+          message:
+            `Model "${model}" cannot be used with ${config.label}. ` +
+            `Choose one of the models listed in Settings → Speech & AI → Cloud.`,
+        });
+      }
+      if (!cloudEgressConsented) {
+        return refuse('cloud-egress-required', {
+          code: 'cloud-egress-required',
+          message:
+            'Before the first cloud start, open Settings → Speech & AI → Cloud and tick ' +
+            'the acknowledgement that audio leaves this computer and is sent to the selected provider.',
+        });
+      }
+      let apiKey = null;
+      try {
+        apiKey = await cloudKeyStore.read(provider);
+      } catch {
+        apiKey = null;
+      }
+      if (typeof apiKey !== 'string' || !apiKey) {
+        return refuse('cloud-key-missing', {
+          code: 'cloud-key-missing',
+          message:
+            `No ${config.label} API key is saved. Open Settings → Speech & AI → Cloud, ` +
+            'paste your key and click Save.',
+        });
+      }
+      cloud = { provider, apiKey, model };
+    }
+
+    // A cloud fork does not need an installed whisper binary or weights, so
+    // the local discovery decision is skipped entirely for cloud starts.
+    const decision = cloud
+      ? { start: true, reason: 'cloud-provider-ready' }
+      : describeStartDecision({
+          enabled,
+          endpoint,
+          engineAvailable: engineInstallState.available,
+        });
 
     // The renderer needs the current install state either way — this is the
     // event that tells a settings panel WHY nothing started.
@@ -531,7 +641,7 @@ export function registerSpeechIpc({
     // Test mode always wins, as before: the canned engine runs for rehearsal
     // regardless of provider, so an unwired provider id must not refuse a
     // test-mode start that used to work.
-    if (providerEngineKind === null && !wantsTestEngine) {
+    if (!cloud && providerEngineKind === null && !wantsTestEngine) {
       const error = {
         code: 'provider-not-supported',
         message:
@@ -552,13 +662,13 @@ export function registerSpeechIpc({
         error,
       };
     }
-    const targetEngineKind = wantsTestEngine ? 'fake' : providerEngineKind;
+    const targetEngineKind = cloud ? 'cloud' : (wantsTestEngine ? 'fake' : providerEngineKind);
 
     // OS on-device needs no binary and no model file, so the whisper gates
     // below do not apply. The one gate that does: the OS backend only exists
     // on Windows. Refuse early (no fork) anywhere else, naming the path that
     // works — forking just to exit 2 would read as a crash.
-    if (targetEngineKind === 'osdevice' && process.platform !== 'win32') {
+    if (!cloud && targetEngineKind === 'osdevice' && process.platform !== 'win32') {
       const error = {
         code: 'os-device-unavailable',
         message:
@@ -581,7 +691,7 @@ export function registerSpeechIpc({
       };
     }
 
-    if (targetEngineKind === 'whisper' && !hasWhisperBinary(activeBinDir)) {
+    if (!cloud && targetEngineKind === 'whisper' && !hasWhisperBinary(activeBinDir)) {
       const error = {
         code: 'engine-not-installed',
         message:
@@ -610,7 +720,7 @@ export function registerSpeechIpc({
     // the loader and the rail used to show nothing. Probe once (successes are
     // cached), and refuse with the actual remedy instead of starting an
     // engine that cannot transcribe.
-    if (targetEngineKind === 'whisper') {
+    if (!cloud && targetEngineKind === 'whisper') {
       const probeStartedAt = Date.now();
       const probe = await probeEngineBinaryCached({ binDir: activeBinDir });
       diagMain('info', 'engine', 'binary probe finished', {
@@ -639,8 +749,8 @@ export function registerSpeechIpc({
     // Determine targetModelId. A configured model this machine does not have
     // must fail with a sentence, not an opaque engine exit code: the engine
     // refuses to start without weights, by design.
-    let targetModelId = stringField(payload?.modelId);
-    if (targetEngineKind === 'whisper') {
+    let targetModelId = cloud ? cloud.model : stringField(payload?.modelId);
+    if (!cloud && targetEngineKind === 'whisper') {
       if (!targetModelId || !installedIds.has(targetModelId)) {
         targetModelId = installedList[0]?.id ?? null;
       }
@@ -666,7 +776,7 @@ export function registerSpeechIpc({
           error,
         };
       }
-    } else if (!targetModelId && installedList.length > 0) {
+    } else if (!cloud && !targetModelId && installedList.length > 0) {
       targetModelId = installedList[0].id;
     }
     // History attribution for the OS engine names the OS model, not a whisper
@@ -674,7 +784,9 @@ export function registerSpeechIpc({
     // installed-list fallback), and OS-engine segments attributed to it would
     // read as transcribed by a model that never ran. Mirrors the driver's
     // OSDEVICE_MODEL ('os-device').
-    const historyModelId = targetEngineKind === 'osdevice' ? 'os-device' : targetModelId;
+    const historyModelId = cloud
+      ? cloud.model
+      : (targetEngineKind === 'osdevice' ? 'os-device' : targetModelId);
     const startOutcome = (outcome) => {
       diagMain('info', 'engine', 'start settled', {
         ok: outcome?.ok === true,
@@ -703,8 +815,11 @@ export function registerSpeechIpc({
       historyStore: history,
       engineKind: targetEngineKind,
       modelId: historyModelId,
-      providerId: stringField(payload?.providerId),
+      providerId: cloud ? `cloud-${cloud.provider}` : stringField(payload?.providerId),
       where: stringField(payload?.where),
+      // The key exists only in this call and the child's environment. It is
+      // never included in an IPC reply, a health snapshot, or a log line.
+      ...(cloud ? { cloud } : {}),
       ...callbacks,
     });
 
@@ -791,6 +906,97 @@ export function registerSpeechIpc({
         : verdict.message,
       health: verdict.health ?? null,
     };
+  });
+
+  // --- Cloud control plane -------------------------------------------------
+  // The renderer never receives the key. These handlers answer with a
+  // boolean status only, and the key travels from the secure store straight
+  // into the forked engine's environment on a cloud start.
+  ipcMain.handle('speech:cloud:key:get', async (_event, payload) => {
+    const provider = typeof payload?.provider === 'string' && payload.provider.trim()
+      ? payload.provider.trim()
+      : DEFAULT_CLOUD_PROVIDER;
+    if (!CLOUD_PROVIDERS[provider]) {
+      return {
+        ok: false,
+        success: false,
+        code: 'cloud-provider-not-supported',
+        message: `Only ${Object.keys(CLOUD_PROVIDERS).join(' and ')} cloud keys are supported.`,
+      };
+    }
+    try {
+      return {
+        ok: true,
+        success: true,
+        provider,
+        configured: await cloudKeyStore.has(provider),
+      };
+    } catch {
+      return {
+        ok: false,
+        success: false,
+        code: 'cloud-key-read-failed',
+        message: 'The saved cloud key could not be read. Try saving it again.',
+      };
+    }
+  });
+
+  ipcMain.handle('speech:cloud:key:set', async (_event, payload) => {
+    const provider = typeof payload?.provider === 'string' && payload.provider.trim()
+      ? payload.provider.trim()
+      : DEFAULT_CLOUD_PROVIDER;
+    if (!CLOUD_PROVIDERS[provider]) {
+      return {
+        ok: false,
+        success: false,
+        code: 'cloud-provider-not-supported',
+        message: `Only ${Object.keys(CLOUD_PROVIDERS).join(' and ')} cloud keys are supported.`,
+      };
+    }
+    if (typeof payload?.key !== 'string' || !payload.key.trim()) {
+      return { ok: false, success: false, code: 'invalid-argument', field: 'key', message: 'key must be a non-empty string' };
+    }
+    try {
+      await cloudKeyStore.save(payload.key, provider);
+      return { ok: true, success: true, provider, configured: true };
+    } catch {
+      return {
+        ok: false,
+        success: false,
+        code: 'cloud-key-save-failed',
+        message: 'The cloud key could not be saved to secure storage.',
+      };
+    }
+  });
+
+  ipcMain.handle('speech:cloud:key:clear', async (_event, payload) => {
+    const provider = typeof payload?.provider === 'string' && payload.provider.trim()
+      ? payload.provider.trim()
+      : DEFAULT_CLOUD_PROVIDER;
+    if (!CLOUD_PROVIDERS[provider]) {
+      return {
+        ok: false,
+        success: false,
+        code: 'cloud-provider-not-supported',
+        message: `Only ${Object.keys(CLOUD_PROVIDERS).join(' and ')} cloud keys are supported.`,
+      };
+    }
+    try {
+      await cloudKeyStore.clear(provider);
+      return { ok: true, success: true, provider, configured: false };
+    } catch {
+      return {
+        ok: false,
+        success: false,
+        code: 'cloud-key-clear-failed',
+        message: 'The saved cloud key could not be cleared.',
+      };
+    }
+  });
+
+  ipcMain.handle('speech:cloud:consent', (_event, payload) => {
+    cloudEgressConsented = payload?.granted === true;
+    return { ok: true, granted: cloudEgressConsented };
   });
 
   // LIVE — the resumable, verified model downloader.

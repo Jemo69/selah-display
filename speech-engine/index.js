@@ -4,9 +4,10 @@
  * speech engine (Phase 2 scaffold).
  *
  * Usage:
- *   node index.js [--engine=fake|whisper|osdevice] [--host=127.0.0.1] [--port=4731]
+ *   node index.js [--engine=fake|whisper|osdevice|cloud] [--host=127.0.0.1] [--port=4731]
  *                 [--bin-dir=DIR] [--models-dir=DIR] [--model=ID]
  *                 [--driver=auto|server|cli] [--allow-lan]
+ *                 [--cloud-provider=openai|openrouter] [--cloud-model=ID]
  *
  * Environment (set by Selah's supervisor when it forks us):
  *   LD_SPEECH_TOKEN   per-launch secret required on every request (REQUIRED
@@ -15,6 +16,11 @@
  *   LD_SPEECH_PORT    bind port, 0 = ephemeral (default 4731)
  *   LD_SPEECH_ENGINE  engine kind (default fake)
  *   LD_SPEECH_ALLOW_LAN=1  explicit trusted-LAN opt-in (same as --allow-lan)
+ *   LD_SPEECH_CLOUD_PROVIDER  cloud provider: 'openai' or 'openrouter'
+ *   LD_SPEECH_CLOUD_KEY       provider key, env only (never a CLI flag: the
+ *                             process table is world-readable on many hosts)
+ *   LD_SPEECH_CLOUD_MODEL     provider-specific model id; defaults are
+ *                             'whisper-1' and 'google/gemini-2.5-flash'
  *
  * TRUSTED-LAN OPT-IN: --allow-lan / LD_SPEECH_ALLOW_LAN=1 widens the bind,
  * Origin and peer gates to a network you control, and REQUIRES an explicit
@@ -26,6 +32,11 @@
  *   fake     (default) canned engine from fakeEngine.js — no model, no
  *            binary, no download. This is what makes Phase 2 verifiable, and
  *            it stays reachable ONLY when explicitly asked for.
+ *   cloud    real cloud transcription. `openai` POSTs WAV to Audio
+ *            Transcriptions; `openrouter` POSTs base64 WAV to the documented
+ *            Responses API with a Google Gemini model. Provider + key are
+ *            REQUIRED from the environment; no local binary or weights are
+ *            consulted, and there is never a fallback to the canned engine.
  *   whisper  the real thing (Phase 5). A checksum-verified whisper.cpp CLI is
  *            spawned as a child process and fed WAV over stdin; see
  *            drivers/whispercpp.js for why a subprocess and not a native addon.
@@ -69,6 +80,14 @@ import { fileURLToPath } from 'node:url';
 import { createWhisperEngine, hasBinary, resolveWeights, WHISPER_ROWS } from './drivers/whispercpp.js';
 import { createWhisperServerEngine, hasServerBinary } from './drivers/whisperServer.js';
 import { createOsDeviceEngine } from './drivers/osdevice.js';
+import {
+  createCloudOpenAiEngine,
+  resolveCloudConfig as resolveOpenAiConfig,
+} from './drivers/cloudOpenAI.js';
+import {
+  createCloudOpenRouterEngine,
+  resolveCloudConfig as resolveOpenRouterConfig,
+} from './drivers/cloudOpenRouter.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -122,6 +141,35 @@ const defaultEngine = ((hasBinary(binDir) || hasServerBinary(binDir)) && WHISPER
 
 const engineKind = String(args.engine ?? env.LD_SPEECH_ENGINE ?? defaultEngine);
 
+/**
+ * Cloud launch config. Provider and model may come from a flag or the
+ * environment; the key is read from the environment ONLY, because a
+ * `--cloud-key=...` flag would expose it to every local process listing.
+ *
+ * resolveCloudConfig throws with an actionable `code` for a missing/unknown
+ * provider or key. buildEngine() turns that into exit 2 — fail loudly, never
+ * a local engine wearing a cloud label.
+ */
+let cloudConfig = null;
+if (engineKind === 'cloud') {
+  try {
+    const provider = args['cloud-provider'] ?? env.LD_SPEECH_CLOUD_PROVIDER;
+    const model = args['cloud-model'] ?? env.LD_SPEECH_CLOUD_MODEL;
+    const common = { provider, apiKey: env.LD_SPEECH_CLOUD_KEY, model };
+    if (provider === 'openai') cloudConfig = resolveOpenAiConfig(common);
+    else if (provider === 'openrouter') cloudConfig = resolveOpenRouterConfig(common);
+    else {
+      throw Object.assign(new Error('Only openai and openrouter cloud providers are supported.'), {
+        code: 'cloud-provider-not-supported',
+      });
+    }
+  } catch (error) {
+    // The message names the missing setting, never the key or any audio.
+    console.error(`speech-engine: ${error.message}`);
+    process.exit(2);
+  }
+}
+
 const host = String(args.host ?? env.LD_SPEECH_HOST ?? DEFAULT_BIND_HOST);
 const port = Number(args.port ?? env.LD_SPEECH_PORT ?? 4731);
 /**
@@ -163,6 +211,24 @@ const bus = createMessageBus();
  * @returns {object} an engine implementing the v1 contract
  */
 function buildEngine() {
+  if (engineKind === 'cloud') {
+    // Resolved (and validated) before the server binds: a cloud launch with
+    // no key is a configuration error, not a reason to start whisper.
+    if (cloudConfig.provider === 'openrouter') {
+      return createCloudOpenRouterEngine({
+        bus,
+        apiKey: cloudConfig.apiKey,
+        model: cloudConfig.model,
+      });
+    }
+    return createCloudOpenAiEngine({
+      bus,
+      apiKey: cloudConfig.apiKey,
+      model: cloudConfig.model,
+      language: typeof args.lang === 'string' ? args.lang : (env.LD_SPEECH_LANG || undefined),
+    });
+  }
+
   if (engineKind === 'fake') return createFakeEngine({ bus });
 
   if (engineKind === 'whisper') {
@@ -225,7 +291,7 @@ function buildEngine() {
 
   // An unknown engine name is a configuration error, and guessing at one is
   // exactly how a typo becomes a wrong engine mid-service.
-  console.error(`speech-engine: unknown engine "${engineKind}". Use "fake", "whisper", or "osdevice".`);
+  console.error(`speech-engine: unknown engine "${engineKind}". Use "fake", "whisper", "osdevice", or "cloud".`);
   process.exit(2);
   return null;
 }

@@ -1199,10 +1199,15 @@ describe('invariant 4: off by default, cold by default', () => {
     const extractSpeechChannels = (relPath) =>
       [...new Set([...readText(relPath).matchAll(/'(speech:[a-z0-9:-]+)'/g)].map((m) => m[1]))].sort();
 
-    // The inventory: 23 channels — 15 renderer->main invokes and 8
-    // main->renderer events. Sorted, so the comparison is order-blind.
+    // The inventory: every renderer->main invoke and main->renderer event,
+    // including the trusted-LAN probe and the cloud control plane. Sorted, so
+    // the comparison is order-blind.
     const EXPECTED_SPEECH_CHANNELS = [
       'speech:benchmark', // INVOKE, stub: Phase 3 benchmark
+      'speech:cloud:consent', // INVOKE: explicit egress acknowledgement before first cloud start
+      'speech:cloud:key:clear', // INVOKE: delete the stored OpenAI key
+      'speech:cloud:key:get', // INVOKE: { configured } only — never the key text
+      'speech:cloud:key:set', // INVOKE: save the key through the keytar-backed store
       'speech:engine-selftest', // INVOKE, live: spawn whisper-cli --help and report loader failures
       'speech:error', // EVENT: one clear engine error (crash loop, bad API, spawn failure)
       'speech:get-state', // INVOKE, live: current supervisor + install state
@@ -1386,11 +1391,9 @@ describe('invariant 5: audio stays local unless cloud is chosen', () => {
     expect(quitting.allowed).toBe(false);
   });
 
-  // Visible gap: Phase 5 builds the cloud acknowledgement flow (stored key +
-  // explicit "audio leaves this machine" confirmation). Until then, the cloud
-  // path is unreachable only because cloudProviderId defaults to null — this
-  // todo keeps the remaining half of the invariant in test output.
-  it.todo('cloud path requires a stored provider key and an explicit acknowledgement that audio leaves the machine (Phase 5)');
+  // The cloud half of this invariant is now exercised for real in
+  // tests/speech/cloudOpenAiRouting.test.js: a stored key AND an explicit
+  // egress acknowledgement are both required before any fork happens.
 });
 
 // ===========================================================================

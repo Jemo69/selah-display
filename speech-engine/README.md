@@ -78,6 +78,63 @@ LAN you control. In Selah, enter `http://192.168.1.20:4731` and the token in
 User Preferences → Experimental → Speech & AI → Network Device. The token
 is session-only (never written to localStorage); the endpoint is persisted.
 
+## Real cloud modes: OpenAI and OpenRouter
+
+`--engine=cloud` (or `LD_SPEECH_ENGINE=cloud`) supports two real lanes through
+the **same** session/frames engine contract as the local drivers. Neither needs
+a binary or model weights: the loopback HTTP/WS surface is unchanged, so the
+renderer still streams PCM locally and only the engine talks to the provider.
+
+- `openai`: multipart WAV POST to
+  `https://api.openai.com/v1/audio/transcriptions`, JSON `text` response.
+- `openrouter`: documented Responses API POST to
+  `https://openrouter.ai/api/v1/responses` with base64 `input_audio` WAV and
+  a Google Gemini model; text is read from `output[].content[]` entries of
+  type `output_text`. This is **not** the OpenAI transcriptions endpoint.
+
+Launch configuration:
+
+```sh
+LD_SPEECH_CLOUD_PROVIDER=openai \
+LD_SPEECH_CLOUD_KEY='sk-...' \
+LD_SPEECH_CLOUD_MODEL=whisper-1 \
+node speech-engine/index.js --engine=cloud --port=4731
+```
+
+Provider and model may also be passed as `--cloud-provider=openai` /
+`--cloud-model=whisper-1`; the key is **environment-only** so it cannot leak
+into the process table. A missing provider or key exits 2 with an actionable
+message — there is no fallback to the canned or a local engine.
+
+**Model ids** come from documented/catalog sources, never guesses:
+
+- OpenAI: `whisper-1` (default; long-standing endpoint, stable `{"text": ...}`
+  body) or `gpt-4o-transcribe` (newer accuracy option).
+- OpenRouter: `google/gemini-2.5-flash` (default; the id in OpenRouter's audio
+  guide) or `google/gemini-3.8-flash` (current catalog row advertising `audio`
+  input). Exact ids are passed through unchanged.
+
+OpenRouter launch example:
+
+```sh
+LD_SPEECH_CLOUD_PROVIDER=openrouter \
+LD_SPEECH_CLOUD_KEY='sk-or-...' \
+LD_SPEECH_CLOUD_MODEL=google/gemini-2.5-flash \
+node speech-engine/index.js --engine=cloud --port=4731
+```
+
+In the app, each provider has its own key in the keytar-first /
+encrypted-file-fallback pattern (`main/speechCloudKeyStore.js`), and the
+renderer only learns `{ configured }` per provider. Settings exposes
+provider selection, model choice, explicit **Save** / **Clear** buttons, a
+boolean status, and an egress acknowledgement that must be checked before the
+first cloud start and again after switching lanes. Other providers are shown
+as unavailable and refuse before any fork. No error path logs the key, the
+audio, or the transcript.
+
+Documentation used: `https://openrouter.ai/docs/guides/overview/multimodal/audio.md`
+and `https://openrouter.ai/docs/api_reference/responses/overview.md`.
+
 ## Running tests
 
 From the **repository root**:

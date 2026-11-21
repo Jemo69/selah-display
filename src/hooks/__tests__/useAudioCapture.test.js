@@ -609,6 +609,10 @@ describe('useAudioCapture — the engine transport bridge', () => {
       engineMode: 'prod',
       networkEndpoint: null,
       networkToken: null,
+      // Main validates the selected cloud provider before forking; local
+      // starts carry the default null so the gate is never bypassed.
+      cloudProviderId: null,
+      cloudModelId: null,
     });
     // The renderer dialed the engine itself, with the token as
     // the upgrade query parameter (plan 7.1).
