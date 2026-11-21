@@ -53,6 +53,9 @@ const rowId = (result) => result.modelId;
 const ModelBenchmarkPanel = ({ darkMode = true, cardClass, titleClass }) => {
   const providerId = useSpeechStore((state) => state.providerId);
   const currentModelId = useSpeechStore((state) => state.modelId);
+  const engineMode = useSpeechStore((state) => state.engineMode);
+  const where = useSpeechStore((state) => state.where);
+  const status = useSpeechStore((state) => state.status);
   const results = useSpeechStore((state) => state.benchmarkResults) ?? [];
   const runningId = useSpeechStore((state) => state.benchmarkRunningId) ?? null;
 
@@ -60,6 +63,9 @@ const ModelBenchmarkPanel = ({ darkMode = true, cardClass, titleClass }) => {
   const [errors, setErrors] = useState({});
   const [notice, setNotice] = useState(null);
   const [selecting, setSelecting] = useState(false);
+  const [autoSelecting, setAutoSelecting] = useState(false);
+  const [autoChoice, setAutoChoice] = useState(null);
+  const [autoRefusal, setAutoRefusal] = useState(null);
   // A cancel is a REQUEST. Resolving it does not mean the run stopped, and the
   // engine says so explicitly — so we show what it reported rather than
   // pretending the work was killed.
@@ -172,6 +178,73 @@ const ModelBenchmarkPanel = ({ darkMode = true, cardClass, titleClass }) => {
     }
   }, [recommendation.modelId]);
 
+  /**
+   * Real matrix benchmarking. Main stops any idle engine, starts it once per
+   * installed model with that model's weights, runs the same committed clip,
+   * and stops it again. We only record the rows it actually returned.
+   *
+   * No live session may be interrupted: the engine cannot hot-swap weights,
+   * and a 'model upgrade' in the middle of a sermon would be a disaster.
+   */
+  const autoSelect = useCallback(async () => {
+    const speech = bridge();
+    if (!speech || typeof speech.autoSelectModel !== 'function') {
+      setAutoRefusal('Auto-selection is only available in the desktop app.');
+      return;
+    }
+    setSelecting(false);
+    setAutoSelecting(true);
+    setAutoRefusal(null);
+    setAutoChoice(null);
+
+    let clip;
+    try {
+      clip = await loadBenchmarkClip();
+    } catch {
+      if (mountedRef.current) {
+        setAutoSelecting(false);
+        setAutoRefusal('The benchmark reference clip could not be loaded.');
+      }
+      return;
+    }
+
+    try {
+      const reply = await speech.autoSelectModel({ clip, providerId, where, engineMode });
+      if (!mountedRef.current) return;
+
+      // Persist the measured rows AS RECEIVED, including measured:false rows
+      // and their reasons. A refusal is still evidence about this machine.
+      for (const row of Array.isArray(reply?.results) ? reply.results : []) {
+        useSpeechStore.getState().recordBenchmarkResult(row);
+      }
+
+      if (!reply || reply.ok === false) {
+        setAutoRefusal(reply?.reason ?? reply?.message ?? 'Auto-selection could not be completed.');
+        return;
+      }
+      const decision = reply.decision;
+      if (!decision?.modelId) {
+        setAutoRefusal(decision?.reason ?? reply.reason ?? 'No measured model passed the gates.');
+        return;
+      }
+
+      useSpeechStore.getState().setModelId(decision.modelId);
+      setAutoChoice({
+        modelId: decision.modelId,
+        reason: decision.reason,
+        rtf: decision.result?.rtf ?? null,
+        wer: decision.result?.wer ?? null,
+      });
+      setNotice(
+        `Using ${decision.modelId}. The benchmark engine is stopped; arm Sermon Assist to start it.`
+      );
+    } catch {
+      if (mountedRef.current) setAutoRefusal('Auto-selection could not be run.');
+    } finally {
+      if (mountedRef.current) setAutoSelecting(false);
+    }
+  }, [engineMode, providerId, where]);
+
   const cancel = useCallback(async (modelId) => {
     const speech = bridge();
     if (!speech || typeof speech.benchmark !== 'function') return;
@@ -185,6 +258,16 @@ const ModelBenchmarkPanel = ({ darkMode = true, cardClass, titleClass }) => {
   }, []);
 
   // --- states ------------------------------------------------------------
+  // A live engine owns the weights. 'error' is included: a failed session may
+  // still have a process attached, and main's running check is the backstop.
+  const sessionActive = status !== 'idle' || Boolean(runningId);
+  const autoBlockedReason = sessionActive
+    ? 'Stop the live speech session first — models cannot be hot-swapped during transcription.'
+    : where !== 'local'
+      ? 'Auto-selection measures models on this computer only.'
+      : engineMode !== 'prod'
+        ? 'The TEST engine replays canned text and cannot measure models. Switch to PROD.'
+        : null;
   const nothingRun = results.length === 0;
   const nothingMeasured = !nothingRun && comparable.length === 0;
   const unmeasuredReason = results.find((r) => r.measured === false)?.reason ?? '';
@@ -246,6 +329,61 @@ const ModelBenchmarkPanel = ({ darkMode = true, cardClass, titleClass }) => {
           </p>
         </div>
       )}
+
+      {/* Auto-selection is the honest answer to 'which model should I use?':
+          it measures every installed model by actually loading it, then picks
+          the biggest one that keeps up. It states its own reasoning, and it
+          refuses when nothing was measured. */}
+      <div
+        data-testid="benchmark-auto-select"
+        className={`rounded-lg border p-3 text-xs leading-relaxed space-y-2 ${border}`}
+      >
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <span className="font-semibold">Auto-select best model</span>
+          <button
+            type="button"
+            data-testid="benchmark-auto-select-button"
+            disabled={autoSelecting || Boolean(autoBlockedReason)}
+            title={autoBlockedReason ?? undefined}
+            onClick={autoSelect}
+            className={`rounded-md border px-2 py-1 font-semibold disabled:opacity-50 ${
+              darkMode
+                ? 'border-gray-700 bg-gray-900 text-gray-200 hover:bg-gray-800'
+                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            {autoSelecting ? 'Measuring models…' : 'Auto-select best model'}
+          </button>
+        </div>
+        <p className={muted}>
+          Benchmarks each installed model on this computer: the engine is stopped, restarted with
+          that model's weights, and run against the same reference clip, then stopped again. The
+          largest model under {THRESHOLDS.RTF_GATE.toFixed(1)}x real time within the{' '}
+          {(THRESHOLDS.WER_MARGIN * 100).toFixed(1)} point error-rate margin wins. No measurement,
+          no selection. This takes minutes and must not run during a live session.
+        </p>
+        {autoBlockedReason ? <p className={`${muted} italic`}>{autoBlockedReason}</p> : null}
+        {autoSelecting ? (
+          <p data-testid="auto-select-progress" role="status">
+            Starting the engine with each installed model in turn. The engine is stopped between
+            models — do not arm Sermon Assist while this runs.
+          </p>
+        ) : null}
+        {autoChoice ? (
+          <div data-testid="auto-selection-result" className="font-semibold">
+            Auto-selected: {autoChoice.modelId}
+            <span className={`ml-2 font-normal ${muted}`}>
+              {percent(autoChoice.wer)} WER · {speed(autoChoice.rtf)} RTF
+            </span>
+            <p className={`mt-1 font-normal ${muted}`}>{autoChoice.reason}</p>
+          </div>
+        ) : null}
+        {autoRefusal ? (
+          <div data-testid="auto-selection-refusal" role="status" className="text-amber-400">
+            Nothing selected. {autoRefusal}
+          </div>
+        ) : null}
+      </div>
 
       {/* Per-model actions and results. Structure always renders, so an operator
           can see the shape of the answer even with nothing measured. */}

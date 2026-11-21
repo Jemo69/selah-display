@@ -740,8 +740,8 @@ describe('speech: IPC wiring (electron mocked, no network, no spawn)', () => {
     // probe is what tells "installed" from "runnable", and vad is the only
     // feedback the real engine gives before its first final.
     // 15 original invokes + speech:test-network + four cloud control-plane
-    // invokes (key get/set/clear and the explicit egress acknowledgement).
-    expect(SPEECH_INVOKE_CHANNELS).toHaveLength(20);
+    // invokes + speech:auto-select-model.
+    expect(SPEECH_INVOKE_CHANNELS).toHaveLength(21);
     expect(SPEECH_EVENT_CHANNELS).toHaveLength(7);
   });
 

@@ -1200,9 +1200,10 @@ describe('invariant 4: off by default, cold by default', () => {
       [...new Set([...readText(relPath).matchAll(/'(speech:[a-z0-9:-]+)'/g)].map((m) => m[1]))].sort();
 
     // The inventory: every renderer->main invoke and main->renderer event,
-    // including the trusted-LAN probe and the cloud control plane. Sorted, so
-    // the comparison is order-blind.
+    // including the trusted-LAN probe, cloud control plane, and measured
+    // auto-selection. Sorted, so the comparison is order-blind.
     const EXPECTED_SPEECH_CHANNELS = [
+      'speech:auto-select-model', // INVOKE, live: measured matrix + verified auto-selection
       'speech:benchmark', // INVOKE, stub: Phase 3 benchmark
       'speech:cloud:consent', // INVOKE: explicit egress acknowledgement before first cloud start
       'speech:cloud:key:clear', // INVOKE: delete the stored OpenAI key

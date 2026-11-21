@@ -1190,6 +1190,8 @@ export function relayEngineMessage(message) {
  * @param {string|null} [options.modelId] history boundary: selected model id
  * @param {string|null} [options.providerId] history boundary: current provider
  * @param {string|null} [options.where] history boundary: 'local' | 'cloud'
+ * @param {boolean} [options.historyless] true for a benchmark-only restart: no
+ *   history session is configured, opened, or closed for this start
  * @param {(status: string, reason?: string) => void} [options.onStatus]
  * @param {(health: object) => void} [options.onHealth]
  * @param {(error: object) => void} [options.onError]
@@ -1207,6 +1209,7 @@ export async function startSpeechEngine(options = {}) {
     engineKind: requestedEngineKind = null,
     historyDir = null,
     historyStore = null,
+    historyless = false,
     modelId,
     providerId,
     where,
@@ -1247,7 +1250,7 @@ export async function startSpeechEngine(options = {}) {
       if (enabled === true) {
         // Mid-session re-start (invariant 4 still gates the disabled case):
         // attribution context moves, an open session is never re-keyed.
-        configureHistory({ historyDir, historyStore, modelId, providerId, where });
+        configureHistory(historyless ? {} : { historyDir, historyStore, modelId, providerId, where });
       }
       return {
         ok: true,
@@ -1304,7 +1307,9 @@ export async function startSpeechEngine(options = {}) {
   // the invariant-4 gate above passed — the disabled default configures
   // nothing. Construction performs no I/O; the session opens on the healthy
   // return below, so a start that never becomes healthy writes no file.
-  configureHistory({ historyDir, historyStore, modelId, providerId, where });
+  // A benchmark restart is not a sermon session: historyless drops the write
+  // path so a matrix run cannot leave empty sessions in transcript history.
+  configureHistory(historyless ? {} : { historyDir, historyStore, modelId, providerId, where });
   phase = 'starting';
 
   const startedAt = Date.now();

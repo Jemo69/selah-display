@@ -75,6 +75,7 @@ import {
   validateNetworkToken,
   probeRemoteEngine,
 } from './speechRemote.js';
+import { runAutoModelSelection } from '../speech-engine/autoModel.js';
 import { getModel, generateEngineToken } from '../shared/speech/index.js';
 import createMainLogger from './logger.js';
 import { diagMain } from './diagnosticsLog.js';
@@ -140,6 +141,7 @@ export const SPEECH_INVOKE_CHANNELS = Object.freeze([
   'speech:uninstall', // LIVE: { confirm:false } -> preview; { confirm:true } -> erase + bytes reclaimed
   'speech:select-model', // LIVE: { modelId } -> digest-verified selection
   'speech:benchmark', // LIVE: { modelId, clip? } -> engine result row; { modelId, cancel:true } -> stop
+  'speech:auto-select-model', // LIVE: { clip, providerId?, where?, engineMode? } -> measured matrix + verified choice
   // Decision D9 / Phase 4 — transcript history (summaries only except
   // get/search, which the renderer explicitly asked to see text from).
   'speech:history:list', // LIVE: -> { ok, sessions: summaries (no text), status }
@@ -478,6 +480,11 @@ export function registerSpeechIpc({
     };
   };
 
+  // One in-flight matrix run at a time. It is also the fence between a
+  // benchmark restart and a renderer/arming start: no live session may grab
+  // the engine while models are being swapped underneath it.
+  let autoSelectRunning = false;
+  const isBenchmarkStart = (payload) => payload?.benchmarkOnly === true;
   /** The one start path: renderer invoke AND app boot both land here. */
   const start = async (payload) => {
     const startStartedAt = Date.now();
@@ -495,6 +502,14 @@ export function registerSpeechIpc({
         installState: buildInstallState(),
         engine: null,
         error,
+      };
+    }
+    if (autoSelectRunning && !isBenchmarkStart(payload)) {
+      return {
+        ok: false,
+        started: false,
+        reason: 'auto-select-in-progress',
+        message: 'A model auto-selection run owns the engine right now. Try again when it finishes.',
       };
     }
     const enabled = payload?.enabled === true;
@@ -800,10 +815,14 @@ export function registerSpeechIpc({
     };
 
     // Transcript history (Decision D9) and the session boundary
-    // metadata ride the SAME start call: the shared 
+    // metadata ride the SAME start call: the shared
     // store instance (so the supervisor and the speech:history:*
     // handlers use ONE directory) plus the model context the
     // renderer sends with the start.
+    //
+    // benchmarkOnly is the sequential-benchmark boundary. An auto-selection
+    // run starts/stops the engine several times with DIFFERENT weights; none
+    // of those starts is a sermon session, so none may open a history session.
     const result = await startSpeechEngine({
       enabled,
       endpoint,
@@ -813,6 +832,7 @@ export function registerSpeechIpc({
       modelsDir: activeModelsDir,
       historyDir: activeHistoryDir,
       historyStore: history,
+      historyless: payload?.benchmarkOnly === true,
       engineKind: targetEngineKind,
       modelId: historyModelId,
       providerId: cloud ? `cloud-${cloud.provider}` : stringField(payload?.providerId),
@@ -857,6 +877,9 @@ export function registerSpeechIpc({
       broadcast('speech:status', { status: 'idle', reason: 'remote-stopped', at: Date.now() });
       log.info(`Remote engine session closed (${reason}; no local process killed)`);
       return { ok: true, stopped: false, remote: true, ...snapshot() };
+    }
+    if (autoSelectRunning && !String(reason).startsWith('auto-select')) {
+      return { ok: false, stopped: false, reason: 'auto-select-in-progress' };
     }
 
     const { stopped } = stopSpeechEngine({ reason });
@@ -1209,17 +1232,15 @@ export function registerSpeechIpc({
   // in:  { modelId: string }
   // out: { ok:true, modelId, bytes, sha256, digestSource, verified:true }
   //      { ok:false, code:'model-not-installed'|'digest-mismatch'|..., message }
-  ipcMain.handle('speech:select-model', async (_event, payload) => {
-    if (typeof payload?.modelId !== 'string' || !payload.modelId) {
-      return invalidArgument('modelId');
-    }
-    const model = getModel(payload.modelId);
+  const verifySelection = async (modelId) => {
+    if (typeof modelId !== 'string' || !modelId) return invalidArgument('modelId');
+    const model = getModel(modelId);
     if (!model) {
       return {
         ok: false,
         code: 'unknown-model',
         field: 'modelId',
-        message: `${payload.modelId} is not in the model catalog.`,
+        message: `${modelId} is not in the model catalog.`,
       };
     }
     const verdict = await installer.verify(model);
@@ -1228,7 +1249,11 @@ export function registerSpeechIpc({
       log.info(`Model verify failed: ${verdict.code} (${model.fileName})`);
     }
     return verdict;
-  });
+  };
+
+  ipcMain.handle('speech:select-model', async (_event, payload) =>
+    verifySelection(payload?.modelId)
+  );
 
   // LIVE — Phase 3 benchmark. Forwards to the engine's POST /v1/benchmark.
   //
@@ -1288,6 +1313,165 @@ export function registerSpeechIpc({
         modelId: payload.modelId,
         message: 'The benchmark could not be run. See the engine log for the error code.',
       };
+    }
+  });
+
+  // LIVE — sequential, measured auto-selection. This is the ONLY path that
+  // may change the recommended model without a human picking a row by hand.
+  //
+  // in:  { clip:{pcm, transcript, sampleRate?}, providerId?, where?, engineMode? }
+  // out: { ok, code, reason, results[], decision, selection, verified[],
+  //        rejected[], installState }
+  //
+  // THE HONESTY CONTRACT: every result row came from actually starting the
+  // engine with that model and running the committed reference clip. A model
+  // that could not be verified, loaded, or measured gets `measured:false`
+  // with the reason; no number is inferred from the catalog or the model's
+  // name. Selection math lives in shared/speech/modelSelection.js and the
+  // start/stop sequence in speech-engine/autoModel.js — both pure and tested
+  // with fake engines, so no GPU is needed to prove the ordering.
+  ipcMain.handle('speech:auto-select-model', async (_event, payload) => {
+    if (payload !== undefined && payload !== null && typeof payload !== 'object') {
+      return invalidArgument('payload');
+    }
+    if (autoSelectRunning) {
+      return {
+        ok: false,
+        code: 'auto-select-in-progress',
+        message: 'An auto-selection run is already in progress.',
+      };
+    }
+
+    const clip = payload?.clip;
+    if (!clip || !clip.pcm || typeof clip.transcript !== 'string' || !clip.transcript.trim()) {
+      return invalidArgument('clip');
+    }
+    const providerId = typeof payload.providerId === 'string' && payload.providerId
+      ? payload.providerId
+      : 'whispercpp';
+    const where = typeof payload.where === 'string' ? payload.where : 'local';
+    const engineMode = typeof payload.engineMode === 'string' ? payload.engineMode : 'prod';
+
+    if (where !== 'local' || engineMode !== 'prod') {
+      return {
+        ok: false,
+        code: 'unsupported-mode',
+        message:
+          'Auto-selection measures models on this computer. It needs This Device and PROD mode — ' +
+          'the TEST engine replays canned text and cannot measure anything.',
+      };
+    }
+    if (engineKindForProviderId(providerId) !== 'whisper') {
+      return {
+        ok: false,
+        code: 'provider-not-supported',
+        message: 'This provider has no runnable local engine in this build, so no model can be measured.',
+      };
+    }
+
+    // NO HOT-SWAP. A live session owns the engine; restarting it under a
+    // different model mid-service would be the worst possible 'upgrade'.
+    if (getSpeechEngineSnapshot().running) {
+      return {
+        ok: false,
+        code: 'session-active',
+        message:
+          'A speech engine is already running. Stop the live session before auto-selecting a model — ' +
+          'weights cannot be hot-swapped while transcription is active.',
+      };
+    }
+    const guard = guardrailReport();
+    if (guard.status === 'suspended') {
+      return {
+        ok: false,
+        code: 'guardrail-suspended',
+        message: guard.lastMessage || 'The speech guardrail has suspended the engine on this computer.',
+      };
+    }
+
+    const installedIds = [...new Set((buildInstallState().installed || [])
+      .map((model) => model?.id)
+      .filter((id) => typeof id === 'string' && getModel(id)?.providerId === providerId))];
+    if (installedIds.length === 0) {
+      return {
+        ok: false,
+        code: 'no-installed-candidates',
+        reason: 'No models for this provider are installed on this computer. Nothing was measured or selected.',
+        results: [],
+      };
+    }
+    // Biggest first: the operator wants the largest model that actually
+    // keeps up, so start there and step down only when the numbers say so.
+    const models = installedIds.map((id) => getModel(id));
+    const candidates = [...installedIds].sort((a, b) => {
+      const sizeA = Number(getModel(a)?.downloadBytes) || 0;
+      const sizeB = Number(getModel(b)?.downloadBytes) || 0;
+      return sizeB - sizeA || a.localeCompare(b);
+    });
+
+    autoSelectRunning = true;
+    try {
+      const outcome = await runAutoModelSelection({
+        candidateIds: candidates,
+        models,
+        verifyModel: (modelId) => verifySelection(modelId),
+        startModel: async (modelId) => {
+          const reply = await start({
+            enabled: true,
+            providerId,
+            where: 'local',
+            engineMode: 'prod',
+            modelId,
+            benchmarkOnly: true,
+          });
+          if (!reply?.ok) {
+            return { ok: false, reason: reply?.reason || 'The engine refused to start with this model.' };
+          }
+          return { ok: true, health: reply.health ?? null };
+        },
+        benchmarkModel: async (modelId) => runEngineBenchmark({ modelId, clip }),
+        stopModel: async () => stop('auto-select'),
+        onProgress: ({ stage, modelId, index, total }) =>
+          publishProgress({ taskId: 'auto-select', stage, modelId, index, total }),
+      });
+
+      let selection = null;
+      if (outcome.ok && outcome.decision?.modelId) {
+        // The final apply goes through the SAME digest check as a manual pick.
+        selection = await verifySelection(outcome.decision.modelId);
+        if (!selection.ok) {
+          return {
+            ...outcome,
+            ok: false,
+            code: 'selection-verification-failed',
+            reason: `The winning model failed its final digest check (${selection.code}). Nothing was selected.`,
+            selection,
+          };
+        }
+      }
+
+      return {
+        ok: outcome.ok,
+        code: outcome.code,
+        reason: outcome.reason,
+        results: outcome.results,
+        decision: outcome.decision,
+        selection,
+        verified: outcome.verified,
+        rejected: outcome.rejected,
+        installState: buildInstallState(),
+      };
+    } catch (error) {
+      log.warn(`Auto-selection failed: ${error?.code ?? error?.name ?? 'Error'}`);
+      return {
+        ok: false,
+        code: 'auto-select-failed',
+        reason: 'Auto-selection could not complete. No model was selected.',
+      };
+    } finally {
+      autoSelectRunning = false;
+      try { stop('auto-select-cleanup'); } catch { /* the orchestrator already stops; this is the belt */ }
+      publishInstallState();
     }
   });
 
