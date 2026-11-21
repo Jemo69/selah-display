@@ -2,7 +2,7 @@
 
 > Worship display software — real-time lyrics, Scripture, and sermon assist for live church services, concerts, and broadcasts.
 
-**Version:** 6.19.0
+**Version:** 6.20.0
 **Maintainer:** [Jemo](https://github.com/Jemo69)
 **Based on [LyricDisplay](https://github.com/PeterAlaks/lyric-display-app)** by Peter Alakembi and David Okaliwe
 
