@@ -146,13 +146,18 @@ export function useAudioCapture(options = {}) {
    * mode is an { ok:false } the caller fails the arm with.
    */
   const startEngine = async () => {
-    const { modelId, providerId, where, engineMode } = useSpeechStore.getState();
+    const { modelId, providerId, where, engineMode, cloudProviderId, cloudModelId } = useSpeechStore.getState();
     const result = await engineTransport.start({
       enabled: true,
       modelId,
       providerId,
       where,
       engineMode,
+      // Main validates this BEFORE forking: an unwired cloud provider must
+      // never quietly become a local whisper run under a cloud label.
+      cloudProviderId,
+      // A provider-specific model id; main validates it before the fork.
+      cloudModelId,
     });
     if (result.ok) return { ok: true };
     if (result.reason === 'no-speech-bridge') {

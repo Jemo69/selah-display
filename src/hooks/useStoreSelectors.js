@@ -411,6 +411,7 @@ export const useSpeechMode = () =>
             providerId: state.providerId,
             modelId: state.modelId,
             cloudProviderId: state.cloudProviderId,
+            cloudModelId: state.cloudModelId,
         }),
         shallow
     );

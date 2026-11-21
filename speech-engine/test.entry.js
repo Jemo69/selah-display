@@ -26,3 +26,9 @@ import './test/whisperServer.test.js';
 // whisper-cli — the binary boundary had no coverage at all.
 import './test/whispercpp.test.js';
 import './test/sherpaonnx.test.js';
+// Real OpenAI cloud driver: fake fetch proves the request/response contract,
+// and the entry-point tests prove cloud starts without a local binary.
+import './test/cloudOpenAI.test.js';
+// The OpenRouter/Gemini lane: documented Responses API request shape with
+// fake fetch, plus entry-point routing with no external network.
+import './test/cloudOpenRouter.test.js';

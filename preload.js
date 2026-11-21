@@ -393,6 +393,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     uninstall: (payload) => ipcRenderer.invoke('speech:uninstall', payload),
     selectModel: (payload) => ipcRenderer.invoke('speech:select-model', payload),
     benchmark: (payload) => ipcRenderer.invoke('speech:benchmark', payload),
+    // Real OpenAI cloud control plane. `key:get` answers with a boolean only;
+    // no key text ever crosses this bridge.
+    cloudKeyStatus: (provider) => ipcRenderer.invoke('speech:cloud:key:get', { provider }),
+    saveCloudKey: (payload) => ipcRenderer.invoke('speech:cloud:key:set', payload),
+    clearCloudKey: (payload) => ipcRenderer.invoke('speech:cloud:key:clear', payload),
+    setCloudConsent: (granted) => ipcRenderer.invoke('speech:cloud:consent', { granted }),
     history: {
       list: () => ipcRenderer.invoke('speech:history:list'),
       get: (sessionId) => ipcRenderer.invoke('speech:history:get', { sessionId }),

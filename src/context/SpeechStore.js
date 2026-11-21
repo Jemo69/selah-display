@@ -41,6 +41,9 @@ export const speechDefaults = () => ({
   providerId: 'whispercpp',
   modelId: 'large-v3',
   cloudProviderId: null,
+  // Provider-specific cloud model. Null means "use that provider's default";
+  // it is deliberately runtime-only so a stale choice cannot survive restart.
+  cloudModelId: null,
 
   // Phase 3 — the language the congregation actually speaks, used for the
   // spoken number words AND the "chapter"/"verse" keywords.
@@ -255,7 +258,15 @@ const useSpeechStore = create(
         set({ engineMode: VALID_ENGINE_MODE.includes(engineMode) ? engineMode : 'prod' }),
       setProviderId: (providerId) => set({ providerId }),
       setModelId: (modelId) => set({ modelId }),
-      setCloudProviderId: (cloudProviderId) => set({ cloudProviderId }),
+      setCloudProviderId: (cloudProviderId) =>
+        set({
+          cloudProviderId,
+          // A Gemini id is meaningless to OpenAI and vice versa. Changing
+          // provider always falls back to that provider's documented default.
+          cloudModelId: null,
+        }),
+      setCloudModelId: (cloudModelId) =>
+        set({ cloudModelId: typeof cloudModelId === 'string' && cloudModelId.trim() ? cloudModelId : null }),
       setNetworkEndpoint: (networkEndpoint) => set({ networkEndpoint }),
 
       // --- audio source identity (fields exist from day one) ----------------
