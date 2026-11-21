@@ -3,6 +3,7 @@ import {
   SERVICE_LOG_DIR,
   serviceDayStamp,
   serviceLogFileName,
+  normalizeServiceDate,
   normalizeServiceVerseReference,
   serviceClockLabel,
   formatServiceLogLine,
@@ -22,6 +23,14 @@ describe('service verse log naming (shared)', () => {
 
   it('uses the service-logs directory under the app data root', () => {
     expect(SERVICE_LOG_DIR).toBe('service-logs');
+  });
+
+  it('normalizes one validated date for day, file, and clock', () => {
+    const valid = normalizeServiceDate(new Date(2026, 10, 22, 9, 42, 15));
+    expect(serviceDayStamp(valid)).toBe('2026-11-22');
+    const fallback = normalizeServiceDate('not-a-date');
+    expect(serviceDayStamp(fallback)).toBe(serviceDayStamp(new Date()));
+    expect(serviceDayStamp(normalizeServiceDate())).toBe(serviceDayStamp(new Date()));
   });
 
   it('normalizes references to trimmed strings', () => {

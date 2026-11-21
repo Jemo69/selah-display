@@ -41,6 +41,16 @@ export function normalizeServiceVerseReference(reference) {
   return typeof reference === 'string' ? reference.trim() : '';
 }
 
+/**
+ * One validated date for a log call: unparseable timestamps become now so
+ * the day stamp, file name, and clock label can never disagree about
+ * which service day a line belongs to.
+ */
+export function normalizeServiceDate(at = new Date()) {
+  const d = at instanceof Date ? at : new Date(at);
+  return d instanceof Date && !Number.isNaN(d.getTime()) ? d : new Date();
+}
+
 /** Local `HH:MM:SS` clock label for one log line. */
 export function serviceClockLabel(at = new Date()) {
   const d = at instanceof Date ? at : new Date(at);

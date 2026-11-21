@@ -23,6 +23,7 @@ import {
   SERVICE_LOG_DIR,
   serviceDayStamp,
   serviceLogFileName,
+  normalizeServiceDate,
   normalizeServiceVerseReference,
   formatServiceLogLine,
 } from '../shared/serviceVerseLog.js';
@@ -72,14 +73,14 @@ function notReady() {
 // one per racing call.
 let appendChain = Promise.resolve();
 
-async function appendGuardedVerse({ cleaned, bible, at }) {
-  const day = serviceDayStamp(at) || serviceDayStamp(new Date());
+async function appendGuardedVerse({ cleaned, bible, stamp }) {
+  const day = serviceDayStamp(stamp);
   if (lastLoggedByDay.get(day) === cleaned) {
     return { ok: true, stored: false, reason: 'same-as-previous' };
   }
-  const fileName = serviceLogFileName(at);
+  const fileName = serviceLogFileName(stamp);
   const file = path.join(serviceLogDir, fileName);
-  const line = `${formatServiceLogLine({ at, reference: cleaned, bible })}\n`;
+  const line = `${formatServiceLogLine({ at: stamp, reference: cleaned, bible })}\n`;
   try {
     await fsp.mkdir(serviceLogDir, { recursive: true });
     await fsp.appendFile(file, line, 'utf8');
@@ -100,7 +101,8 @@ export async function logServiceVerse({ reference = '', bible = '', at = new Dat
   if (!serviceLogDir) return notReady();
   const cleaned = normalizeServiceVerseReference(reference);
   if (!cleaned) return { ok: false, code: 'empty-reference' };
-  const task = appendChain.then(() => appendGuardedVerse({ cleaned, bible, at }));
+  const stamp = normalizeServiceDate(at);
+  const task = appendChain.then(() => appendGuardedVerse({ cleaned, bible, stamp }));
   // A failed append must not break the chain for later verses.
   appendChain = task.catch(() => {});
   return task;

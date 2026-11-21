@@ -73,6 +73,19 @@ describe('service verse log store', () => {
     expect(content.split('\n').filter(Boolean)).toHaveLength(1);
   });
 
+  it('lands invalid timestamps in today’s file with today’s date', async () => {
+    const result = await logServiceVerse({ reference: 'John 3:16', bible: 'KJV', at: 'not-a-date' });
+    const today = serviceDayStamp(new Date());
+    expect(result).toMatchObject({ ok: true, stored: true, date: today });
+    expect(result.fileName).toBe(`service-${today}.txt`);
+    const content = await fsp.readFile(path.join(getServiceLogDir(), result.fileName), 'utf8');
+    expect(content.split('\n').filter(Boolean)).toHaveLength(1);
+    // Same verse, valid timestamp, same day: a genuine consecutive
+    // duplicate, suppressed exactly once — not lost to another file.
+    const repeat = await logServiceVerse({ reference: 'John 3:16', bible: 'KJV', at: new Date() });
+    expect(repeat).toMatchObject({ ok: true, stored: false });
+  });
+
   it('ignores empty references', async () => {
     expect(await logServiceVerse({ reference: '   ' })).toMatchObject({ ok: false });
     expect(await logServiceVerse({})).toMatchObject({ ok: false });
