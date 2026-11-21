@@ -42,6 +42,7 @@ import {
   getActiveBibleId,
 } from './bibleManager.js';
 import createServerLogger from './logger.js';
+import { todayServiceLog } from './serviceVerseLog.js';
 
 const log = createServerLogger('API');
 
@@ -456,6 +457,22 @@ router.get('/setlist/search', (req, res) => {
 });
 
 // ---- Service run-sheet clock (scheduler) for mobile ----
+router.get('/service-log/today', async (req, res) => {
+  try {
+    const snapshot = await todayServiceLog();
+    if (!snapshot?.ok) {
+      const message = snapshot?.code === 'not-initialized'
+        ? 'Service verse log is not initialized yet'
+        : 'Could not read today’s service log';
+      return res.status(503).json({ success: false, error: message, code: snapshot?.code || 'unavailable' });
+    }
+    const { ok: _ok, ...rest } = snapshot;
+    res.json({ success: true, ...rest, timestamp: Date.now() });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 router.get('/schedule', (req, res) => {
   try {
     res.json({ success: true, ...getScheduleSnapshot(), timestamp: Date.now() });

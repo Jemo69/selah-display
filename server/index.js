@@ -23,6 +23,7 @@ import {
   schedulePersistSessionState,
   flushSessionStateNow,
 } from './sessionPersistence.js';
+import { initServiceVerseLog } from './serviceVerseLog.js';
 
 const log = createServerLogger('Server');
 
@@ -846,6 +847,15 @@ app.use((err, req, res, next) => {
   log.error('Express error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });
+
+// Service verse log before listen: the socket handler appends here, so a
+// verse displayed in the gap between listen and the ready callback must
+// not hit an uninitialized store and get dropped.
+try {
+  await initServiceVerseLog({ dataRoot });
+} catch (error) {
+  log.warn('Service verse log init failed (non-fatal):', error.message);
+}
 
 server.listen(PORT, '0.0.0.0', async () => {
   const secretsStatus = await secretManager.getSecretsStatus();

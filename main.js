@@ -216,6 +216,16 @@ import('./main/ipcFileNavigator.js')
     log.warn('File navigator unavailable:', error?.message || error);
   });
 
+// Sunday service verse log: read + reveal for the desktop app. The server
+// is the writer; this only opens what the server already recorded.
+import('./main/serviceVerseLogIpc.js')
+  .then(({ registerServiceVerseLogIpc }) => {
+    registerServiceVerseLogIpc();
+  })
+  .catch((error) => {
+    log.warn('Service verse log unavailable:', error?.message || error);
+  });
+
 // Hardware MIDI + OSC automation. Optional drivers only: a missing native
 // module, busy ports, or absent hardware must never prevent boot — the
 // controllers report a clean disabled state with a settings note instead.
