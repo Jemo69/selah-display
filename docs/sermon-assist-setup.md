@@ -7,8 +7,8 @@ You do not need to know about computer files to use this. Selah does the choosin
 1. Open **User Preferences** from the menu.
 2. Choose **Experimental**, then find **Sermon Assist**.
 3. Press **Set up Sermon Assist** once.
-4. Wait while Selah says what it is doing. This can take a few minutes on a slow internet connection.
-5. When it says **Sermon Assist is ready**, turn **Sermon Assist** on above if it is off, then press **Start** whenever you want to use it.
+4. Wait while Selah installs the engine, downloads a small set of voice models, and measures which one actually keeps up. This can take several minutes on a slow connection; it is doing real benchmarks, not guessing from the model name.
+5. When it says **Sermon Assist is set up**, it starts listening automatically with the fastest measured model that passed. If your computer asks for microphone access, choose **Allow**.
 
 You do **not** need to:
 
@@ -23,8 +23,9 @@ Nothing listens to the microphone until you press **Start**. Audio stays on this
 
 Selah checks the computer first and picks the pieces that fit it.
 
-- On a computer with a suitable NVIDIA graphics card, it installs the matching engine first, then gets the larger, more accurate voice model. The engine download can be up to about 650 MB and the model about 1.5 GB.
-- On any other computer, it gets a small voice model of about 31 MB and an engine of about 9 MB. It will still work, but large voice models are too slow for live use there.
+- On a computer with a suitable NVIDIA graphics card, it installs the matching engine first, then compares a small model with the larger turbo model. The engine download can be up to about 650 MB; the two model downloads total roughly 1.7 GB.
+- On any other computer, it compares three small models (about 31 MB, 57 MB, and 181 MB) and keeps the largest that actually keeps up on that processor.
+- It never assumes a graphics card makes a model fast. The benchmark decides.
 
 If Selah already finds an older engine on a graphics-card computer, it replaces it inside the app. You do not remove files or copy anything yourself.
 

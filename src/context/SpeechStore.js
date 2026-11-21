@@ -121,6 +121,10 @@ const runtimeDefaults = () => ({
   // Deliberately NOT persisted: a crash mid-benchmark must not resurrect a
   // "running" claim on next launch, exactly like `status` itself.
   benchmarkRunningId: null,
+  // A one-click setup completion asks the mounted rail to arm the microphone
+  // once. It is consumed immediately and never persisted; a crash or reload
+  // must not open the microphone later.
+  autoStartRequested: false,
 });
 
 const PERSISTED_KEYS = [
@@ -339,6 +343,8 @@ const useSpeechStore = create(
           : null }),
 
       // --- runtime status (never persisted) ---------------------------------
+      requestAutoStart: () => set({ autoStartRequested: true }),
+      consumeAutoStart: () => set({ autoStartRequested: false }),
       setStatus: (status) =>
         set({ status: VALID_STATUS.includes(status) ? status : 'idle' }),
       setHealth: (health) => set({ health }),
@@ -404,5 +410,7 @@ const useSpeechStore = create(
 );
 
 log.info('SpeechStore initialized');
+
+if (typeof window !== 'undefined') window.__speechStore = useSpeechStore;
 
 export default useSpeechStore;

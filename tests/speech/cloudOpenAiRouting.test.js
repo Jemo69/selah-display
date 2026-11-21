@@ -189,13 +189,13 @@ describe('speech:start — real OpenAI cloud routing', () => {
     expect(startSpy).not.toHaveBeenCalled();
   });
 
-  it('local-network still refuses honestly and never starts a local engine', async () => {
+  it('local-network refuses a missing endpoint and never starts a local engine', async () => {
     const reply = await ipcHandles['speech:start'](null, {
       enabled: true, where: 'network', providerId: 'whispercpp', engineMode: 'prod',
     });
     expect(reply.ok).toBe(false);
-    expect(reply.reason).toBe('where-not-implemented');
-    expect(reply.error.message).toMatch(/This Device/);
+    expect(reply.reason).toBe('network-endpoint-missing');
+    expect(reply.error.message).toMatch(/Engine URL|endpoint/i);
     expect(startSpy).not.toHaveBeenCalled();
   });
 });

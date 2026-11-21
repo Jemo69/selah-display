@@ -240,14 +240,14 @@ describe('speech:start with where=network', () => {
     expect(state.running).toBe(false);
   }, 30000);
 
-  it('cloud still refuses honestly (no local fallback)', async () => {
+  it('cloud refuses a missing provider (no local fallback)', async () => {
     const reply = await ipcHandles['speech:start'](null, {
       enabled: true,
       where: 'cloud',
       networkEndpoint: endpoint,
       networkToken: TOKEN,
     });
-    expect(reply).toMatchObject({ ok: false, reason: 'where-not-implemented' });
+    expect(reply).toMatchObject({ ok: false, reason: 'cloud-provider-not-supported' });
     expect(reply.engine).toBeNull();
   }, 30000);
 });

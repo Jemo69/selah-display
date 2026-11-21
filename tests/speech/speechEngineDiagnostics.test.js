@@ -49,7 +49,7 @@ describe('classifyBinaryFailure', () => {
     const result = classifyBinaryFailure({ exitCode: 7, stderr: 'could not load anything' });
     expect(result.code).toBe('binary-failed');
     expect(result.message).toMatch(/exit code 7/);
-    expect(result.message).toMatch(/Reinstall the engine/);
+    expect(result.message).toMatch(/Set up Sermon Assist again/);
   });
 
   it('picks the redistributable for the running architecture', () => {
@@ -81,7 +81,7 @@ describe.runIf(!isWindows)('probeEngineBinary (POSIX scripts)', () => {
     const result = await probeEngineBinary({ binDir: dir });
     expect(result.ok).toBe(false);
     expect(result.code).toBe('binary-missing');
-    expect(result.message).toMatch(/Install speech engine/);
+    expect(result.message).toMatch(/Set up Sermon Assist/);
   });
 
   it('passes when the binary runs and exits 0', async () => {

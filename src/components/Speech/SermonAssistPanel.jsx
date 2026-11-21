@@ -112,6 +112,10 @@ const SermonAssistRail = ({ darkMode, capture, devices, panicCombo, toggleCombo 
   const containerRef = useRef(null);
 
   const capturing = capture.capturing === true;
+  // Capture is the user-facing truth: the main process may have broadcast an
+  // idle supervisor status during the start handshake, but a live microphone
+  // with a running engine is listening, not idle.
+  const displayStatus = capturing && status !== 'error' ? 'listening' : status;
 
   // --- health sampling ----------------------------------------------------
   // Refs mirror the meter so the interval below reads fresh values without
@@ -293,7 +297,7 @@ const SermonAssistRail = ({ darkMode, capture, devices, panicCombo, toggleCombo 
                     : 'border-gray-200 bg-gray-100 text-gray-500'
             }`}
           >
-            {STATUS_LABELS[status] ?? 'Idle'}
+            {STATUS_LABELS[displayStatus] ?? 'Idle'}
           </span>
           <button
             type="button"
@@ -642,6 +646,18 @@ export default function SermonAssistPanel({ darkMode = false }) {
   // feature, or persists anything — they are cold listeners.
   useSpeechRuntime(enabled);
   const toggleCombo = useSermonAssistToggle();
+
+  // The one-click setup completion hands the microphone arming to this rail,
+  // which owns useAudioCapture. The request is an explicit press from the
+  // setup card, consumed once, and never persisted.
+  const autoStartRequested = useSpeechStore((state) => state.autoStartRequested === true);
+  const consumeAutoStart = useSpeechStore((state) => state.consumeAutoStart);
+  useEffect(() => {
+    if (!autoStartRequested) return;
+    consumeAutoStart();
+    if (!enabled) return;
+    capture.arm();
+  }, [autoStartRequested, consumeAutoStart, enabled, capture]);
 
   // Phase 0 exit criterion: disabled means hidden entirely — zero DOM nodes.
   if (!enabled) return null;

@@ -20,11 +20,22 @@ export const STARTER_MODELS = Object.freeze({
 
 const MODEL_IDS = new Set((catalog.models ?? []).map((model) => model.id));
 
+/** The measured ladder. We compare a small baseline against the serious model. */
+export const SETUP_CANDIDATES = Object.freeze({
+  cuda: Object.freeze(['small.en-q5_1', 'large-v3-turbo']),
+  cpu: Object.freeze(['tiny.en-q5_1', 'base.en-q5_1', 'small.en-q5_1']),
+});
+
+export function setupCandidates(backend) {
+  return backend === 'cuda' ? SETUP_CANDIDATES.cuda : SETUP_CANDIDATES.cpu;
+}
+
 export const SETUP_STEPS = Object.freeze([
   { id: 'check', label: 'Checking this computer' },
   { id: 'engine', label: 'Installing the speech engine' },
   { id: 'test', label: 'Checking the engine starts' },
-  { id: 'model', label: 'Downloading the voice model' },
+  { id: 'model', label: 'Downloading voice models' },
+  { id: 'measure', label: 'Measuring this computer' },
   { id: 'select', label: 'Finishing setup' },
 ]);
 
@@ -153,6 +164,8 @@ const FRIENDLY_ERRORS = Object.freeze({
   'engine-not-runnable': 'The speech engine installed but did not start. Press Set up Sermon Assist again; if it still fails, share the details with support.',
   'select-model': 'The voice model could not be selected. Press Set up Sermon Assist again.',
   'setup-busy': 'Sermon Assist is running. Stop it before setup, then try again.',
+  'benchmark-clip-failed': 'Selah could not load its test recording, so it cannot choose a model. Check the internet connection and try again.',
+  'auto-select-failed': 'Selah could not find a voice model that keeps up on this computer. Nothing was started.',
 });
 
 export function friendlyError(code, fallback = 'Setup could not finish. Try again.') {

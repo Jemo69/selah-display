@@ -1,8 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ChevronDown, Loader2, Mic } from 'lucide-react';
 import useSpeechStore from '../../context/SpeechStore';
+import { loadBenchmarkClip } from '../../speech/benchmarkClip.js';
+import { getModel } from '../../../shared/speech/index.js';
 import {
   friendlyError,
+  setupCandidates,
   setupPlan,
   starterModelsAreInCatalog,
 } from '../../speech/setupPlan.js';
@@ -32,7 +35,6 @@ const readInstallState = (state) => ({
 });
 
 const QuickSetupCard = ({ darkMode = true }) => {
-  const enabled = useSpeechStore((state) => state.enabled === true);
   const [phase, setPhase] = useState('idle');
   const [plan, setPlan] = useState(null);
   const [step, setStep] = useState(null);
@@ -106,7 +108,7 @@ const QuickSetupCard = ({ darkMode = true }) => {
   const run = useCallback(async () => {
     if (phase === 'running') return;
     const speech = bridge();
-    const required = ['getState', 'installEngine', 'testEngine', 'install', 'selectModel'];
+    const required = ['getState', 'installEngine', 'testEngine', 'install', 'selectModel', 'autoSelectModel'];
     if (!speech || required.some((name) => typeof speech[name] !== 'function')) {
       fail({ code: 'network-unavailable' });
       return;
@@ -167,29 +169,88 @@ const QuickSetupCard = ({ darkMode = true }) => {
         return;
       }
 
-      if (current.needsModel && done('model')) {
-        const downloaded = await speech.install({ modelId: current.modelId });
-        if (!mountedRef.current) return;
-        if (downloaded?.ok === false) { fail(downloaded); return; }
+      const candidates = setupCandidates(current.backend);
+      const installedModels = new Set(current.installedIds ?? []);
+      const missingModels = candidates.filter((id) => !installedModels.has(id));
+      if (missingModels.length) {
+        // The preview plan only knew about the one starter model. Add the
+        // download step the measured ladder is about to perform, so the
+        // progress bar is never labelled "Working" with no step.
+        setPlan((previous) => {
+          if (!previous || previous.steps.some((item) => item.id === 'model')) return previous;
+          const steps = [...previous.steps];
+          const measureAt = steps.findIndex((item) => item.id === 'measure');
+          steps.splice(measureAt < 0 ? steps.length : measureAt, 0, {
+            id: 'model',
+            label: 'Downloading voice models',
+          });
+          return { ...previous, steps };
+        });
+      }
+      if (missingModels.length && done('model')) {
+        for (const modelId of missingModels) {
+          const downloaded = await speech.install({ modelId });
+          if (!mountedRef.current) return;
+          if (downloaded?.ok === false) { fail(downloaded); return; }
+          installedModels.add(modelId);
+        }
+      }
+
+      if (!done('measure')) return;
+      let clip;
+      try {
+        clip = await loadBenchmarkClip();
+      } catch {
+        fail({ code: 'benchmark-clip-failed' });
+        return;
+      }
+      if (!mountedRef.current) return;
+      const measured = await speech.autoSelectModel({
+        clip,
+        providerId: 'whispercpp',
+        where: 'local',
+        engineMode: 'prod',
+      });
+      if (!mountedRef.current) return;
+      if (measured?.ok === false) {
+        fail({
+          code: 'auto-select-failed',
+          detailCode: measured?.code,
+          message: measured?.reason ?? measured?.message,
+        });
+        return;
+      }
+      const chosen = measured?.decision?.modelId;
+      if (!chosen) {
+        fail({ code: 'auto-select-failed', message: 'No measured model passed the speed and accuracy gates.' });
+        return;
+      }
+      for (const row of Array.isArray(measured.results) ? measured.results : []) {
+        useSpeechStore.getState().recordBenchmarkResult(row);
       }
 
       if (!done('select')) return;
-      const selected = await speech.selectModel({ modelId: current.modelId });
+      const selected = await speech.selectModel({ modelId: chosen });
       if (!mountedRef.current) return;
       if (selected?.ok === false) {
         fail({ code: 'select-model', detailCode: selected?.code, message: selected?.message });
         return;
       }
 
-      // The one-press path ends at a real local, production start path. If a
-      // previous session left Cloud/network/Test selected, "Press Start" would
-      // otherwise refuse or run the canned engine while this card says Ready.
+      // One press ends in a real local, production session. The store request
+      // is consumed by the rail, which is the only code allowed to open the
+      // microphone; this component never calls getUserMedia itself.
       const store = useSpeechStore.getState();
       store.setWhere('local');
       store.setProviderId('whispercpp');
       store.setEngineMode('prod');
-      store.setModelId(current.modelId);
-      setPlan(current);
+      store.setModelId(chosen);
+      store.setEnabled(true);
+      store.setLastError(null);
+      store.setStatus('idle');
+      store.requestAutoStart();
+      const row = getModel(chosen);
+      setPlan({ ...current, modelId: chosen, modelName: row?.displayName ?? chosen });
       setPhase('done');
       stepRef.current = null;
       setStep(null);
@@ -224,13 +285,11 @@ const QuickSetupCard = ({ darkMode = true }) => {
             <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-[#8FCE72]" aria-hidden="true" />
             <div className="space-y-1">
               <h3 className={`text-base font-semibold ${heading}`} data-testid="speech-quick-setup-ready">
-                Sermon Assist is ready
+                Sermon Assist is set up
               </h3>
               <p className={`text-sm leading-relaxed ${body}`}>
-                Using {plan?.modelName ?? 'the voice model'}. Nothing is listening yet.
-                {enabled
-                  ? ' Press Start in Sermon Assist when you want to try it.'
-                  : ' Turn Sermon Assist on above, then press Start when you want to try it.'}
+                Using {plan?.modelName ?? 'the voice model'}. Starting now.
+                If your computer asks for microphone access, choose Allow.
               </p>
             </div>
           </div>
@@ -247,8 +306,9 @@ const QuickSetupCard = ({ darkMode = true }) => {
                 {phase === 'running' ? 'Setting up Sermon Assist' : 'Set up Sermon Assist'}
               </h3>
               <p className={`text-sm leading-relaxed ${body}`}>
-                One button installs everything Selah needs. You do not need to unzip files
-                or know which file is the program. Nothing listens until you press Start.
+                One button installs what this computer needs, measures which voice model
+                keeps up, and starts listening. You do not need to unzip files or know
+                which file is the program.
               </p>
             </div>
           </div>
