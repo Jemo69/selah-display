@@ -218,6 +218,9 @@ const card = screen.getByTestId('sermon-assist-experimental-card');
     expect(
       document.querySelector('[aria-disabled="true"]')
     ).not.toBeNull();
+    expect(
+      screen.getByTestId('speech-quick-setup').closest('[aria-disabled="true"]')
+    ).toBeNull();
   });
 
   itRenders('defaults the three-way control to This Device with local copy first', () => {

@@ -1200,8 +1200,8 @@ describe('invariant 4: off by default, cold by default', () => {
       [...new Set([...readText(relPath).matchAll(/'(speech:[a-z0-9:-]+)'/g)].map((m) => m[1]))].sort();
 
     // The inventory: every renderer->main invoke and main->renderer event,
-    // including the trusted-LAN probe, cloud control plane, and measured
-    // auto-selection. Sorted, so the comparison is order-blind.
+    // including the trusted-LAN probe, cloud control plane, measured
+    // auto-selection, and read-only GPU probe. Sorted, so order-blind.
     const EXPECTED_SPEECH_CHANNELS = [
       'speech:auto-select-model', // INVOKE, live: measured matrix + verified auto-selection
       'speech:benchmark', // INVOKE, stub: Phase 3 benchmark
@@ -1212,6 +1212,8 @@ describe('invariant 4: off by default, cold by default', () => {
       'speech:engine-selftest', // INVOKE, live: spawn whisper-cli --help and report loader failures
       'speech:error', // EVENT: one clear engine error (crash loop, bad API, spawn failure)
       'speech:get-state', // INVOKE, live: current supervisor + install state
+      // Added with GPU builds: read-only probe evidence, never a speed claim.
+      'speech:gpu-capabilities', // INVOKE, live: detected backend + evidence for large-model guidance
       'speech:health', // EVENT: engine health snapshot (apiVersion, rtf, memory, pid, uptime)
       // Decision D9 / Phase 4 — the six transcript-history invokes (added
       // with the history feature; summaries-only list, full get, bounded

@@ -24,7 +24,13 @@
  *     say so rather than presenting a noisy number as decisive". Two runs of
  *     the same model that disagree by more than the noise floor produce a
  *     recommendation nobody should act on.
+ *
+ * GPU SELECTION does not bypass either rule. Passing `{ gpu }` in options lets
+ * src/speech/modelGuidance.js restrict large-v3/turbo recommendations to rows
+ * that were actually measured on a non-CPU backend and passed the RTF gate.
+ * Hardware detection alone never makes a model fast.
  */
+import { largeModelRecommendation } from './modelGuidance.js';
 
 /**
  * Thresholds a reviewer would want to argue with, named in one place on
@@ -128,7 +134,7 @@ export function sortByWer(results) {
  * there is no answer.
  *
  * @param {Array<object>} results benchmark results for the same provider
- * @param {{margin?: number}} [options]
+ * @param {{margin?: number, gpu?: object|null, backend?: string|null}} [options]
  * @returns {{modelId: string, wer: number, rtf: number, best: object,
  *            margin: number, reason: string} | {modelId: null, reason: string,
  *            rejected: Array<{modelId: string, reason: string}>}}
@@ -136,6 +142,11 @@ export function sortByWer(results) {
 export function recommendModel(results, options = {}) {
   const margin = typeof options.margin === 'number' ? options.margin : THRESHOLDS.WER_MARGIN;
   const all = Array.isArray(results) ? results.filter(isResult) : [];
+  // Without an explicit probe/backend, behaviour is exactly the historical one.
+  const gpuPolicy = options.gpu ?? (options.backend
+    ? { available: true, backend: options.backend }
+    : null);
+  const largeVerdicts = new Map();
 
   if (all.length === 0) {
     return { modelId: null, reason: 'Nothing has been benchmarked yet.', rejected: [] };
@@ -159,10 +170,18 @@ export function recommendModel(results, options = {}) {
             ? `Too slow for a live service — it needs ${result.rtf.toFixed(2)}x real time, and anything above ${THRESHOLDS.RTF_GATE}x falls behind the speaker.`
             : 'Speed was never measured, so it cannot be shown to keep up with a live service.',
       });
+    } else if (gpuPolicy) {
+      const verdict = largeModelRecommendation({
+        result,
+        gpu: gpuPolicy,
+        rtfPassed: true,
+      });
+      largeVerdicts.set(result.modelId, verdict.allowed);
+      if (!verdict.allowed) rejected.push({ modelId: result.modelId, reason: verdict.reason });
     }
   }
 
-  const eligible = gatedResults(all);
+  const eligible = gatedResults(all).filter((result) => largeVerdicts.get(result.modelId) !== false);
   if (eligible.length === 0) {
     return {
       modelId: null,
@@ -326,14 +345,20 @@ export function detectCpuFallback(result) {
  * Everything worth telling the operator about one result, in one place.
  *
  * @param {object} result
+ * @param {{expectedAccel?: boolean}} [options]
  * @returns {Array<{level: 'ok'|'warn'|'error', reason: string}>}
  */
-export function assessResult(result) {
+export function assessResult(result, options = {}) {
   const notes = [];
   const thermal = detectThermalDecay(result);
   if (thermal.decayed) notes.push({ level: 'warn', reason: thermal.reason });
 
-  const cpu = detectCpuFallback(result);
+  const cpu = detectCpuFallback({
+    backend: result?.backend,
+    expectedAccel: typeof options.expectedAccel === 'boolean'
+      ? options.expectedAccel
+      : result?.expectedAccel,
+  });
   if (cpu.fallback) notes.push({ level: 'warn', reason: cpu.reason });
 
   if (!passesRtfGate(result)) {

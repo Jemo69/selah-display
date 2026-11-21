@@ -61,6 +61,8 @@ import {
   installEngineBinary,
   hasEngineBinary,
   engineAssetFor,
+  readEngineManifest,
+  selectEngineAsset,
   ENGINE_RELEASE,
 } from './speechEngineInstaller.js';
 import {
@@ -68,6 +70,7 @@ import {
   probeEngineBinaryCached,
   clearProbeCache,
 } from './speechEngineDiagnostics.js';
+import { probeGpuCapabilities } from './speechGpuProbe.js';
 import { planErase, removePathStep, describeErase, formatBytes } from './speechErase.js';
 import { createSpeechHistoryStore, resolveHistoryDir } from './speechHistory.js';
 import {
@@ -137,6 +140,7 @@ export const SPEECH_INVOKE_CHANNELS = Object.freeze([
   'speech:get-state', // LIVE: -> { status, health, lastError, running, mode, endpoint, pid, installState, guardrail }
   'speech:install', // LIVE: { modelId } -> download result; { modelId, cancel:true } -> cancel
   'speech:install-engine', // LIVE: -> download + verify + unpack the real whisper.cpp binary
+  'speech:gpu-capabilities', // LIVE: -> probe result; evidence only, never a speed claim
   'speech:engine-selftest', // LIVE: -> actually spawn whisper-cli --help; reports loader failures
   'speech:uninstall', // LIVE: { confirm:false } -> preview; { confirm:true } -> erase + bytes reclaimed
   'speech:select-model', // LIVE: { modelId } -> digest-verified selection
@@ -268,6 +272,11 @@ export function registerSpeechIpc({
     reason: discovery.reason,
   });
 
+  // Main-process lock: setup owns the engine directory from probe through
+  // replacement. speech:start refuses while this is true, so a live session
+  // cannot race the atomic swap.
+  let setupInProgress = false;
+
   const activeBinDir =
     typeof binDir === 'string' && binDir
       ? binDir
@@ -337,11 +346,17 @@ export function registerSpeechIpc({
     // The engine half of the story: Production mode is only honest when the
     // real binary is actually on disk. The renderer needs this to offer the
     // install button instead of a toggle that silently runs the canned engine.
+    const manifest = readEngineManifest(activeBinDir);
     const engine = {
       installed: hasEngineBinary(activeBinDir),
       binDir: activeBinDir,
       supported: Boolean(engineAssetFor()),
       release: ENGINE_RELEASE.version,
+      // What was actually installed, not what the current probe wishes were
+      // installed. `null` means an older engine with no manifest; the setup
+      // card treats that as CPU rather than guessing GPU.
+      backend: manifest?.backend ?? null,
+      manifest,
     };
     return { ...engineInstallState, ...snapshot, engine };
   };
@@ -1082,36 +1097,111 @@ export function registerSpeechIpc({
   // mode has nothing real to run on a normal install.
   //
   // in:  {} -> install result
-  // out: { ok:true, version, binDir, bytes, sha256, files }
+  // out: { ok:true, version, binDir, bytes, sha256, files, backend,
+  //        selection:{status,code,reason,gpuBackend} }
   //      { ok:false, code, message }
-  ipcMain.handle('speech:install-engine', async () => {
-    if (hasEngineBinary(activeBinDir)) {
+  ipcMain.handle('speech:install-engine', async (_event, payload) => {
+    if (payload !== undefined && payload !== null && typeof payload !== 'object') {
+      return { ok: false, code: 'invalid-argument', field: 'payload', message: 'The engine install request was invalid.' };
+    }
+    if (setupInProgress) {
       return {
-        ok: true,
-        alreadyInstalled: true,
-        version: ENGINE_RELEASE.version,
-        binDir: activeBinDir,
+        ok: false,
+        code: 'setup-busy',
+        message: 'Setup is already running. Wait for it to finish.',
       };
     }
-    const engineInstallStartedAt = Date.now();
-    const result = await installEngineBinary({
-      binDir: activeBinDir,
-      downloadsDir: activeDownloadsDir,
-      onProgress: (progress) => broadcast('speech:progress', { kind: 'engine', ...progress }),
-    });
-    // A fresh file invalidates any cached "this binary runs" answer.
-    clearProbeCache();
-    publishInstallState();
-    log.info(`Engine install ${result.ok ? 'ok' : `failed: ${result.code}`} (${ENGINE_RELEASE.version})`);
-    diagMain('info', 'engine', 'engine install settled', {
-      ok: result.ok === true,
-      code: result.code ?? null,
-      bytes: result.bytes ?? null,
-      files: Array.isArray(result.files) ? result.files.length : null,
-      durationMs: Date.now() - engineInstallStartedAt,
-    });
-    return result;
+    setupInProgress = true;
+    try {
+      if (getSpeechEngineSnapshot().running) {
+        return {
+          ok: false,
+          code: 'setup-busy',
+          message: 'Sermon Assist is running. Stop it before changing the speech engine.',
+        };
+      }
+      const replace = payload?.replace === true;
+      // Probe inside the lock: the archive selector may only use evidence
+      // gathered here, and a concurrent start must see the lock first.
+      const gpu = await probeGpuCapabilities();
+      const selection = selectEngineAsset({ platform: process.platform, arch: process.arch, gpu });
+      const manifest = readEngineManifest(activeBinDir);
+
+      if (hasEngineBinary(activeBinDir) && !replace) {
+        // An existing binary is NOT necessarily the backend this machine
+        // would select now. Say so instead of implying a GPU build was
+        // installed, and never send the volunteer to delete files by hand.
+        return {
+          ok: true,
+          alreadyInstalled: true,
+          version: ENGINE_RELEASE.version,
+          binDir: activeBinDir,
+          backend: manifest?.backend ?? 'existing-binary',
+          engineBackend: manifest?.backend ?? null,
+          gpuBackend: gpu.backend,
+          selection: {
+            status: 'already-installed',
+            code: null,
+            gpuBackend: gpu.backend,
+            reason: 'An engine is already installed. Selah can replace it automatically if this computer needs a different engine.',
+          },
+        };
+      }
+
+      if (hasEngineBinary(activeBinDir) && replace && manifest && manifest.backend === selection.backend) {
+        // No-op repair: the installed backend already matches what this
+        // machine's current probe selects. This is what prevents a repeated
+        // 650 MB download on an unchanged CPU-fallback machine, while still
+        // allowing a later driver upgrade (selection.backend becomes cuda).
+        return {
+          ok: true,
+          alreadyInstalled: true,
+          version: ENGINE_RELEASE.version,
+          binDir: activeBinDir,
+          backend: manifest.backend,
+          engineBackend: manifest.backend,
+          gpuBackend: gpu.backend,
+          selection: {
+            status: 'already-installed',
+            code: selection.code,
+            gpuBackend: gpu.backend,
+            reason: 'The installed engine already matches what this computer selects now.',
+          },
+        };
+      }
+
+      const engineInstallStartedAt = Date.now();
+      const result = await installEngineBinary({
+        binDir: activeBinDir,
+        downloadsDir: activeDownloadsDir,
+        gpu,
+        onProgress: (progress) => broadcast('speech:progress', { kind: 'engine', ...progress }),
+      });
+      // A fresh file invalidates any cached "this binary runs" answer.
+      clearProbeCache();
+      publishInstallState();
+      log.info(`Engine install ${result.ok ? 'ok' : `failed: ${result.code}`} (${ENGINE_RELEASE.version})`);
+      diagMain('info', 'engine', 'engine install settled', {
+        ok: result.ok === true,
+        code: result.code ?? null,
+        bytes: result.bytes ?? null,
+        files: Array.isArray(result.files) ? result.files.length : null,
+        probeBackend: gpu.backend,
+        selectedBackend: result.backend ?? null,
+        selectionCode: result.selection?.code ?? null,
+        durationMs: Date.now() - engineInstallStartedAt,
+      });
+      return result;
+    } finally {
+      setupInProgress = false;
+    }
   });
+
+  // LIVE — read-only GPU probe for the model guidance line. It reports what
+  // was observed (and what was not), never a predicted RTF or speedup.
+  //
+  // in:  {} -> { platform, arch, backend, available, reason, checked, backends }
+  ipcMain.handle('speech:gpu-capabilities', async () => probeGpuCapabilities());
 
   // LIVE — the explicit self-test behind "Test engine". Same probe the start
   // gate uses, but it always re-spawns (no cached success) and broadcasts the

@@ -98,6 +98,27 @@ describe('ModelBenchmarkPanel', () => {
     expect(screen.queryByTestId('benchmark-recommendation')).toBeNull();
   });
 
+  it('states the CPU benchmark gate when no GPU probe answered', () => {
+    render(<ModelBenchmarkPanel />);
+    expect(screen.getByTestId('benchmark-gpu-guidance')).toHaveTextContent(/Backend: CPU/);
+    expect(screen.getByTestId('benchmark-gpu-guidance')).toHaveTextContent(/benchmark-gated/);
+  });
+
+  it('states CUDA evidence without claiming a speedup', async () => {
+    window.electronAPI = {
+      speech: {
+        gpuCapabilities: async () => ({ available: true, backend: 'cuda', cudaVersion: '12.4' }),
+      },
+    };
+    render(<ModelBenchmarkPanel />);
+    await waitFor(() => {
+      expect(screen.getByTestId('benchmark-gpu-guidance')).toHaveTextContent(/Backend: CUDA/);
+    });
+    const guidance = screen.getByTestId('benchmark-gpu-guidance');
+    expect(guidance).toHaveTextContent(/large-v3 and large-v3-turbo may be benchmarked/);
+    expect(guidance).toHaveTextContent(/No speedup is claimed/);
+  });
+
   it('offers Run on every catalog model', () => {
     render(<ModelBenchmarkPanel />);
     expect(screen.getByTestId('benchmark-run-large-v3')).toBeInTheDocument();
