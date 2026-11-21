@@ -4,6 +4,8 @@
 
 ### Added
 
+- **Sunday service verse log:** every verse sent to display is appended to a human-readable service file in the app folder (`service-logs/service-YYYY-MM-DD.txt`, one file per day), so Sunday’s verses are on record after the service. Stepping through the slides of one verse logs one line, not one per slide. User Preferences > Bible shows today’s file with its verse count and a button that reveals it in the file manager (desktop app); the file is also readable remotely via `GET /api/service-log/today` (`shared/serviceVerseLog.js`, `server/serviceVerseLog.js`, `server/events.js`, `main/serviceVerseLogIpc.js`, `src/components/UserPreferencesModal.jsx`).
+
 - **Lyric search that finds songs from any pasted line or stanza:** the file search now ranks whole-sentence holders first (tag-stripped, punctuation-insensitive matching, so stanzas spanning `[Verse]` dividers stay contiguous), tolerates inflections ("turn" finds lyric "turned" and back) and typos, and answers unique queries an order of magnitude faster via a precomputed token-position index, rarest-first candidate pruning, a per-query fuzzy-variant map, and a keystroke result cache. A pasted title always outranks lyric bodies holding the same words. Proven by 10,000 true-paste queries plus a 6396-query old-vs-new race (768 fixed, zero regressions) that run in CI (`shared/fileNavigatorSearch.js`, `shared/navigatorTokenIndex.js`, `shared/fileNavigatorSentence.js`, `main/fileNavigator.js`, `tests/searchLyricsV3.test.js`, `tests/searchTwoFolder.test.js`, `tests/searchAccuracy5000.test.js`, `tests/searchFullSentence10k.test.js`).
 
 - **Foldable parallel-display block:** the parallel-translation control in the verse tray now folds to a one-line header, so it stops taking a full row of the tray while it is not in use. Collapsed, the header keeps reporting what the link is doing — translation name, "Hidden", or "Off" — so the operator never reopens it just to look. Folding is a UI concern only: it never touches the link, so a second translation stays paired across a reload (`src/components/Bible/ParallelBibleLinkControl.jsx`).
@@ -21,6 +23,8 @@
 - **Hardware guards for live use:** a panic-stop hotkey that tears the microphone down from any state, an unmute-on-launch guard that never resumes capture by itself, a rail VU meter with a device-health line, and a downloader that resumes rather than restarting.
 
 ### Changed
+
+- **Verse Log panel removed (service file replaces it):** the separate in-app Verse Log list is gone — Recent Verses already records what was sent, and the new Sunday service file in the app folder is the durable record. The verse-log store state, send-wiring helper, and their tests are deleted with it (`src/components/Bible/BibleControlPanel.jsx`, `src/context/BibleStore.js`, `src/components/LyricDisplayApp.jsx`).
 
 - **Sentence-first search ranking is now permanent:** Bible + song search always rank whole sentences first — the Experimental toggle and its opt-out are gone. Typing a sentence ("for God so love the world", "water you turn into") puts the verse / lyric file holding the whole sentence first; reference lookups ("isa 44 5", "John 3:16") keep working unchanged. The per-word rankers stay in the codebase as the accuracy-race baselines that prove the new ranker never regresses (`main/fileNavigator.js`, `src/utils/bibleSearch.worker.js`, `src/components/UserPreferencesModal.jsx`).
 

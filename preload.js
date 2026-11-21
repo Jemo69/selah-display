@@ -446,6 +446,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on(channel, listener);
       return () => ipcRenderer.removeListener(channel, listener);
     }
+  },
+  serviceLog: {
+    today: () => ipcRenderer.invoke('service-log:today'),
+    revealToday: () => ipcRenderer.invoke('service-log:reveal-today'),
   }
 });
 

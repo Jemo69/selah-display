@@ -576,6 +576,49 @@ const PerformanceSection = ({ darkMode }) => {
   );
 };
 
+const canUseServiceLogIpc = () => typeof window !== 'undefined' && !!window.electronAPI?.serviceLog;
+
+const ServiceLogCard = ({ darkMode }) => {
+  const [snapshot, setSnapshot] = React.useState(null);
+  const available = canUseServiceLogIpc();
+
+  React.useEffect(() => {
+    if (!available) return;
+    let cancelled = false;
+    window.electronAPI.serviceLog.today()
+      .then((result) => { if (!cancelled && result?.success) setSnapshot(result); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [available]);
+
+  const handleReveal = React.useCallback(() => {
+    window.electronAPI?.serviceLog?.revealToday?.().catch(() => {});
+  }, []);
+
+  return (
+    <div className={`rounded-xl border p-4 ${darkMode ? 'bg-[#282946]/40 border-[#282946]' : 'bg-white border-gray-200'}`}>
+      <div className={`text-sm font-medium flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}><FileText className="w-4 h-4" /> Sunday service log</div>
+      <p className={`text-xs mt-1 leading-relaxed ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+        Every verse sent to display is appended to a service file in the app folder (one file per day), so Sunday’s verses are on record.
+      </p>
+      <p className={`text-xs mt-2 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`} data-testid="service-log-status">
+        {snapshot?.success
+          ? `Today: ${snapshot.fileName} — ${snapshot.verseCount} ${snapshot.verseCount === 1 ? 'verse' : 'verses'}`
+          : 'Today’s file appears here once the first verse is sent to display.'}
+      </p>
+      {available && (
+        <button
+          type="button"
+          onClick={handleReveal}
+          className={`mt-3 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${darkMode ? 'border-gray-700 text-gray-200 hover:bg-gray-800' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}`}
+        >
+          Reveal today’s file
+        </button>
+      )}
+    </div>
+  );
+};
+
 const BibleSection = ({ darkMode }) => {
   const settings = useBibleStore((s) => s.settings);
   const updateSettings = useBibleStore((s) => s.updateSettings);
@@ -730,6 +773,7 @@ const BibleSection = ({ darkMode }) => {
           })}
         </div>
       </div>
+      <ServiceLogCard darkMode={darkMode} />
     </div>
   );
 };

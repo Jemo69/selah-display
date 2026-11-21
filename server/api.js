@@ -42,6 +42,7 @@ import {
   getActiveBibleId,
 } from './bibleManager.js';
 import createServerLogger from './logger.js';
+import { todayServiceLog } from './serviceVerseLog.js';
 
 const log = createServerLogger('API');
 
@@ -456,6 +457,15 @@ router.get('/setlist/search', (req, res) => {
 });
 
 // ---- Service run-sheet clock (scheduler) for mobile ----
+router.get('/service-log/today', async (req, res) => {
+  try {
+    const snapshot = await todayServiceLog();
+    res.json({ success: true, ...snapshot, timestamp: Date.now() });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 router.get('/schedule', (req, res) => {
   try {
     res.json({ success: true, ...getScheduleSnapshot(), timestamp: Date.now() });

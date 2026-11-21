@@ -23,6 +23,7 @@ import {
   schedulePersistSessionState,
   flushSessionStateNow,
 } from './sessionPersistence.js';
+import { initServiceVerseLog } from './serviceVerseLog.js';
 
 const log = createServerLogger('Server');
 
@@ -882,6 +883,12 @@ server.listen(PORT, '0.0.0.0', async () => {
     if (restored) log.info('Realtime session state restored from disk');
   } catch (error) {
     log.warn('Session state restore failed (non-fatal):', error.message);
+  }
+
+  try {
+    await initServiceVerseLog({ dataRoot });
+  } catch (error) {
+    log.warn('Service verse log init failed (non-fatal):', error.message);
   }
 
   onSessionStateChanged(() => schedulePersistSessionState());

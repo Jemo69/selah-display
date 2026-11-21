@@ -14,6 +14,7 @@ import {
 } from '../shared/showControl.js';
 import { isChordChart, parseChordProSource } from '../shared/chords.js';
 import createServerLogger from './logger.js';
+import { logServiceVerse } from './serviceVerseLog.js';
 import { scheduler, startScheduleTickLoop } from './realtime/timerScheduler.js';
 import { outputPresence } from './realtime/outputPresence.js';
 import {
@@ -1356,6 +1357,10 @@ export default function registerSocketEvents(io, { hasPermission }) {
       currentBibleVersion = bible || currentBibleVersion || 'bible';
       currentBibleParallel = sanitizeBibleParallel(payload?.secondary);
       log.info(`Bible verse loaded by ${clientType} client: ${reference} (${bible})`);
+      // Sunday service record: every displayed verse lands in that day's
+      // service file inside the app folder. Fire-and-forget by design — a
+      // failed append warns inside the store and never touches fan-out.
+      logServiceVerse({ reference, bible }).catch(() => {});
       // Generic first, specific last: bibleVerseLoaded carries the slide
       // index + reference, so it must land after lyricsLoad (which resets
       // receivers to slide 0) to avoid a wrong-slide flash.

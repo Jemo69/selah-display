@@ -52,6 +52,15 @@ describe('UserPreferencesModal - RCCGTPHB settings', () => {
     expect(screen.getByText(/Zefania, OSIS, Beblia, and OpenSong/)).toBeTruthy();
   });
 
+  it('shows the Sunday service log card without requiring the desktop bridge', () => {
+    render(<UserPreferencesModal darkMode={false} onClose={() => {}} initialSection="bible" />);
+
+    expect(screen.getByText('Sunday service log')).toBeTruthy();
+    expect(screen.getByTestId('service-log-status')).toBeTruthy();
+    // Outside the desktop app there is no file-manager reveal action.
+    expect(screen.queryByText('Reveal today’s file')).toBeNull();
+  });
+
   it('trims translation previews by default and lets the user turn it off', () => {
     // Simulate settings persisted before this key existed: the trim must
     // still read as ON until the operator opts out.

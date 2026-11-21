@@ -28,6 +28,9 @@ config/
 # Uploads directory
 uploads/
 
+# Sunday service verse logs (generated at runtime inside the app data folder)
+service-logs/
+
 # Test files
 test-mega.js
 
