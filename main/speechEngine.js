@@ -1213,6 +1213,7 @@ export async function startSpeechEngine(options = {}) {
     modelId,
     providerId,
     where,
+    computeBackend = null,
     binDir = null,
     modelsDir = null,
     // Cloud fork config. Present ONLY for a cloud start; the key is passed
@@ -1352,6 +1353,7 @@ export async function startSpeechEngine(options = {}) {
           ...(resolvedBinDir ? { LD_SPEECH_BIN_DIR: resolvedBinDir } : {}),
           ...(resolvedModelsDir ? { LD_SPEECH_MODELS_DIR: resolvedModelsDir } : {}),
           ...(modelId ? { LD_SPEECH_MODEL: modelId } : {}),
+          ...(computeBackend ? { LD_SPEECH_COMPUTE_BACKEND: computeBackend } : {}),
           ...(process.env.LD_SPEECH_DRIVER ? { LD_SPEECH_DRIVER: process.env.LD_SPEECH_DRIVER } : {}),
           ...(cloud
             ? {

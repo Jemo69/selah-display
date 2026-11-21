@@ -469,7 +469,7 @@ const card = screen.getByTestId('sermon-assist-experimental-card');
       expect(getState().cloudModelId).toBeNull();
       expect(await screen.findByTestId('speech-cloud-key-status-openrouter')).toHaveTextContent('No key saved');
       await vi.waitFor(() => expect(cloudKeyStatus).toHaveBeenCalledWith('openrouter'));
-      await vi.waitFor(() => expect(setCloudConsent).toHaveBeenCalledWith(false));
+      await vi.waitFor(() => expect(setCloudConsent).toHaveBeenCalledWith('openai', false));
 
       const modelSelect = screen.getByTestId('speech-cloud-model-openrouter');
       expect(modelSelect).toHaveValue('google/gemini-2.5-flash');
@@ -494,7 +494,7 @@ const card = screen.getByTestId('sermon-assist-experimental-card');
       const checkbox = screen.getByTestId('speech-cloud-consent');
       expect(checkbox).not.toBeChecked();
       fireEvent.click(checkbox);
-      await vi.waitFor(() => expect(setCloudConsent).toHaveBeenCalledWith(true));
+      await vi.waitFor(() => expect(setCloudConsent).toHaveBeenCalledWith('openai', true));
       expect(checkbox).toBeChecked();
     } finally {
       delete window.electronAPI;

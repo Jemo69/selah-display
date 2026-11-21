@@ -189,6 +189,15 @@ describe('speech:start with where=network', () => {
     expect(state.running).toBe(false);
     expect(state.remote).toBe(true);
     expect(state.installState.engine.installed).toBe(false);
+
+    const auto = await ipcHandles['speech:auto-select-model'](null, {
+      clip: { pcm: Buffer.alloc(32), transcript: 'reference', sampleRate: 16000 },
+      engineMode: 'prod',
+      where: 'local',
+      providerId: 'whispercpp',
+    });
+    expect(auto).toMatchObject({ ok: false, code: 'session-active' });
+
     // Health came from the remote probe, not a forked local engine.
     expect(relayedOn('speech:health').at(-1)).toMatchObject({ remote: true });
   }, 30000);
@@ -240,14 +249,29 @@ describe('speech:start with where=network', () => {
     expect(state.running).toBe(false);
   }, 30000);
 
-  it('cloud still refuses honestly (no local fallback)', async () => {
+  it('cloud refuses a missing provider (no local fallback)', async () => {
     const reply = await ipcHandles['speech:start'](null, {
       enabled: true,
       where: 'cloud',
       networkEndpoint: endpoint,
       networkToken: TOKEN,
     });
-    expect(reply).toMatchObject({ ok: false, reason: 'where-not-implemented' });
+    expect(reply).toMatchObject({ ok: false, reason: 'cloud-provider-not-supported' });
     expect(reply.engine).toBeNull();
   }, 30000);
+  it('holds a setup lock across the whole one-press window', async () => {
+    await ipcHandles['speech:setup-lock'](null, { locked: true });
+    try {
+      const reply = await ipcHandles['speech:start'](null, {
+        enabled: true,
+        where: 'local',
+        providerId: 'whispercpp',
+        engineMode: 'prod',
+      });
+      expect(reply).toMatchObject({ ok: false, reason: 'setup-busy' });
+    } finally {
+      await ipcHandles['speech:setup-lock'](null, { locked: false });
+    }
+  });
+
 });

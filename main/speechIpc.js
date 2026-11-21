@@ -140,6 +140,7 @@ export const SPEECH_INVOKE_CHANNELS = Object.freeze([
   'speech:get-state', // LIVE: -> { status, health, lastError, running, mode, endpoint, pid, installState, guardrail }
   'speech:install', // LIVE: { modelId } -> download result; { modelId, cancel:true } -> cancel
   'speech:install-engine', // LIVE: -> download + verify + unpack the real whisper.cpp binary
+  'speech:setup-lock', // LIVE: { locked:boolean } -> hold/release the whole setup window
   'speech:gpu-capabilities', // LIVE: -> probe result; evidence only, never a speed claim
   'speech:engine-selftest', // LIVE: -> actually spawn whisper-cli --help; reports loader failures
   'speech:uninstall', // LIVE: { confirm:false } -> preview; { confirm:true } -> erase + bytes reclaimed
@@ -272,10 +273,13 @@ export function registerSpeechIpc({
     reason: discovery.reason,
   });
 
-  // Main-process lock: setup owns the engine directory from probe through
-  // replacement. speech:start refuses while this is true, so a live session
-  // cannot race the atomic swap.
-  let setupInProgress = false;
+  // Main-process setup lock. Quick Setup holds this across engine install,
+  // model downloads, and the measured matrix; speech:start refuses while it
+  // is held. `installInProgress` is the narrower installer lock so the
+  // installer itself cannot overlap another installer call.
+  let setupLocked = false;
+  let setupLockTimer = null;
+  let installInProgress = false;
 
   const activeBinDir =
     typeof binDir === 'string' && binDir
@@ -300,7 +304,9 @@ export function registerSpeechIpc({
   // renderer on every start. Checking the box in Settings is an explicit
   // session action; a restart or a stale localStorage blob cannot silently
   // re-authorise sending a sermon to a third party.
-  let cloudEgressConsented = false;
+  // Consent is per destination, not one global yes. Switching provider must
+  // be acknowledged again; a stale renderer cannot reuse another lane's yes.
+  const cloudEgressConsent = new Set();
 
   // The launch token (plan 7.1): ONE per-launch secret that
   // gates REST (x-ld-speech-token), the WebSocket upgrade
@@ -503,7 +509,10 @@ export function registerSpeechIpc({
   /** The one start path: renderer invoke AND app boot both land here. */
   const start = async (payload) => {
     const startStartedAt = Date.now();
-    if (setupInProgress) {
+    // The measured matrix is allowed through the setup lock, but only while
+    // the auto-select handler is the one running it. A renderer cannot fake
+    // benchmarkOnly to bypass the lock.
+    if (installInProgress || (setupLocked && !(autoSelectRunning && isBenchmarkStart(payload)))) {
       const error = {
         code: 'setup-busy',
         message: 'Sermon Assist setup is running. Wait for it to finish before starting.',
@@ -596,7 +605,7 @@ export function registerSpeechIpc({
             `Choose one of the models listed in Settings → Speech & AI → Cloud.`,
         });
       }
-      if (!cloudEgressConsented) {
+      if (!cloudEgressConsent.has(provider)) {
         return refuse('cloud-egress-required', {
           code: 'cloud-egress-required',
           message:
@@ -852,6 +861,7 @@ export function registerSpeechIpc({
       modelId: historyModelId,
       providerId: cloud ? `cloud-${cloud.provider}` : stringField(payload?.providerId),
       where: stringField(payload?.where),
+      computeBackend: cloud ? null : (readEngineManifest(activeBinDir)?.backend ?? null),
       // The key exists only in this call and the child's environment. It is
       // never included in an IPC reply, a health snapshot, or a log line.
       ...(cloud ? { cloud } : {}),
@@ -1033,8 +1043,15 @@ export function registerSpeechIpc({
   });
 
   ipcMain.handle('speech:cloud:consent', (_event, payload) => {
-    cloudEgressConsented = payload?.granted === true;
-    return { ok: true, granted: cloudEgressConsented };
+    const provider = typeof payload?.provider === 'string' && payload.provider
+      ? payload.provider
+      : DEFAULT_CLOUD_PROVIDER;
+    if (!CLOUD_PROVIDERS[provider]) {
+      return { ok: false, code: 'cloud-provider-not-supported', message: 'Unknown cloud provider.' };
+    }
+    if (payload?.granted === true) cloudEgressConsent.add(provider);
+    else cloudEgressConsent.delete(provider);
+    return { ok: true, provider, granted: cloudEgressConsent.has(provider) };
   });
 
   // LIVE — the resumable, verified model downloader.
@@ -1104,20 +1121,20 @@ export function registerSpeechIpc({
     if (payload !== undefined && payload !== null && typeof payload !== 'object') {
       return { ok: false, code: 'invalid-argument', field: 'payload', message: 'The engine install request was invalid.' };
     }
-    if (setupInProgress) {
+    if (installInProgress) {
       return {
         ok: false,
         code: 'setup-busy',
         message: 'Setup is already running. Wait for it to finish.',
       };
     }
-    setupInProgress = true;
+    installInProgress = true;
     try {
-      if (getSpeechEngineSnapshot().running) {
+      if (getSpeechEngineSnapshot().running || remoteActive) {
         return {
           ok: false,
           code: 'setup-busy',
-          message: 'Sermon Assist is running. Stop it before changing the speech engine.',
+          message: 'Sermon Assist is live. Stop it before changing the speech engine.',
         };
       }
       const replace = payload?.replace === true;
@@ -1193,8 +1210,42 @@ export function registerSpeechIpc({
       });
       return result;
     } finally {
-      setupInProgress = false;
+      installInProgress = false;
     }
+  });
+
+  // The renderer holds this for the WHOLE one-press setup: engine install,
+  // model downloads, measured matrix, and final selection. A Start during
+  // that window would steal the engine and make auto-select fail. The timer
+  // is a crash recovery belt, not a normal path.
+  ipcMain.handle('speech:setup-lock', (_event, payload) => {
+    if (!payload || typeof payload.locked !== 'boolean') {
+      return { ok: false, code: 'invalid-argument', field: 'locked' };
+    }
+    if (payload.locked) {
+      // A heartbeat refreshes the lock already owned by this setup, even while
+      // the internal benchmark engine is running. Only a NEW acquisition is
+      // refused while live.
+      if (!setupLocked && (getSpeechEngineSnapshot().running || remoteActive)) {
+        return {
+          ok: false,
+          code: 'setup-busy',
+          message: 'Sermon Assist is live. Stop it before running setup again.',
+        };
+      }
+      setupLocked = true;
+      if (setupLockTimer) clearTimeout(setupLockTimer);
+      setupLockTimer = setTimeout(() => {
+        setupLocked = false;
+        setupLockTimer = null;
+      }, 2 * 60 * 1000); // refreshed by the renderer heartbeat; crash recovery only
+      setupLockTimer.unref?.();
+      return { ok: true, locked: true };
+    }
+    setupLocked = false;
+    if (setupLockTimer) clearTimeout(setupLockTimer);
+    setupLockTimer = null;
+    return { ok: true, locked: false };
   });
 
   // LIVE — read-only GPU probe for the model guidance line. It reports what
@@ -1431,6 +1482,13 @@ export function registerSpeechIpc({
         message: 'An auto-selection run is already in progress.',
       };
     }
+    if ((setupLocked && payload?.fromSetup !== true) || installInProgress) {
+      return {
+        ok: false,
+        code: 'setup-busy',
+        message: 'Sermon Assist setup is running. Wait for it to finish before auto-selecting.',
+      };
+    }
 
     const clip = payload?.clip;
     if (!clip || !clip.pcm || typeof clip.transcript !== 'string' || !clip.transcript.trim()) {
@@ -1461,13 +1519,13 @@ export function registerSpeechIpc({
 
     // NO HOT-SWAP. A live session owns the engine; restarting it under a
     // different model mid-service would be the worst possible 'upgrade'.
-    if (getSpeechEngineSnapshot().running) {
+    if (getSpeechEngineSnapshot().running || remoteActive) {
       return {
         ok: false,
         code: 'session-active',
         message:
-          'A speech engine is already running. Stop the live session before auto-selecting a model — ' +
-          'weights cannot be hot-swapped while transcription is active.',
+          'A speech session is already running. Stop it before auto-selecting a model — ' +
+          'weights cannot be hot-swapped while transcription is active, and a local matrix must not tear down a LAN session.',
       };
     }
     const guard = guardrailReport();
@@ -1501,6 +1559,10 @@ export function registerSpeechIpc({
 
     autoSelectRunning = true;
     try {
+      // Only an actually installed CUDA engine makes a CPU measurement a
+      // fallback. A detected GPU with a CPU engine is a repair case, not a
+      // reason to reject every CPU measurement.
+      const expectedAccel = readEngineManifest(activeBinDir)?.backend === 'cuda';
       const outcome = await runAutoModelSelection({
         candidateIds: candidates,
         models,
@@ -1521,6 +1583,7 @@ export function registerSpeechIpc({
         },
         benchmarkModel: async (modelId) => runEngineBenchmark({ modelId, clip }),
         stopModel: async () => stop('auto-select'),
+        expectedAccel,
         onProgress: ({ stage, modelId, index, total }) =>
           publishProgress({ taskId: 'auto-select', stage, modelId, index, total }),
       });

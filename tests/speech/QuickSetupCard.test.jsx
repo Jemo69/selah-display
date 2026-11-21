@@ -8,6 +8,14 @@ import '@testing-library/jest-dom/vitest';
 import QuickSetupCard from '@/components/Speech/QuickSetupCard';
 import useSpeechStore, { speechDefaults } from '@/context/SpeechStore';
 
+vi.mock('@/speech/benchmarkClip.js', () => ({
+  loadBenchmarkClip: vi.fn(async () => ({
+    pcm: new Uint8Array([1, 2, 3, 4]),
+    transcript: 'For God so loved the world',
+    sampleRate: 16000,
+  })),
+}));
+
 const CUDA = { available: true, backend: 'cuda', cudaVersion: '12.4' };
 const CPU = { available: false, backend: 'cpu' };
 
@@ -18,6 +26,7 @@ const createBridge = ({
   installedIds = [],
   installedBackend = null,
   failAt = null,
+  autoChoice = gpu.available ? 'large-v3-turbo' : 'tiny.en-q5_1',
 } = {}) => {
   const calls = [];
   let progress = null;
@@ -58,6 +67,18 @@ const createBridge = ({
       calls.push(`select:${modelId}`);
       return { ok: true };
     }),
+    setSetupLock: vi.fn(async () => ({ ok: true, locked: true })),
+    autoSelectModel: vi.fn(async () => {
+      calls.push('auto-select');
+      if (failAt === 'auto') {
+        return { ok: false, code: 'no-candidate', reason: 'Nothing passed the gates.' };
+      }
+      return {
+        ok: true,
+        results: [],
+        decision: { modelId: autoChoice, reason: 'Measured on this computer.' },
+      };
+    }),
     onProgress: vi.fn((callback) => { progress = callback; return () => {}; }),
     emitProgress: (payload) => act(() => progress?.(payload)),
   };
@@ -66,7 +87,7 @@ const createBridge = ({
 
 describe('QuickSetupCard', () => {
   beforeEach(() => {
-    useSpeechStore.setState({ ...speechDefaults(), status: 'idle', health: null });
+    useSpeechStore.setState({ ...speechDefaults(), status: 'idle', health: null, lastError: null, autoStartRequested: false });
     window.electronAPI = undefined;
   });
 
@@ -96,10 +117,13 @@ describe('QuickSetupCard', () => {
 
     await waitFor(() => expect(screen.getByTestId('speech-quick-setup-ready')).toBeInTheDocument());
     expect(speech.calls).toEqual([
-      'engine', 'test', 'model:large-v3-turbo', 'select:large-v3-turbo',
+      'engine', 'test', 'model:small.en-q5_1', 'model:large-v3-turbo',
+      'auto-select', 'select:large-v3-turbo',
     ]);
     expect(useSpeechStore.getState().modelId).toBe('large-v3-turbo');
-    expect(screen.getByTestId('speech-quick-setup')).toHaveTextContent('Nothing is listening yet');
+    expect(useSpeechStore.getState().enabled).toBe(true);
+    expect(useSpeechStore.getState().autoStartRequested).toBe(true);
+    expect(screen.getByTestId('speech-quick-setup')).toHaveTextContent('Starting now');
     // No codes or file mechanics in the success surface.
     expect(screen.queryByText(/sha256|CUDA 12\.4|whisper-cli/)).toBeNull();
   });
@@ -112,7 +136,10 @@ describe('QuickSetupCard', () => {
     fireEvent.click(screen.getByTestId('speech-quick-setup-start'));
 
     await waitFor(() => expect(screen.getByTestId('speech-quick-setup-ready')).toBeInTheDocument());
-    expect(speech.calls).toEqual(['engine', 'test', 'model:tiny.en-q5_1', 'select:tiny.en-q5_1']);
+    expect(speech.calls).toEqual([
+      'engine', 'test', 'model:tiny.en-q5_1', 'model:base.en-q5_1',
+      'model:small.en-q5_1', 'auto-select', 'select:tiny.en-q5_1',
+    ]);
     expect(screen.getByText(/using its processor/)).toBeInTheDocument();
   });
 
@@ -132,7 +159,7 @@ describe('QuickSetupCard', () => {
     expect(screen.getByTestId('speech-quick-setup-progress')).toHaveAttribute('aria-valuenow', '25');
     expect(screen.getByText('25%')).toBeInTheDocument();
 
-    await act(async () => { releaseEngine({ ok: true }); });
+    await act(async () => { releaseEngine({ ok: true, backend: 'cuda', cudaVersion: '12.4', selection: { code: null } }); });
     await waitFor(() => expect(screen.getByTestId('speech-quick-setup-ready')).toBeInTheDocument());
   });
 
@@ -166,7 +193,7 @@ describe('QuickSetupCard', () => {
     expect(screen.getByTestId('speech-quick-setup-what')).toHaveTextContent(/Large v3 Turbo/);
   });
   it('does not download the large model when CUDA was detected but the installer falls back to CPU', async () => {
-    const speech = createBridge();
+    const speech = createBridge({ autoChoice: 'tiny.en-q5_1' });
     speech.installEngine = vi.fn(async () => {
       speech.calls.push('engine');
       return { ok: true, backend: 'cpu', cudaVersion: '12.4', selection: { code: 'unsupported-backend-asset' } };
@@ -177,7 +204,10 @@ describe('QuickSetupCard', () => {
     fireEvent.click(screen.getByTestId('speech-quick-setup-start'));
 
     await waitFor(() => expect(screen.getByTestId('speech-quick-setup-ready')).toBeInTheDocument());
-    expect(speech.calls).toEqual(['engine', 'test', 'model:tiny.en-q5_1', 'select:tiny.en-q5_1']);
+    expect(speech.calls).toEqual([
+      'engine', 'test', 'model:tiny.en-q5_1', 'model:base.en-q5_1',
+      'model:small.en-q5_1', 'auto-select', 'select:tiny.en-q5_1',
+    ]);
     expect(screen.getByTestId('speech-quick-setup')).toHaveTextContent('Tiny English');
   });
 
@@ -190,7 +220,10 @@ describe('QuickSetupCard', () => {
 
     await waitFor(() => expect(screen.getByTestId('speech-quick-setup-ready')).toBeInTheDocument());
     expect(speech.installEngine).toHaveBeenCalledWith({ replace: true });
-    expect(speech.calls).toEqual(['engine:replace', 'test', 'model:large-v3-turbo', 'select:large-v3-turbo']);
+    expect(speech.calls).toEqual([
+      'engine:replace', 'test', 'model:small.en-q5_1', 'model:large-v3-turbo',
+      'auto-select', 'select:large-v3-turbo',
+    ]);
   });
 
   it('normalizes a stale Cloud/Test selection so Press Start cannot lie', async () => {
@@ -203,6 +236,7 @@ describe('QuickSetupCard', () => {
 
     await waitFor(() => expect(screen.getByTestId('speech-quick-setup-ready')).toBeInTheDocument());
     expect(useSpeechStore.getState()).toMatchObject({
+      enabled: true,
       where: 'local',
       engineMode: 'prod',
       providerId: 'whispercpp',
@@ -241,6 +275,19 @@ describe('QuickSetupCard', () => {
 
     await act(async () => { releaseEngine({ ok: true, backend: 'cuda', selection: { code: null } }); });
     await waitFor(() => expect(screen.getByTestId('speech-quick-setup-ready')).toBeInTheDocument());
+  });
+
+  it('refuses to start when no measured model passes the gates', async () => {
+    const speech = createBridge({ failAt: 'auto' });
+    window.electronAPI = { speech };
+    render(<QuickSetupCard />);
+
+    fireEvent.click(screen.getByTestId('speech-quick-setup-start'));
+
+    await waitFor(() => expect(screen.getByTestId('speech-quick-setup-error')).toBeInTheDocument());
+    expect(screen.getByTestId('speech-quick-setup-error')).toHaveTextContent(/could not find a voice model/i);
+    expect(useSpeechStore.getState().enabled).toBe(false);
+    expect(useSpeechStore.getState().autoStartRequested).toBe(false);
   });
 
 });

@@ -125,6 +125,36 @@ describe('chooseAutoModel — selection math', () => {
     expect(chooseAutoModel({ ...input, results: results.slice(0, 2) }).modelId).toBe('alpha');
   });
 
+  it('rejects a CPU fallback when an accelerated backend was expected', () => {
+    const results = [
+      measured('large-v3', 0.03, 0.5, { backend: 'CPU' }),
+      measured('medium.en-q8_0', 0.04, 0.6, { backend: 'CUDA' }),
+    ];
+    const decision = chooseAutoModel({
+      results,
+      models: MODELS,
+      installedModelIds: ['large-v3', 'medium.en-q8_0'],
+      expectedAccel: true,
+    });
+    expect(decision.modelId).toBe('medium.en-q8_0');
+    expect(decision.rejected).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ modelId: 'large-v3', reason: expect.stringMatching(/CPU|cpu/) }),
+      ])
+    );
+  });
+
+  it('refuses a GPU claim when the engine did not report a backend', () => {
+    const decision = chooseAutoModel({
+      results: [measured('large-v3', 0.03, 0.5, { backend: null })],
+      models: MODELS,
+      installedModelIds: ['large-v3'],
+      expectedAccel: true,
+    });
+    expect(decision.ok).toBe(false);
+    expect(decision.code).toBe('no-passing-results');
+  });
+
   it('prefers accuracy over speed when two models have the same published size', () => {
     const decision = chooseAutoModel({
       results: [measured('a', 0.02, 0.9), measured('b', 0.05, 0.1)],

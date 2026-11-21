@@ -80,6 +80,8 @@ const refusal = (code, reason, extra = {}) => ({
  * @param {Array<object>} [input.models] catalog rows (for published size)
  * @param {Array<string>} [input.installedModelIds] digest-verified installed ids
  * @param {number} [input.margin] override for tests; absolute WER fraction
+ * @param {boolean} [input.expectedAccel] a non-CPU backend was expected; a CPU
+ *        row is then a silent fallback, not a usable measurement
  * @returns {{ok:boolean, code:string, modelId:string|null, reason:string,
  *            result:object|null, best:object|null, sizeBytes:number,
  *            margin:number, installedModelIds:string[],
@@ -90,6 +92,7 @@ export function chooseAutoModel({
   models = [],
   installedModelIds = [],
   margin = AUTO_SELECT.WER_MARGIN,
+  expectedAccel = false,
 } = {}) {
   const effectiveMargin = finite(margin) && margin >= 0 ? margin : AUTO_SELECT.WER_MARGIN;
   const installed = [...new Set((Array.isArray(installedModelIds) ? installedModelIds : [])
@@ -136,6 +139,25 @@ export function chooseAutoModel({
         reason: `Too slow for a live service: ${row.rtf.toFixed(2)}x real time at or above the ${AUTO_SELECT.RTF_GATE.toFixed(1)}x gate.`,
       });
       continue;
+    }
+    if (expectedAccel) {
+      const backend = typeof row.backend === 'string' ? row.backend.trim().toLowerCase() : '';
+      if (!backend) {
+        rejected.push({
+          modelId,
+          reason: 'The engine did not report which compute backend it used, so a GPU run cannot be proven.',
+        });
+        continue;
+      }
+      if (!['cuda', 'metal', 'vulkan'].includes(backend)) {
+        rejected.push({
+          modelId,
+          reason: backend === 'cpu'
+            ? 'The engine ran on the CPU even though an accelerated backend was detected. That is a silent fallback, not a GPU measurement.'
+            : 'The engine did not report a known accelerated compute backend, so a GPU run cannot be proven.',
+        });
+        continue;
+      }
     }
     eligible.push(row);
   }

@@ -385,6 +385,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // The real engine binary (whisper.cpp). Production mode refuses to run
     // without it, so this is the control that makes the mode toggle honest.
     installEngine: (payload) => ipcRenderer.invoke('speech:install-engine', payload),
+    setSetupLock: (locked) => ipcRenderer.invoke('speech:setup-lock', { locked: Boolean(locked) }),
     // Read-only accelerator evidence for the benchmark panel. No RTF claim.
     gpuCapabilities: () => ipcRenderer.invoke('speech:gpu-capabilities'),
     // Actually spawn the installed binary once. A file that exists is not a
@@ -403,7 +404,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     cloudKeyStatus: (provider) => ipcRenderer.invoke('speech:cloud:key:get', { provider }),
     saveCloudKey: (payload) => ipcRenderer.invoke('speech:cloud:key:set', payload),
     clearCloudKey: (payload) => ipcRenderer.invoke('speech:cloud:key:clear', payload),
-    setCloudConsent: (granted) => ipcRenderer.invoke('speech:cloud:consent', { granted }),
+    setCloudConsent: (provider, granted) => ipcRenderer.invoke('speech:cloud:consent', { provider, granted }),
     // Sequential, measured auto-selection: starts/stops the engine per installed
     // model, runs the committed benchmark clip, and returns the measured choice.
     autoSelectModel: (payload) => ipcRenderer.invoke('speech:auto-select-model', payload),

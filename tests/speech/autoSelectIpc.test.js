@@ -64,4 +64,19 @@ describe('speech:auto-select-model validation', () => {
     expect(reply.reason).toMatch(/Nothing was measured or selected/i);
     expect(getSpeechEngineSnapshot().running).toBe(false);
   });
+  it('refuses a panel auto-select while one-press setup owns the engine', async () => {
+    await ipcHandles['speech:setup-lock'](null, { locked: true });
+    try {
+      const reply = await ipcHandles['speech:auto-select-model']({}, {
+        clip: CLIP,
+        engineMode: 'prod',
+        where: 'local',
+        providerId: 'whispercpp',
+      });
+      expect(reply).toMatchObject({ ok: false, code: 'setup-busy' });
+    } finally {
+      await ipcHandles['speech:setup-lock'](null, { locked: false });
+    }
+  });
+
 });

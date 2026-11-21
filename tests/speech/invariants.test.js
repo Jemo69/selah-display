@@ -1230,6 +1230,7 @@ describe('invariant 4: off by default, cold by default', () => {
       'speech:install-state', // EVENT: discovery outcome { available, mode, endpoint, reason }
       'speech:progress', // EVENT: model download / benchmark progress
       'speech:select-model', // INVOKE, stub: engine session wiring
+      'speech:setup-lock', // INVOKE, live: hold/release the whole one-press setup window
       'speech:start', // INVOKE, live: the one start path (invariant 4's gate)
       'speech:status', // EVENT: supervisor lifecycle { status, reason, at }
       'speech:stop', // INVOKE, live: stop the local engine, or just tear down a remote session

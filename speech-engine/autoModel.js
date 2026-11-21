@@ -74,6 +74,7 @@ export async function runAutoModelSelection({
   stopModel,
   onProgress = null,
   margin,
+  expectedAccel = false,
 } = {}) {
   const ids = Array.isArray(candidateIds)
     ? [...new Set(candidateIds.filter((id) => typeof id === 'string' && id.length > 0))]
@@ -181,7 +182,7 @@ export async function runAutoModelSelection({
   // Last boundary: never leave a benchmark engine running for the next person.
   await stop(null, 'final');
 
-  const decision = chooseAutoModel({ results, models, installedModelIds: verified, margin });
+  const decision = chooseAutoModel({ results, models, installedModelIds: verified, margin, expectedAccel });
   return {
     ok: decision.ok === true && stopFailed !== true,
     code: stopFailed ? 'engine-stop-failed' : decision.code,

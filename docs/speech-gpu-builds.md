@@ -82,9 +82,10 @@ macOS `whisper-b5454-xcframework.zip` is a library for app builds, not a
 
 1. In Selah, open **User Preferences → Experimental → Speech & AI** and press
    **Set up Sermon Assist**. The app probes the machine, downloads and verifies
-   the engine, proves it starts, downloads/selects the model, and says in plain
-   language what happened. No terminal, file copy, unzip, or driver command is
-   part of this path.
+   the engine, proves it starts, downloads a small candidate ladder, measures
+   each candidate on the committed reference clip, selects the largest model
+   that keeps up, and starts listening. No terminal, file copy, unzip, or driver
+   command is part of this path.
 2. If an older CPU engine is already present on a CUDA machine, the same press
    asks the installer to replace it in-app. The installed backend is recorded
    in `engine-manifest.json`; setup never guesses GPU from a probe.

@@ -403,13 +403,13 @@ export function createWhisperServerEngine({
 
   return {
     kind: 'whispercpp-server',
-    backend: 'whispercpp',
+    backend: process.env.LD_SPEECH_COMPUTE_BACKEND || 'whispercpp',
     model,
 
     health() {
       return {
         model,
-        backend: 'whispercpp',
+        backend: process.env.LD_SPEECH_COMPUTE_BACKEND || 'whispercpp',
         wordTimestamps: false,
         biasSupport: false,
         binaryReady: hasServerBinary(binDir),

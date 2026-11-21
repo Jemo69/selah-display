@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { CheckCircle2, ChevronDown, Cpu } from 'lucide-react';
 import { SPEECH_PROVIDERS } from 'shared/speech';
 import useSpeechStore from '../../context/SpeechStore';
+import useToast from '../../hooks/useToast';
 
 // ---------------------------------------------------------------------------
 // ProviderPicker — the local "who" axis.
@@ -66,7 +67,24 @@ const CapabilityChip = ({ darkMode, label, value }) => (
 const ProviderPicker = ({ darkMode = false }) => {
   const providerId = useSpeechStore((state) => state.providerId);
   const setProviderId = useSpeechStore((state) => state.setProviderId);
+  const status = useSpeechStore((state) => state.status);
+  const health = useSpeechStore((state) => state.health);
+  const isLive = status === 'starting' || status === 'listening' || status === 'transcribing' || Boolean(health);
+  const { showToast } = useToast();
   const [showAll, setShowAll] = useState(false);
+
+  const chooseProvider = (id) => {
+    if (id === providerId) return;
+    if (isLive) {
+      showToast({
+        title: 'Stop the microphone first',
+        message: 'Changing the speech engine while listening would leave audio on the old engine under a new label.',
+        variant: 'warning',
+      });
+      return;
+    }
+    setProviderId(id);
+  };
 
   const platform = useMemo(() => detectPlatform(), []);
 
@@ -139,7 +157,7 @@ const ProviderPicker = ({ darkMode = false }) => {
           role="radio"
           aria-checked={isSelected}
           data-testid={`speech-provider-${provider.id}`}
-          onClick={() => setProviderId(provider.id)}
+          onClick={() => chooseProvider(provider.id)}
           className="w-full text-left p-3 space-y-2"
         >
           <span className="flex items-center gap-2 flex-wrap">

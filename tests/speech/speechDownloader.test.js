@@ -741,7 +741,7 @@ describe('speech: IPC wiring (electron mocked, no network, no spawn)', () => {
     // feedback the real engine gives before its first final.
     // 15 original invokes + test-network + four cloud control-plane invokes
     // + auto-select-model + read-only gpu-capabilities.
-    expect(SPEECH_INVOKE_CHANNELS).toHaveLength(22);
+    expect(SPEECH_INVOKE_CHANNELS).toHaveLength(23);
     expect(SPEECH_EVENT_CHANNELS).toHaveLength(7);
   });
 

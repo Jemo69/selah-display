@@ -144,6 +144,8 @@ const SpeechSettingsSection = ({ darkMode = false }) => {
   // contract-conformant fake, and the operator must be able to tell that from
   // the settings screen — not only from a badge hidden inside the rail.
   const engineHealth = useSpeechStore((state) => state.health);
+  const status = useSpeechStore((state) => state.status);
+  const isLive = status === 'starting' || status === 'listening' || status === 'transcribing' || Boolean(engineHealth);
   const isCanned = isCannedEngine(engineHealth);
   const { showToast } = useToast();
 
@@ -235,7 +237,7 @@ const SpeechSettingsSection = ({ darkMode = false }) => {
     // gate; a stale UI state can never silently start a cloud session.
     setCloudConsentState(checked);
     try {
-      await cloudBridge()?.setCloudConsent?.(checked);
+      await cloudBridge()?.setCloudConsent?.(activeCloudProvider?.id, checked);
     } catch {
       showToast({ title: 'Acknowledgement not saved', message: 'Cloud start will refuse until the acknowledgement can be recorded.', variant: 'error' });
     }
@@ -271,7 +273,7 @@ const SpeechSettingsSection = ({ darkMode = false }) => {
     showToast({
       title: checked ? 'Sermon Assist enabled' : 'Sermon Assist disabled',
       message: checked
-        ? 'Sermon Assist enabled — the rail is on the right of the control panel. No microphone is opened until you choose an audio source.'
+        ? 'Sermon Assist enabled — the rail is on the right of the control panel. The microphone stays closed until Set up Sermon Assist or Start; it uses your remembered input or the system default.'
         : 'Sermon Assist disabled — the rail is hidden and nothing is captured or sent.',
       variant: checked ? 'success' : 'info',
     });
@@ -279,22 +281,38 @@ const SpeechSettingsSection = ({ darkMode = false }) => {
 
   const handleCloudProvider = (providerId) => {
     if (providerId === cloudProviderId) return;
+    if (isLive) {
+      showToast({
+        title: 'Stop the microphone first',
+        message: 'Changing the cloud provider while listening would leave audio going to the old provider under a new label.',
+        variant: 'warning',
+      });
+      return;
+    }
     setCloudProviderId(providerId);
     // Consent is per egress destination. Switching lanes requires a fresh
     // explicit acknowledgement even within the same session.
     setCloudConsentState(false);
     setKeyStatus('checking');
-    void cloudBridge()?.setCloudConsent?.(false);
+    void cloudBridge()?.setCloudConsent?.(activeCloudProvider?.id, false);
   };
 
   const handleWhere = (value) => {
+    if (isLive && value !== where) {
+      showToast({
+        title: 'Stop the microphone first',
+        message: 'Changing where Sermon Assist runs while it is live would mislabel the audio destination. Stop it, then switch.',
+        variant: 'warning',
+      });
+      return;
+    }
     setWhere(value);
     // Leaving cloud makes it unreachable: no stale cloud provider survives,
     // and the egress acknowledgement must be given again on return.
     if (value !== 'cloud') {
       setCloudProviderId(null);
       setCloudConsentState(false);
-      void cloudBridge()?.setCloudConsent?.(false);
+      void cloudBridge()?.setCloudConsent?.(activeCloudProvider?.id, false);
     }
   };
 
@@ -327,7 +345,7 @@ const SpeechSettingsSection = ({ darkMode = false }) => {
     setDraftKeys({});
     setNetworkStatus(null);
     setCloudConsentState(false);
-    void cloudBridge()?.setCloudConsent?.(false);
+    void cloudBridge()?.setCloudConsent?.(activeCloudProvider?.id, false);
     showToast({
       title: 'Sermon Assist reset',
       message: 'All Sermon Assist settings restored to defaults. The feature stays off until you turn it on.',
@@ -418,8 +436,9 @@ const SpeechSettingsSection = ({ darkMode = false }) => {
             <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-500" />
             <div>
               <span className="font-semibold">Sermon Assist is ON</span> — the assist rail is on
-              the right of the control panel. No microphone is opened until you choose an audio
-              source, and the mode shown at the bottom of this page is what actually runs.
+              the right of the control panel. The microphone stays closed until Set up Sermon
+              Assist or Start; it uses your remembered input or the system default. The mode shown
+              at the bottom of this page is what actually runs.
             </div>
           </div>
         ) : (
