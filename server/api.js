@@ -460,7 +460,14 @@ router.get('/setlist/search', (req, res) => {
 router.get('/service-log/today', async (req, res) => {
   try {
     const snapshot = await todayServiceLog();
-    res.json({ success: true, ...snapshot, timestamp: Date.now() });
+    if (!snapshot?.ok) {
+      const message = snapshot?.code === 'not-initialized'
+        ? 'Service verse log is not initialized yet'
+        : 'Could not read today’s service log';
+      return res.status(503).json({ success: false, error: message, code: snapshot?.code || 'unavailable' });
+    }
+    const { ok: _ok, ...rest } = snapshot;
+    res.json({ success: true, ...rest, timestamp: Date.now() });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }

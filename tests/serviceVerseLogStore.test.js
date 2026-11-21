@@ -61,6 +61,18 @@ describe('service verse log store', () => {
     expect(content.split('\n').filter(Boolean)).toHaveLength(3);
   });
 
+  it('serializes concurrent duplicate appends to one line', async () => {
+    const at = new Date(2026, 10, 22, 9, 42, 15);
+    const results = await Promise.all([
+      logServiceVerse({ reference: 'John 3:16', bible: 'KJV', at }),
+      logServiceVerse({ reference: 'John 3:16', bible: 'KJV', at }),
+      logServiceVerse({ reference: 'John 3:16', bible: 'KJV', at }),
+    ]);
+    expect(results.filter((r) => r.stored).length).toBe(1);
+    const content = await fsp.readFile(path.join(getServiceLogDir(), 'service-2026-11-22.txt'), 'utf8');
+    expect(content.split('\n').filter(Boolean)).toHaveLength(1);
+  });
+
   it('ignores empty references', async () => {
     expect(await logServiceVerse({ reference: '   ' })).toMatchObject({ ok: false });
     expect(await logServiceVerse({})).toMatchObject({ ok: false });

@@ -848,6 +848,15 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
+// Service verse log before listen: the socket handler appends here, so a
+// verse displayed in the gap between listen and the ready callback must
+// not hit an uninitialized store and get dropped.
+try {
+  await initServiceVerseLog({ dataRoot });
+} catch (error) {
+  log.warn('Service verse log init failed (non-fatal):', error.message);
+}
+
 server.listen(PORT, '0.0.0.0', async () => {
   const secretsStatus = await secretManager.getSecretsStatus();
 
@@ -883,12 +892,6 @@ server.listen(PORT, '0.0.0.0', async () => {
     if (restored) log.info('Realtime session state restored from disk');
   } catch (error) {
     log.warn('Session state restore failed (non-fatal):', error.message);
-  }
-
-  try {
-    await initServiceVerseLog({ dataRoot });
-  } catch (error) {
-    log.warn('Service verse log init failed (non-fatal):', error.message);
   }
 
   onSessionStateChanged(() => schedulePersistSessionState());

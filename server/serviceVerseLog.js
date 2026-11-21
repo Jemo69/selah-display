@@ -66,15 +66,13 @@ function notReady() {
   return { ok: false, code: 'not-initialized' };
 }
 
-/**
- * Append one displayed verse to today's service file.
- * Never throws: failures return `{ ok: false, code }` so the display
- * fan-out in events.js stays untouched.
- */
-export async function logServiceVerse({ reference = '', bible = '', at = new Date() } = {}) {
-  if (!serviceLogDir) return notReady();
-  const cleaned = normalizeServiceVerseReference(reference);
-  if (!cleaned) return { ok: false, code: 'empty-reference' };
+// Appends run through a promise chain so the duplicate check, the file
+// append, and the dedup-memory update are atomic with respect to each
+// other: rapid duplicate bibleVerseLoaded events must log one line, not
+// one per racing call.
+let appendChain = Promise.resolve();
+
+async function appendGuardedVerse({ cleaned, bible, at }) {
   const day = serviceDayStamp(at) || serviceDayStamp(new Date());
   if (lastLoggedByDay.get(day) === cleaned) {
     return { ok: true, stored: false, reason: 'same-as-previous' };
@@ -91,6 +89,21 @@ export async function logServiceVerse({ reference = '', bible = '', at = new Dat
   }
   lastLoggedByDay.set(day, cleaned);
   return { ok: true, stored: true, file, fileName, date: day };
+}
+
+/**
+ * Append one displayed verse to today's service file.
+ * Never throws: failures return `{ ok: false, code }` so the display
+ * fan-out in events.js stays untouched.
+ */
+export async function logServiceVerse({ reference = '', bible = '', at = new Date() } = {}) {
+  if (!serviceLogDir) return notReady();
+  const cleaned = normalizeServiceVerseReference(reference);
+  if (!cleaned) return { ok: false, code: 'empty-reference' };
+  const task = appendChain.then(() => appendGuardedVerse({ cleaned, bible, at }));
+  // A failed append must not break the chain for later verses.
+  appendChain = task.catch(() => {});
+  return task;
 }
 
 /**
