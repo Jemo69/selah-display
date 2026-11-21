@@ -393,6 +393,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     uninstall: (payload) => ipcRenderer.invoke('speech:uninstall', payload),
     selectModel: (payload) => ipcRenderer.invoke('speech:select-model', payload),
     benchmark: (payload) => ipcRenderer.invoke('speech:benchmark', payload),
+    // Sequential, measured auto-selection: starts/stops the engine per installed
+    // model, runs the committed benchmark clip, and returns the measured choice.
+    autoSelectModel: (payload) => ipcRenderer.invoke('speech:auto-select-model', payload),
     history: {
       list: () => ipcRenderer.invoke('speech:history:list'),
       get: (sessionId) => ipcRenderer.invoke('speech:history:get', { sessionId }),

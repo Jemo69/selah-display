@@ -1199,9 +1199,10 @@ describe('invariant 4: off by default, cold by default', () => {
     const extractSpeechChannels = (relPath) =>
       [...new Set([...readText(relPath).matchAll(/'(speech:[a-z0-9:-]+)'/g)].map((m) => m[1]))].sort();
 
-    // The inventory: 22 channels — 14 renderer->main invokes and 8
+    // The inventory: 23 channels — 16 renderer->main invokes and 7
     // main->renderer events. Sorted, so the comparison is order-blind.
     const EXPECTED_SPEECH_CHANNELS = [
+      'speech:auto-select-model', // INVOKE, live: measured matrix + verified auto-selection
       'speech:benchmark', // INVOKE, stub: Phase 3 benchmark
       'speech:engine-selftest', // INVOKE, live: spawn whisper-cli --help and report loader failures
       'speech:error', // EVENT: one clear engine error (crash loop, bad API, spawn failure)

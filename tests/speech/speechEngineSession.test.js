@@ -635,6 +635,27 @@ describe('supervisor lifecycle: healthy start opens, relay appends, stop closes'
     expect(await settleHistoryRecording()).toBeNull();
   });
 
+  it('D: a benchmark-only restart with historyless:true opens no sermon session', async () => {
+    // Auto-selection starts/stops the engine once per installed model. Those
+    // restarts are measurements, not services; they must not leave empty
+    // transcript-history sessions behind.
+    const dir = makeTempPath();
+    const { endpoint } = await startLoopbackHealthServer({ model: 'large-v3' });
+    const result = await startSpeechEngine({
+      enabled: true,
+      endpoint,
+      historyDir: dir,
+      historyStore: makeStore(dir),
+      modelId: 'large-v3',
+      providerId: 'whispercpp',
+      where: 'local',
+      historyless: true,
+    });
+    expect(result).toMatchObject({ ok: true, reason: 'healthy' });
+    expect(await settleHistoryRecording()).toBeNull();
+    expect(fs.existsSync(dir)).toBe(false);
+  });
+
   it('D: a throwing history store never breaks transcription and is reported once, code only', async () => {
     const { endpoint } = await startLoopbackHealthServer();
     const errors = [];

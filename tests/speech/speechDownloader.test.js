@@ -739,7 +739,10 @@ describe('speech: IPC wiring (electron mocked, no network, no spawn)', () => {
     // the invokes (14 -> 15) and speech:vad joined the events (6 -> 7). The
     // probe is what tells "installed" from "runnable", and vad is the only
     // feedback the real engine gives before its first final.
-    expect(SPEECH_INVOKE_CHANNELS).toHaveLength(15);
+    // DELIBERATE CHANGE (auto model selection): speech:auto-select-model
+    // joined the invokes (15 -> 16). It is the measured matrix path, and it
+    // shares the same pinned set as every other renderer->main control.
+    expect(SPEECH_INVOKE_CHANNELS).toHaveLength(16);
     expect(SPEECH_EVENT_CHANNELS).toHaveLength(7);
   });
 
