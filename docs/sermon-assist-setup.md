@@ -8,7 +8,7 @@ You do not need to know about computer files to use this. Selah does the choosin
 2. Choose **Experimental**, then find **Sermon Assist**.
 3. Press **Set up Sermon Assist** once.
 4. Wait while Selah says what it is doing. This can take a few minutes on a slow internet connection.
-5. When it says **Sermon Assist is ready**, turn **Sermon Assist** on above if it is off, then press **Start** whenever you want to use it.
+5. When it says **Sermon Assist is set up**, it starts listening automatically. If your computer asks for microphone access, choose **Allow**.
 
 You do **not** need to:
 

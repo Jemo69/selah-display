@@ -68,7 +68,7 @@ export function classifyBinaryFailure({ stderr = '', stdout = '', exitCode = 0, 
     return {
       code: 'missing-vc-runtime',
       message:
-        'The speech engine is missing a Windows system component (Microsoft Visual C++ runtime). ' +
+        'The speech engine is missing a Windows system component (the Microsoft Visual C++ Redistributable). ' +
         `A technician can install it from ${vcRuntimeUrl(arch)}, then press Set up Sermon Assist again. ` +
         'The Selah engine files are installed correctly; this is not a download problem.',
     };

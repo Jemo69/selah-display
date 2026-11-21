@@ -643,6 +643,18 @@ export default function SermonAssistPanel({ darkMode = false }) {
   useSpeechRuntime(enabled);
   const toggleCombo = useSermonAssistToggle();
 
+  // The one-click setup completion hands the microphone arming to this rail,
+  // which owns useAudioCapture. The request is an explicit press from the
+  // setup card, consumed once, and never persisted.
+  const autoStartRequested = useSpeechStore((state) => state.autoStartRequested === true);
+  const consumeAutoStart = useSpeechStore((state) => state.consumeAutoStart);
+  useEffect(() => {
+    if (!autoStartRequested) return;
+    consumeAutoStart();
+    if (!enabled) return;
+    capture.arm();
+  }, [autoStartRequested, consumeAutoStart, enabled, capture]);
+
   // Phase 0 exit criterion: disabled means hidden entirely — zero DOM nodes.
   if (!enabled) return null;
   return (
