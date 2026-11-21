@@ -112,7 +112,7 @@ describe('speech:start provider routing', () => {
     expect(reply.error.message).toMatch(/whisper/i);
   });
 
-  it.each(['cloud', 'network'])('%s refuses before the local engine starts', async (where) => {
+  it.each(['cloud'])('%s refuses before the local engine starts', async (where) => {
     const reply = await ipcHandles['speech:start'](null, {
       enabled: true,
       engineMode: 'prod',

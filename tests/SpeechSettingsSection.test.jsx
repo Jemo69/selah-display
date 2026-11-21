@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent, within, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, within, cleanup, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import UserPreferencesModal from '@/components/UserPreferencesModal';
 import useSpeechStore, { speechDefaults } from '@/context/SpeechStore';
@@ -402,7 +402,8 @@ const card = screen.getByTestId('sermon-assist-experimental-card');
     expect(mode).toHaveTextContent('Local · large-v3');
 
     fireEvent.click(screen.getByTestId('speech-where-network'));
-    expect(mode).toHaveTextContent('Remote engine');
+    // Choosing the mode is not proof of a connection: no health has arrived.
+    expect(mode).toHaveTextContent('Network · not connected');
 
     fireEvent.click(screen.getByTestId('speech-where-cloud'));
     expect(mode).toHaveTextContent('Cloud · not configured');
@@ -457,6 +458,70 @@ const card = screen.getByTestId('sermon-assist-experimental-card');
     resetStore({ enabled: false, ui: { ...speechDefaults().ui, showEngineErrors: false } });
     renderExperimental();
     expect(screen.getByTestId('speech-show-engine-errors-setting')).not.toBeChecked();
+  });
+
+  itRenders('Network Device exposes an endpoint, a session-only token, and a real test button', async () => {
+    const testNetwork = vi.fn(async () => ({
+      ok: true,
+      code: 'ok',
+      message: 'Connected to http://192.168.1.20:4731.',
+      health: { remote: true, status: 'ok', backend: 'whispercpp' },
+    }));
+    window.electronAPI = { speech: { testNetwork } };
+    try {
+      renderLocalAi();
+      expect(screen.queryByTestId('speech-network-block')).toBeNull();
+
+      fireEvent.click(screen.getByTestId('speech-where-network'));
+      const block = screen.getByTestId('speech-network-block');
+      expect(block).toHaveTextContent(/trusted LAN/i);
+      expect(block).toHaveTextContent(/no TLS/i);
+      expect(block).toHaveTextContent(/raw microphone audio crosses the network/i);
+
+      fireEvent.change(screen.getByTestId('speech-network-endpoint'), {
+        target: { value: 'http://192.168.1.20:4731' },
+      });
+      fireEvent.change(screen.getByTestId('speech-network-token'), {
+        target: { value: 'a'.repeat(64) },
+      });
+      expect(getState().networkEndpoint).toBe('http://192.168.1.20:4731');
+      expect(getState().networkToken).toBe('a'.repeat(64));
+      expect(screen.getByTestId('speech-network-token')).toHaveAttribute('type', 'password');
+
+      // The endpoint is a preference; the token is NOT written to storage.
+      const persisted = JSON.parse(localStorage.getItem('speech-store') ?? '{}');
+      expect(JSON.stringify(persisted)).toContain('networkEndpoint');
+      expect(JSON.stringify(persisted)).not.toContain('networkToken');
+      expect(JSON.stringify(persisted)).not.toContain('a'.repeat(64));
+
+      fireEvent.click(screen.getByTestId('speech-network-test'));
+      await waitFor(() => expect(testNetwork).toHaveBeenCalledWith({
+        networkEndpoint: 'http://192.168.1.20:4731',
+        networkToken: 'a'.repeat(64),
+      }));
+      expect(await screen.findByTestId('speech-network-status')).toHaveTextContent(/Connected/i);
+      // Choosing the mode is not a connection claim until health arrives.
+      expect(screen.getByTestId('speech-settings-mode')).toHaveTextContent('Network · not connected');
+    } finally {
+      delete window.electronAPI;
+    }
+  });
+
+  itRenders('a failed network test shows the reason without claiming a connection', async () => {
+    window.electronAPI = {
+      speech: { testNetwork: vi.fn(async () => ({ ok: false, code: 'network-unauthorized', message: 'Token rejected.' })) },
+    };
+    try {
+      renderLocalAi();
+      fireEvent.click(screen.getByTestId('speech-where-network'));
+      fireEvent.click(screen.getByTestId('speech-network-test'));
+      const status = await screen.findByTestId('speech-network-status');
+      expect(status).toHaveTextContent('Not connected.');
+      expect(status).toHaveTextContent('Token rejected.');
+      expect(screen.getByTestId('speech-settings-mode')).toHaveTextContent('Network · not connected');
+    } finally {
+      delete window.electronAPI;
+    }
   });
 
   itRenders('AGENTS.md guard: Import Bible Translation stays available in User Preferences > Bible', () => {

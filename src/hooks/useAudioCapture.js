@@ -146,13 +146,24 @@ export function useAudioCapture(options = {}) {
    * mode is an { ok:false } the caller fails the arm with.
    */
   const startEngine = async () => {
-    const { modelId, providerId, where, engineMode } = useSpeechStore.getState();
+    const {
+      modelId,
+      providerId,
+      where,
+      engineMode,
+      networkEndpoint,
+      networkToken,
+    } = useSpeechStore.getState();
     const result = await engineTransport.start({
       enabled: true,
       modelId,
       providerId,
       where,
       engineMode,
+      // Network mode needs both. The token is session-only state (never
+      // persisted); main refuses the start when either is missing.
+      networkEndpoint,
+      networkToken,
     });
     if (result.ok) return { ok: true };
     if (result.reason === 'no-speech-bridge') {

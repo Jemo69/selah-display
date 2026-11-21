@@ -26,12 +26,16 @@
  *     - subprotocols, continuation frames, mask rotation tricks
  *
  * SECURITY (all three enforced here, not by convention):
- *   1. Loopback only. `attachWebSocketTransport` refuses a non-loopback
- *      BIND host through the same `isLoopbackHost` gate server.js uses, and
- *      additionally refuses any peer whose address is not loopback.
+ *   1. Loopback only by default. `attachWebSocketTransport` refuses a
+ *      non-loopback BIND host through the same gate server.js uses, and
+ *      additionally refuses any peer whose address is not loopback. With an
+ *      explicit trusted-LAN opt-in (`--allow-lan` / LD_SPEECH_ALLOW_LAN=1)
+ *      both gates widen — but the token gate never does.
  *   2. Origin. An upgrade carrying an `Origin` outside `ALLOWED_ORIGINS` is
  *      refused with 403 before the handshake completes. No Origin (a
- *      non-browser client) is allowed — the token still gates it.
+ *      non-browser client) is allowed — the token still gates it. On a
+ *      trusted LAN, any http(s) Origin is accepted; there is NO TLS, so the
+ *      token and the PCM frames are visible to anyone on that LAN.
  *   3. Token. Plan 7.1: "requires it as an `x-ld-speech-token` header on REST
  *      and a query parameter on the WebSocket upgrade" — the token travels as
  *      `?token=<secret>` on the upgrade URL and is checked (timing-safe)
@@ -67,7 +71,12 @@ import {
   HARD_SEGMENT_CAP_MS,
   isLoopbackHost,
 } from '../shared/speech/protocol.js';
-import { tokenMatches, assertLoopbackBindHost } from './server.js';
+import {
+  tokenMatches,
+  assertBindHost,
+  assertLoopbackBindHost,
+  isLanAllowedOrigin,
+} from './server.js';
 
 /** Upgrade path for the audio stream. Mirrored by the renderer client. */
 export const WS_PATH = '/v1/stream';
@@ -109,6 +118,15 @@ export function isLoopbackPeer(address) {
   if (typeof address !== 'string') return false;
   const normalized = address.startsWith('::ffff:') ? address.slice('::ffff:'.length) : address;
   return isLoopbackHost(normalized);
+}
+
+/**
+ * Is this peer allowed by the current posture? Exported so the LAN opt-in can
+ * be tested without a second physical machine (a real LAN peer cannot be
+ * faked through a loopback socket, but this gate can be faked exactly).
+ */
+export function isPeerAllowed(address, allowLan = false) {
+  return allowLan === true || isLoopbackPeer(address);
 }
 
 /**
@@ -196,6 +214,8 @@ function rmsOf(payload) {
  * @param {{emit:Function, subscribe:Function}} options.bus single emission point
  * @param {object} options.engine engine implementation (fake today)
  * @param {readonly string[]} [options.allowedOrigins=ALLOWED_ORIGINS]
+ * @param {boolean} [options.allowLan=false] trusted-LAN opt-in: allow LAN
+ *   origins/peers. Requires an explicit token — there is no TLS.
  * @param {string} [options.path=WS_PATH] upgrade path
  * @returns {{path: string, connectionCount: () => number, close: () => void}}
  * @throws {Error} when the token/bus/engine are missing or the BIND host
@@ -207,6 +227,7 @@ export function attachWebSocketTransport(server, options = {}) {
     bus,
     engine,
     allowedOrigins = ALLOWED_ORIGINS,
+    allowLan = false,
     path = WS_PATH,
     host = null,
   } = options;
@@ -223,9 +244,13 @@ export function attachWebSocketTransport(server, options = {}) {
   if (!engine || typeof engine.transcribe !== 'function') {
     throw new Error('speech-engine: attachWebSocketTransport requires an engine');
   }
-  // Loopback-only chokepoint for this surface too (defense in depth: server.js
-  // already refuses a non-loopback bind, and a caller may pass `host` here).
-  if (host !== null) assertLoopbackBindHost(host);
+  // Bind gate for this surface too (defense in depth: server.js already
+  // refuses a non-loopback bind without the opt-in, and a caller may pass
+  // `host` here). Default callers keep the unconditional loopback rule.
+  if (host !== null) {
+    if (allowLan) assertBindHost(host, { allowLan, token });
+    else assertLoopbackBindHost(host);
+  }
 
   /** Live connections, so close() can tear every one down. */
   const connections = new Set();
@@ -255,14 +280,20 @@ export function attachWebSocketTransport(server, options = {}) {
     }
 
     // 2. Origin gate — an Origin that is not ours never reaches the token check.
+    //    The trusted-LAN opt-in accepts any http(s) Origin (no TLS: the token
+    //    and audio are only as trustworthy as that network).
     const origin = req.headers.origin;
-    if (!isAllowedOrigin(origin, allowedOrigins)) {
+    const originAllowed = allowLan
+      ? isLanAllowedOrigin(origin)
+      : isAllowedOrigin(origin, allowedOrigins);
+    if (!originAllowed) {
       rejectUpgrade(socket, 403, 'origin-not-allowed');
       return;
     }
 
-    // 3. Loopback peer gate: engine traffic never arrives from the LAN.
-    if (!isLoopbackPeer(req.socket.remoteAddress)) {
+    // 3. Peer gate: engine traffic never arrives from the LAN unless the
+    //    operator explicitly opted in AND supplied the token.
+    if (!isPeerAllowed(req.socket.remoteAddress, allowLan)) {
       rejectUpgrade(socket, 403, 'non-loopback-peer');
       return;
     }

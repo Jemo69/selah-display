@@ -14,15 +14,22 @@
  *   POST   /v1/benchmark            -> 501 (benchmark follow-up)
  *
  * SECURITY — all three rules are enforced here, not by convention:
- *   1. Loopback only. The bind host is validated with isLoopbackHost() at
- *      construction AND at listen(); a non-loopback host throws.
+ *   1. Loopback ONLY by default. The bind host is validated at construction
+ *      AND at listen(); a non-loopback host throws unless the operator made
+ *      an explicit, auditable trusted-LAN opt-in (--allow-lan or
+ *      LD_SPEECH_ALLOW_LAN=1) AND supplied an explicit token.
  *   2. Origin. A request carrying an Origin header not in ALLOWED_ORIGINS is
  *      rejected with 403. No Origin (the app's main-process client, curl)
- *      is allowed — the token still gates it.
+ *      is allowed — the token still gates it. The LAN opt-in relaxes this to
+ *      any http(s) Origin on the trusted LAN; it does NOT drop the token.
  *   3. Token. Every request must carry TOKEN_HEADER matching the per-launch
  *      secret (timing-safe compare): 401 when missing, 403 when wrong. The
  *      only exemption is the CORS preflight (OPTIONS), which browsers send
  *      BEFORE the custom header exists — it is still origin-checked.
+ *
+ * TRUSTED-LAN CAVEAT: the opt-in uses plain HTTP and ws:// (no TLS). Raw PCM
+ * audio from the microphone crosses the network to the engine. Only enable
+ * it on a network you control; the token is a shared secret, not encryption.
  *
  * TRANSPORT DECISION (Phase 2): this file serves the REST surface over plain
  * HTTP only, and message-producing logic emits through bus.js — so the
@@ -48,6 +55,32 @@ import { runBenchmark, BenchmarkCancelled } from './benchmark.js';
 
 /** The only host this engine ever binds by default. Loopback, always. */
 export const DEFAULT_BIND_HOST = '127.0.0.1';
+
+/** Explicit opt-in flag/env for a trusted LAN. Never implied by a host value. */
+export const LAN_OPT_IN_FLAG = '--allow-lan';
+export const LAN_OPT_IN_ENV = 'LD_SPEECH_ALLOW_LAN';
+
+/**
+ * Is this an explicit LAN opt-in? `true` comes from the `--allow-lan` flag;
+ * the env var must literally be `1` (or `true`) — never a host value.
+ */
+export function isLanOptIn(value) {
+  if (value === true) return true;
+  if (typeof value !== 'string') return false;
+  const normalized = value.trim();
+  return normalized === '1' || normalized === 'true';
+}
+
+/** Any http(s) Origin is acceptable on an explicitly trusted LAN (token still gates). */
+export function isLanAllowedOrigin(origin) {
+  if (origin === undefined) return true; // non-browser client: token still gates
+  try {
+    const parsed = new URL(origin);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
 
 /** Maximum accepted JSON body (PCM clips travel base64-encoded). */
 const MAX_BODY_BYTES = 32 * 1024 * 1024;
@@ -79,21 +112,56 @@ export function hostnameOf(host) {
 }
 
 /**
- * Validate a bind host: loopback only, no exceptions.
+ * Validate a bind host.
+ *
+ * Loopback is always allowed. A non-loopback host is allowed ONLY with an
+ * explicit opt-in AND an explicit token, and is logged as an audit line
+ * (no token in the log). Default callers keep the old loopback-only rule.
  *
  * @param {unknown} host
+ * @param {{allowLan?: boolean, token?: unknown}} [options]
  * @returns {string} the normalized hostname (port/brackets stripped)
- * @throws {Error} when the host is missing or not loopback.
+ * @throws {Error} when the host is missing, non-loopback without opt-in, or
+ *   opted in without a token.
  */
-export function assertLoopbackBindHost(host) {
+export function assertBindHost(host, { allowLan = false, token = null } = {}) {
   const hostname = hostnameOf(host);
-  if (!hostname || !isLoopbackHost(hostname)) {
+  if (!hostname) {
     throw new Error(
-      `speech-engine: refusing to bind non-loopback host ${JSON.stringify(String(host ?? ''))} — ` +
-        'the engine may only listen on loopback (127.0.0.1 / localhost / ::1)'
+      'speech-engine: a bind host is required — loopback (127.0.0.1) is the default'
     );
   }
+  if (isLoopbackHost(hostname)) return hostname;
+
+  if (!allowLan) {
+    throw new Error(
+      `speech-engine: refusing to bind non-loopback host ${JSON.stringify(String(host ?? ''))} — ` +
+        'the engine may only listen on loopback (127.0.0.1 / localhost / ::1) ' +
+        'unless --allow-lan (or LD_SPEECH_ALLOW_LAN=1) is explicitly set with a token'
+    );
+  }
+  if (typeof token !== 'string' || token.length < 16) {
+    throw new Error(
+      'speech-engine: --allow-lan requires an explicit LD_SPEECH_TOKEN (or --token) ' +
+        'of at least 16 characters — no generated fallback for a LAN bind'
+    );
+  }
+
+  // Auditable, once per gate: the operator asked for a LAN bind. Plain HTTP
+  // and raw PCM audio over the network are not a local-only posture.
+  console.warn(
+    `speech-engine: LAN OPT-IN — binding ${hostname} on a trusted LAN. ` +
+      'No TLS: raw microphone audio crosses the network. Keep this LAN trusted.'
+  );
   return hostname;
+}
+
+/**
+ * Validate a bind host with the original, unconditionally loopback-only rule.
+ * Kept as the named chokepoint existing callers/tests import.
+ */
+export function assertLoopbackBindHost(host) {
+  return assertBindHost(host, { allowLan: false });
 }
 
 /**
@@ -228,7 +296,9 @@ function benchmarkEngineAdapter(engine) {
  * @param {Object} options
  * @param {string} options.token required per-launch secret checked on every
  *   request (32+ chars; `generateEngineToken()` produces 64 hex).
- * @param {string} [options.host=DEFAULT_BIND_HOST] bind host — must be loopback.
+ * @param {string} [options.host=DEFAULT_BIND_HOST] bind host — loopback unless
+ *   `allowLan` was explicitly set.
+ * @param {boolean} [options.allowLan=false] trusted-LAN opt-in; requires a token.
  * @param {object} [options.engine] engine implementation (defaults to fake).
  * @param {{api:number, minor:number}} [options.apiVersion] version reported
  *   by GET /v1/health (overridable so compatibility tests can fake a major).
@@ -243,6 +313,7 @@ export function createSpeechEngineServer(options = {}) {
   const {
     token,
     host = DEFAULT_BIND_HOST,
+    allowLan = false,
     engine = null,
     apiVersion = SPEECH_PROTOCOL_VERSION,
     allowedOrigins = ALLOWED_ORIGINS,
@@ -255,7 +326,9 @@ export function createSpeechEngineServer(options = {}) {
   }
 
   // Fails fast (and loudly) on any non-loopback host, at construction time.
-  const bindHost = assertLoopbackBindHost(host);
+  // The LAN opt-in is explicit and token-gated — a host string alone is never
+  // enough to widen the bind.
+  const bindHost = assertBindHost(host, { allowLan, token });
   const activeEngine = engine || createFakeEngine({ bus });
 
   /**
@@ -298,9 +371,13 @@ export function createSpeechEngineServer(options = {}) {
 
   async function handle(req, res) {
     const origin = req.headers.origin;
-    const originAllowed = isAllowedOrigin(origin, allowedOrigins);
+    const originAllowed = allowLan
+      ? isLanAllowedOrigin(origin)
+      : isAllowedOrigin(origin, allowedOrigins);
 
     // 1. Origin gate — before anything else, and including preflight.
+    //    The trusted-LAN opt-in accepts any http(s) Origin; the token gate
+    //    below is unchanged and still required on every real request.
     if (!originAllowed) {
       sendJson(res, 403, { error: 'origin-not-allowed' });
       return;
@@ -568,7 +645,8 @@ export function createSpeechEngineServer(options = {}) {
      */
     async listen(port = 0, listenHost = bindHost) {
       // async so a synchronous refusal surfaces as a rejected promise.
-      const hostname = assertLoopbackBindHost(listenHost);
+      // Re-check at listen() too: the override may differ from construction.
+      const hostname = assertBindHost(listenHost, { allowLan, token });
       return new Promise((resolve, reject) => {
         const onError = (error) => {
           server.removeListener('listening', onListening);

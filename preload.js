@@ -376,6 +376,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   speech: {
     start: (payload) => ipcRenderer.invoke('speech:start', payload),
+    // Read-only health check for the Network Device settings block. It does
+    // not start, fork, or change the running engine.
+    testNetwork: (payload) => ipcRenderer.invoke('speech:test-network', payload),
     stop: () => ipcRenderer.invoke('speech:stop'),
     getState: () => ipcRenderer.invoke('speech:get-state'),
     install: (payload) => ipcRenderer.invoke('speech:install', payload),

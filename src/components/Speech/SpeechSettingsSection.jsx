@@ -64,7 +64,7 @@ const WHERE_OPTIONS = [
     id: 'network',
     label: 'Network Device',
     Icon: Network,
-    copy: 'Runs on another machine on your network, like a booth PC. Only text crosses the network.',
+    copy: 'Runs on another machine on your trusted LAN. Raw PCM microphone audio crosses the network; the transport is plain HTTP/ws:// with no TLS.',
   },
   {
     id: 'cloud',
@@ -112,6 +112,10 @@ const SpeechSettingsSection = ({ darkMode = false }) => {
   const showEngineErrors = useSpeechStore((state) => state.ui.showEngineErrors) !== false;
   const setUI = useSpeechStore((state) => state.setUI);
   const setWhere = useSpeechStore((state) => state.setWhere);
+  const networkEndpoint = useSpeechStore((state) => state.networkEndpoint);
+  const networkToken = useSpeechStore((state) => state.networkToken);
+  const setNetworkEndpoint = useSpeechStore((state) => state.setNetworkEndpoint);
+  const setNetworkToken = useSpeechStore((state) => state.setNetworkToken);
   const setCloudProviderId = useSpeechStore((state) => state.setCloudProviderId);
   const resetToDefaults = useSpeechStore((state) => state.resetToDefaults);
   // `speech:health`'s `backend` field. The engine that ships today is the
@@ -124,6 +128,11 @@ const SpeechSettingsSection = ({ darkMode = false }) => {
   // API keys live only in this component's memory for the session — Phase 5
   // owns storage, so nothing here is written to the store or localStorage.
   const [draftKeys, setDraftKeys] = useState({});
+  // The network token lives in session memory only (SpeechStore runtime
+  // state). Test feedback is local to this component and never carries the
+  // token or transcript text.
+  const [networkStatus, setNetworkStatus] = useState(null);
+  const [testingNetwork, setTestingNetwork] = useState(false);
 
   // Phase 6 guardrail report (limits + current trip state). One read on mount:
   // these change when the machine trips, and the engine announces that over
@@ -167,9 +176,34 @@ const SpeechSettingsSection = ({ darkMode = false }) => {
     if (value !== 'cloud') setCloudProviderId(null);
   };
 
+  const handleTestNetwork = async () => {
+    const speech = typeof window === 'undefined' ? null : window.electronAPI?.speech;
+    if (typeof speech?.testNetwork !== 'function') {
+      setNetworkStatus({ ok: false, message: 'This build cannot test a remote engine.' });
+      return;
+    }
+    setTestingNetwork(true);
+    setNetworkStatus(null);
+    try {
+      const result = await speech.testNetwork({ networkEndpoint, networkToken });
+      setNetworkStatus({
+        ok: result?.ok === true,
+        message:
+          typeof result?.message === 'string' && result.message
+            ? result.message
+            : 'No answer from the remote engine.',
+      });
+    } catch {
+      setNetworkStatus({ ok: false, message: 'The connection test could not complete.' });
+    } finally {
+      setTestingNetwork(false);
+    }
+  };
+
   const handleReset = () => {
     resetToDefaults();
     setDraftKeys({});
+    setNetworkStatus(null);
     showToast({
       title: 'Sermon Assist reset',
       message: 'All Sermon Assist settings restored to defaults. The feature stays off until you turn it on.',
@@ -342,7 +376,7 @@ const SpeechSettingsSection = ({ darkMode = false }) => {
               })}
             </div>
             <p className={mutedClass}>{activeWhere.copy}</p>
-            {where !== 'local' ? (
+            {where === 'cloud' ? (
               <p
                 data-testid="speech-where-unavailable"
                 className={`rounded-lg border p-2.5 text-xs leading-relaxed ${
@@ -351,12 +385,102 @@ const SpeechSettingsSection = ({ darkMode = false }) => {
                     : 'border-amber-200 bg-amber-50 text-amber-800'
                 }`}
               >
-                Not implemented in this build. Cloud and local-network transcription have no
-                transport yet; starting will refuse. Choose <strong>This Device</strong> to use the
-                local engine.
+                Cloud transcription is not implemented in this build and starting will refuse.
+                Choose <strong>This Device</strong> for the local engine or <strong>Network
+                Device</strong> for a speech engine on your LAN.
               </p>
             ) : null}
           </div>
+
+          {/* ---------------------------------------------------------- (b1)
+              Trusted-LAN remote engine. The endpoint is persisted; the token
+              is session-only and never written to localStorage. The start
+              path refuses when either is missing — no local fallback. */}
+          {where === 'network' && (
+            <div className={`${cardClass} mt-6`} data-testid="speech-network-block">
+              <div className="space-y-1.5">
+                <span className={labelClass}>Remote speech engine</span>
+                <p className={mutedClass}>
+                  Runs on another machine on a <strong>trusted LAN</strong>. This is plain HTTP and
+                  ws:// with <strong>no TLS</strong>: raw microphone audio crosses the network,
+                  along with the shared token. Do not use an untrusted or public network.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="flex flex-col gap-1.5">
+                  <span className={`text-xs font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                    Engine URL
+                  </span>
+                  <Input
+                    type="url"
+                    inputMode="url"
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="http://192.168.1.20:4731"
+                    value={networkEndpoint ?? ''}
+                    onChange={(event) => setNetworkEndpoint(event.target.value)}
+                    aria-label="Remote engine URL"
+                    data-testid="speech-network-endpoint"
+                    className={`h-9 text-xs ${darkMode ? 'bg-gray-950 border-gray-800' : 'bg-white'}`}
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className={`text-xs font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                    Launch token (this session only)
+                  </span>
+                  <Input
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="Engine launch token"
+                    value={networkToken ?? ''}
+                    onChange={(event) => setNetworkToken(event.target.value)}
+                    aria-label="Remote engine token"
+                    data-testid="speech-network-token"
+                    className={`h-9 text-xs ${darkMode ? 'bg-gray-950 border-gray-800' : 'bg-white'}`}
+                  />
+                </label>
+              </div>
+
+              <div className="flex items-center gap-3 flex-wrap">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={testingNetwork}
+                  onClick={handleTestNetwork}
+                  data-testid="speech-network-test"
+                  className={`inline-flex items-center gap-2 ${
+                    darkMode ? 'border-gray-700 bg-transparent text-gray-200 hover:bg-gray-800' : ''
+                  }`}
+                >
+                  <Network className="w-4 h-4" /> {testingNetwork ? 'Testing…' : 'Test connection'}
+                </Button>
+                <span className={`text-[11px] ${darkMode ? 'text-gray-500' : 'text-gray-500'}`}>
+                  The token is kept only in memory; a reload asks for it again.
+                </span>
+              </div>
+
+              {networkStatus ? (
+                <p
+                  role="status"
+                  data-testid="speech-network-status"
+                  className={`text-xs leading-relaxed rounded-lg border p-2.5 ${
+                    networkStatus.ok
+                      ? darkMode
+                        ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+                        : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                      : darkMode
+                        ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+                        : 'border-amber-200 bg-amber-50 text-amber-800'
+                  }`}
+                >
+                  {networkStatus.ok ? 'Connected. ' : 'Not connected. '}
+                  {networkStatus.message}
+                </p>
+              ) : null}
+            </div>
+          )}
 
           {/* ---------------------------------------------------------- (b2)
               Engine Mode — Production vs Test Mode */}

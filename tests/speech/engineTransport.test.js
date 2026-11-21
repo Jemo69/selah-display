@@ -15,6 +15,7 @@ import {
   createEngineTransport,
   MAX_QUEUED_FRAMES,
   WS_TOKEN_PARAM,
+  onRemoteEngineMessage,
 } from '../../src/speech/engineTransport';
 import useSpeechStore, { speechDefaults } from '../../src/context/SpeechStore';
 
@@ -211,6 +212,81 @@ describe('engineTransport', () => {
     const outcome = await transport.start({ enabled: true });
     expect(outcome).toEqual({ ok: false, reason: 'non-loopback-endpoint' });
     expect(FakeWebSocket.instances).toHaveLength(0);
+  });
+
+  it('a LAN endpoint is refused when main did not confirm a remote engine', async () => {
+    installBridge(vi.fn(async () => ({
+      ok: true,
+      engine: { endpoint: 'http://192.168.1.5:4731', token: TOKEN, path: '/v1/stream' },
+    })));
+    const transport = createEngineTransport({ WebSocketImpl: FakeWebSocket });
+
+    const outcome = await transport.start({ enabled: true, where: 'network' });
+    expect(outcome).toEqual({ ok: false, reason: 'non-loopback-endpoint' });
+    expect(FakeWebSocket.instances).toHaveLength(0);
+  });
+
+  it('dials a health-checked remote endpoint only in network mode', async () => {
+    installBridge(vi.fn(async () => ({
+      ok: true,
+      engine: {
+        endpoint: 'http://192.168.1.5:4731',
+        token: TOKEN,
+        path: '/v1/stream',
+        remote: true,
+      },
+    })));
+    const transport = createEngineTransport({ WebSocketImpl: FakeWebSocket });
+
+    const outcome = await transport.start({ enabled: true, where: 'network' });
+    expect(outcome).toEqual({ ok: true, reason: 'dialed' });
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    // Same dial contract, different host: ws:// + path + ?token=.
+    expect(FakeWebSocket.instances[0].url).toBe(
+      `ws://192.168.1.5:4731/v1/stream?${WS_TOKEN_PARAM}=${TOKEN}`
+    );
+
+    // A dropped remote socket must not leave the rail claiming a live engine.
+    useSpeechStore.getState().setHealth({ remote: true, status: 'ok', backend: 'whispercpp' });
+    FakeWebSocket.instances[0].onclose({ code: 1006 });
+    expect(useSpeechStore.getState().health).toBeNull();
+  });
+
+  it('relays validated remote messages to the rail, but never local ones', async () => {
+    const received = [];
+    const off = onRemoteEngineMessage((message) => received.push(message));
+    try {
+      // Local socket: a final must NOT be double-delivered over the relay.
+      installBridge();
+      const local = createEngineTransport({ WebSocketImpl: FakeWebSocket });
+      await local.start({ enabled: true, where: 'local' });
+      const localSocket = FakeWebSocket.instances[0];
+      localSocket.onopen();
+      localSocket.onmessage({ data: JSON.stringify({
+        t: 'final', sessionId: 's1', text: 'local', tStartMs: 0, tEndMs: 100,
+      }) });
+      expect(received).toHaveLength(0);
+
+      // Remote socket: contract-valid messages reach the same rail handler.
+      installBridge(vi.fn(async () => ({
+        ok: true,
+        engine: {
+          endpoint: 'http://192.168.1.5:4731',
+          token: TOKEN,
+          path: '/v1/stream',
+          remote: true,
+        },
+      })));
+      const remote = createEngineTransport({ WebSocketImpl: FakeWebSocket });
+      await remote.start({ enabled: true, where: 'network' });
+      const remoteSocket = FakeWebSocket.instances[1];
+      const final = { t: 'final', sessionId: 's2', text: 'remote', tStartMs: 0, tEndMs: 200 };
+      remoteSocket.onmessage({ data: JSON.stringify(final) });
+      remoteSocket.onmessage({ data: 'not json' });
+      expect(received).toEqual([final]);
+    } finally {
+      off();
+    }
   });
 
   it('invalid downstream JSON is dropped and counted; valid messages reach the callback', async () => {
