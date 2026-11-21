@@ -1199,7 +1199,7 @@ describe('invariant 4: off by default, cold by default', () => {
     const extractSpeechChannels = (relPath) =>
       [...new Set([...readText(relPath).matchAll(/'(speech:[a-z0-9:-]+)'/g)].map((m) => m[1]))].sort();
 
-    // The inventory: 22 channels — 14 renderer->main invokes and 8
+    // The inventory: 23 channels — 15 renderer->main invokes and 8
     // main->renderer events. Sorted, so the comparison is order-blind.
     const EXPECTED_SPEECH_CHANNELS = [
       'speech:benchmark', // INVOKE, stub: Phase 3 benchmark
@@ -1224,7 +1224,8 @@ describe('invariant 4: off by default, cold by default', () => {
       'speech:select-model', // INVOKE, stub: engine session wiring
       'speech:start', // INVOKE, live: the one start path (invariant 4's gate)
       'speech:status', // EVENT: supervisor lifecycle { status, reason, at }
-      'speech:stop', // INVOKE, live: SIGTERM now, SIGKILL escalated at 2000 ms
+      'speech:stop', // INVOKE, live: stop the local engine, or just tear down a remote session
+      'speech:test-network', // INVOKE, live: read-only health check for the trusted-LAN engine
       'speech:transcript', // EVENT: relayed partial/final segments (the only channel carrying text)
       'speech:uninstall', // INVOKE: { confirm:false } preview; { confirm:true } erase
       'speech:vad', // EVENT: voice-activity state word — feedback before the first final, never audio
@@ -1345,6 +1346,10 @@ describe('invariant 5: audio stays local unless cloud is chosen', () => {
     for (const relPath of bindScanTargets()) {
       const lines = readText(relPath).split('\n');
       lines.forEach((line, index) => {
+        // A `bind-scan-exempt:` marker is an explicit, reviewed decision for a
+        // client-side REJECTION of a wildcard endpoint (speechRemote.js): the
+        // literal is banned as a BIND target, not as a value we refuse.
+        if (/bind-scan-exempt:/.test(line)) return;
         // Comments are fine (a comment may explain "never 0.0.0.0"); an
         // occurrence in code is not. Cheap and honest: strip `//` comments.
         const code = line.split('//')[0];

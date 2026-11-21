@@ -607,6 +607,8 @@ describe('useAudioCapture — the engine transport bridge', () => {
       providerId: 'whispercpp',
       where: 'local',
       engineMode: 'prod',
+      networkEndpoint: null,
+      networkToken: null,
     });
     // The renderer dialed the engine itself, with the token as
     // the upgrade query parameter (plan 7.1).

@@ -166,8 +166,19 @@ describe('engineTruth: telling a fake engine from a real one', () => {
     });
 
     it('applies the same rule to every mode, not just local', () => {
-      expect(engineModeLabel({ where: 'network' })).toBe('Remote engine');
+      // where is a configuration choice, not proof of a remote engine.
+      expect(engineModeLabel({ where: 'network' })).toBe('Network · not connected');
       expect(engineModeLabel({ where: 'network', health: { backend: 'fake' } })).toMatch(/canned/i);
+      expect(
+        engineModeLabel({
+          where: 'network',
+          health: { remote: true, status: 'ok', backend: 'whispercpp', model: 'tiny.en' },
+        })
+      ).toBe('Remote engine · tiny.en');
+      // A stale local health payload must never make network mode look remote.
+      expect(
+        engineModeLabel({ where: 'network', health: { status: 'ok', backend: 'whispercpp' } })
+      ).toBe('Network · not connected');
 
       expect(engineModeLabel({ where: 'cloud' })).toBe('Cloud · not configured');
       expect(

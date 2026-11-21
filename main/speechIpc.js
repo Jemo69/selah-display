@@ -11,7 +11,8 @@
  * adding or renaming a channel is a visible, reviewed diff in BOTH files.
  *
  * LIVE vs STUB (Phase 2):
- *   live  speech:start, speech:stop, speech:get-state, speech:install (the
+ *   live  speech:start (local fork OR trusted-LAN remote engine), speech:stop,
+ *         speech:get-state, speech:test-network, speech:install (the
  *         resumable model downloader in main/speechDownloader.js — progress
  *         streams on speech:progress and install state republishes on
  *         speech:install-state), speech:select-model (digest-verifies the
@@ -69,6 +70,11 @@ import {
 } from './speechEngineDiagnostics.js';
 import { planErase, removePathStep, describeErase, formatBytes } from './speechErase.js';
 import { createSpeechHistoryStore, resolveHistoryDir } from './speechHistory.js';
+import {
+  validateNetworkEndpoint,
+  validateNetworkToken,
+  probeRemoteEngine,
+} from './speechRemote.js';
 import { getModel, generateEngineToken } from '../shared/speech/index.js';
 import createMainLogger from './logger.js';
 import { diagMain } from './diagnosticsLog.js';
@@ -98,8 +104,9 @@ export const SPEECH_EVENT_CHANNELS = Object.freeze([
 
 /** renderer -> main invoke handles. Thirteen channels, two of them stubs. */
 export const SPEECH_INVOKE_CHANNELS = Object.freeze([
-  'speech:start', // LIVE: { enabled, modelId?, providerId?, where? } -> { ok, started, reason, health, installState, engine }
-  'speech:stop', // LIVE: -> { ok, stopped }
+  'speech:start', // LIVE: { enabled, modelId?, providerId?, where?, networkEndpoint?, networkToken? } -> { ok, started, reason, health, installState, engine }
+  'speech:stop', // LIVE: -> { ok, stopped } (tears down remote sessions without killing a remote process)
+  'speech:test-network', // LIVE: { networkEndpoint, networkToken } -> { ok, code, message, health }
   'speech:get-state', // LIVE: -> { status, health, lastError, running, mode, endpoint, pid, installState, guardrail }
   'speech:install', // LIVE: { modelId } -> download result; { modelId, cancel:true } -> cancel
   'speech:install-engine', // LIVE: -> download + verify + unpack the real whisper.cpp binary
@@ -159,6 +166,11 @@ let registered = null;
  *   (dev checkout and the Phase 3 install directory).
  * @param {string|null} [options.endpoint] explicit loopback engine endpoint.
  * @param {string|null} [options.engineToken] pre-shared token for endpoint mode.
+ * @param {string|null} [options.networkEndpoint] default remote endpoint; the
+ *   renderer's settings value is authoritative when supplied.
+ * @param {string|null} [options.networkToken] session-only default token.
+ * @param {Function} [options.probeRemote] injected health probe (tests).
+ * @param {Function} [options.fetchImpl] injected fetch for the real probe.
  * @param {string|null} [options.modelsDir] model directory; defaults to
  *   `<userData>/speech-engine/models` — the documented offline drop-in
  *   directory. The repo's `speech-engine/` is NEVER written to.
@@ -197,6 +209,10 @@ export function registerSpeechIpc({
   engineRoots = [],
   endpoint = null,
   engineToken = null,
+  networkEndpoint = null,
+  networkToken = null,
+  probeRemote = probeRemoteEngine,
+  fetchImpl = undefined,
   binDir = null,
   modelsDir = null,
   historyDir = null,
@@ -324,22 +340,126 @@ export function registerSpeechIpc({
   const stringField = (value) =>
     typeof value === 'string' && value.trim() ? value : null;
 
+  /** TRUE only while a health-checked remote engine is our active transport. */
+  let remoteActive = false;
+
+  /** Resolve the endpoint/token pair. The renderer's settings win over boot env. */
+  const remoteConfig = (payload) => {
+    const endpointVerdict = validateNetworkEndpoint(
+      stringField(payload?.networkEndpoint) ?? networkEndpoint
+    );
+    const tokenVerdict = validateNetworkToken(
+      stringField(payload?.networkToken) ?? networkToken
+    );
+    return { endpointVerdict, tokenVerdict };
+  };
+
+  /**
+   * One refusal shape for every remote gate: a machine code, one sentence,
+   * no local fork, and health cleared so the rail cannot claim a remote
+   * engine that was never reached.
+   */
+  const refuseRemote = (error, startedAt, where = 'network') => {
+    publishInstallState();
+    log.info(`Remote engine not started: ${error.code}`);
+    diagMain('info', 'engine', 'start refused by gate', {
+      reason: error.code,
+      where,
+      durationMs: Date.now() - startedAt,
+    });
+    broadcast('speech:error', error);
+    broadcast('speech:health', null);
+    return {
+      ok: false,
+      started: false,
+      reason: error.code,
+      mode: 'network',
+      installState: buildInstallState(),
+      engine: null,
+      health: null,
+      error,
+    };
+  };
+
+  /**
+   * Network mode: health-check the configured remote engine, then hand the
+   * renderer the SAME dial-in shape a local start returns. No fork, no local
+   * fallback, no transcript relay via the supervisor — the renderer's
+   * engineTransport opens the remote WebSocket itself.
+   */
+  const startRemote = async (payload, startedAt) => {
+    const { endpointVerdict, tokenVerdict } = remoteConfig(payload);
+    if (!endpointVerdict.ok) return refuseRemote(endpointVerdict, startedAt);
+    if (!tokenVerdict.ok) return refuseRemote(tokenVerdict, startedAt);
+
+    const verdict = await probeRemote({
+      endpoint: endpointVerdict.endpoint,
+      token: tokenVerdict.token,
+      ...(fetchImpl === undefined ? {} : { fetchImpl }),
+    });
+    if (!verdict.ok) return refuseRemote(verdict, startedAt);
+
+    // A local engine from an earlier session must not keep running after we
+    // switch to the remote transport. This is the ONLY local process touch
+    // in the network path, and it is a stop — never a start or a fallback.
+    if (getSpeechEngineSnapshot().running) {
+      stopSpeechEngine({ reason: 'switch-to-network' });
+    }
+
+    remoteActive = true;
+    broadcast('speech:health', verdict.health);
+    broadcast('speech:status', { status: 'idle', reason: 'remote-connected', at: Date.now() });
+    log.info('Remote engine connected (health ok; token never logged)');
+    diagMain('info', 'engine', 'start settled', {
+      ok: true,
+      started: true,
+      reason: 'remote-connected',
+      engineKind: 'network',
+      durationMs: Date.now() - startedAt,
+    });
+    return {
+      ok: true,
+      started: true,
+      reason: 'remote-connected',
+      mode: 'network',
+      health: verdict.health,
+      installState: buildInstallState(),
+      // The renderer needs exactly { endpoint, token, path } to dial the
+      // remote WebSocket. `remote` is evidence for the label, not a second
+      // transport: the renderer validates it against where === 'network'.
+      engine: {
+        endpoint: endpointVerdict.endpoint,
+        token: tokenVerdict.token,
+        path: SPEECH_ENGINE_WS_PATH,
+        remote: true,
+      },
+      ...(verdict.warning ? { warning: verdict.warning } : {}),
+    };
+  };
+
   /** The one start path: renderer invoke AND app boot both land here. */
   const start = async (payload) => {
     const startStartedAt = Date.now();
     const enabled = payload?.enabled === true;
     const requestedWhere = stringField(payload?.where) ?? 'local';
 
-    // Cloud and local-network transcription have no transport in this build.
-    // Refuse BEFORE the local engine starts: otherwise the rail would label a
-    // local whisper process as "Cloud · openai" or "Remote engine" — a lie
-    // about where the sermon audio went.
+    // Network has a real transport now: health-check the OTHER machine and
+    // return its dial-in. It must never fall through to the local fork — a
+    // local whisper process labelled "Remote engine" is exactly the lie
+    // this gate existed to prevent.
+    if (enabled && requestedWhere === 'network') {
+      return startRemote(payload, startStartedAt);
+    }
+
+    // Cloud still has no transport. Refuse BEFORE the local engine starts:
+    // otherwise the rail would label a local whisper process as
+    // "Cloud · openai" — a lie about where the sermon audio went.
     if (enabled && requestedWhere !== 'local') {
       const error = {
         code: 'where-not-implemented',
         message:
-          'Cloud and local-network transcription are not implemented in this build. ' +
-          'Choose This Device. The cloud/network choices are catalog placeholders only.',
+          'Cloud transcription is not implemented in this build. ' +
+          'Choose This Device or Network Device. The cloud choices are catalog placeholders only.',
       };
       publishInstallState();
       log.info('Speech engine not started: where-not-implemented');
@@ -360,6 +480,10 @@ export function registerSpeechIpc({
         error,
       };
     }
+
+    // Past the transport gate: any successful start from here is a LOCAL
+    // engine, so a later speech:stop owns a local process again.
+    remoteActive = false;
 
     const decision = describeStartDecision({
       enabled,
@@ -608,19 +732,36 @@ export function registerSpeechIpc({
   };
 
   const stop = (reason = 'renderer-request') => {
+    // A remote engine is someone else's process: closing the renderer's
+    // WebSocket (done by engineTransport) and dropping our health is the
+    // whole teardown. NEVER send a kill to a local supervisor that never
+    // forked anything in network mode.
+    if (remoteActive) {
+      remoteActive = false;
+      broadcast('speech:health', null);
+      broadcast('speech:status', { status: 'idle', reason: 'remote-stopped', at: Date.now() });
+      log.info(`Remote engine session closed (${reason}; no local process killed)`);
+      return { ok: true, stopped: false, remote: true, ...snapshot() };
+    }
+
     const { stopped } = stopSpeechEngine({ reason });
     // Health describes a RUNNING engine. Leaving the last engine's snapshot in
     // the renderer is how a stopped TEST session kept labelling the rail
     // "TEST ENGINE" after the operator switched to PROD.
     broadcast('speech:health', null);
-    return { ok: true, stopped, ...snapshot() };
+    return { ok: true, stopped, remote: false, ...snapshot() };
   };
 
   // The Phase 6 guardrail rides along on get-state rather than getting its own
   // channel: the safety panel needs the limits and the current trip count on
   // open, and get-state is already the "what is true right now" answer.
   // A separate channel for two numbers would be a channel to keep in sync.
-  const getState = () => ({ ok: true, ...snapshot(), guardrail: guardrailReport() });
+  const getState = () => ({
+    ok: true,
+    ...snapshot(),
+    remote: remoteActive,
+    guardrail: guardrailReport(),
+  });
 
   // --- invoke handles ------------------------------------------------------
 
@@ -629,6 +770,28 @@ export function registerSpeechIpc({
   ipcMain.handle('speech:stop', () => stop());
 
   ipcMain.handle('speech:get-state', () => getState());
+
+  // LIVE — the settings panel's "Test connection". Read-only: it neither
+  // forks nor changes session state, and it never broadcasts health (only a
+  // successful speech:start is allowed to claim a running engine).
+  ipcMain.handle('speech:test-network', async (_event, payload) => {
+    const { endpointVerdict, tokenVerdict } = remoteConfig(payload ?? {});
+    if (!endpointVerdict.ok) return endpointVerdict;
+    if (!tokenVerdict.ok) return tokenVerdict;
+    const verdict = await probeRemote({
+      endpoint: endpointVerdict.endpoint,
+      token: tokenVerdict.token,
+      ...(fetchImpl === undefined ? {} : { fetchImpl }),
+    });
+    return {
+      ok: verdict.ok === true,
+      code: verdict.code ?? null,
+      message: verdict.ok
+        ? `Connected to ${endpointVerdict.endpoint}. Audio will cross this LAN when you start.`
+        : verdict.message,
+      health: verdict.health ?? null,
+    };
+  });
 
   // LIVE — the resumable, verified model downloader.
   // in:  { modelId: string }            -> start (or JOIN) the download

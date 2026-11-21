@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Speech network architecture — Selah local-network remote engine</title>
+<style>
+  :root {
+    --black: #000000;
+    --white: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--white);
+    color: var(--black);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, Helvetica, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+  }
+  .page {
+    max-width: 1160px;
+    margin: 56px auto 96px;
+    padding: 0 28px;
+  }
+  .masthead {
+    background: var(--black);
+    color: var(--white);
+    border: 3px solid var(--white);
+    border-radius: 12px;
+    padding: 30px 32px;
+    margin-bottom: 34px;
+  }
+  .masthead .eyebrow {
+    display: inline-block;
+    border: 2px solid var(--white);
+    border-radius: 8px;
+    padding: 5px 10px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  h1 {
+    font-size: clamp(28px, 4vw, 44px);
+    line-height: 1.1;
+    margin: 18px 0 10px;
+    text-transform: uppercase;
+    letter-spacing: -0.02em;
+  }
+  .masthead p {
+    margin: 0;
+    max-width: 78ch;
+    font-size: 15px;
+  }
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 22px;
+  }
+  .meta span {
+    border: 2px solid var(--white);
+    border-radius: 8px;
+    padding: 5px 10px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  section {
+    background: var(--white);
+    border: 3px solid var(--black);
+    border-radius: 12px;
+    padding: 26px 28px;
+    margin: 26px 0;
+  }
+  h2 {
+    margin: 0 0 18px;
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+  }
+  h3 {
+    margin: 24px 0 10px;
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  p { margin: 0 0 14px; }
+  p:last-child { margin-bottom: 0; }
+  .lead { max-width: 94ch; font-size: 16px; }
+  .callout {
+    background: var(--black);
+    color: var(--white);
+    border: 3px solid var(--black);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin: 18px 0;
+  }
+  .callout strong {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .diagram-frame {
+    border: 3px solid var(--black);
+    border-radius: 10px;
+    padding: 12px;
+    overflow-x: auto;
+  }
+  svg { display: block; width: 100%; height: auto; min-width: 860px; }
+  svg text { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, Helvetica, sans-serif; }
+  .caption {
+    margin-top: 12px;
+    font-size: 13px;
+  }
+  table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    border: 3px solid var(--black);
+    border-radius: 10px;
+    overflow: hidden;
+    font-size: 13px;
+  }
+  th, td {
+    border-right: 2px solid var(--black);
+    border-bottom: 2px solid var(--black);
+    padding: 10px 12px;
+    vertical-align: top;
+    text-align: left;
+  }
+  th:last-child, td:last-child { border-right: 0; }
+  tbody tr:last-child td { border-bottom: 0; }
+  th {
+    background: var(--black);
+    color: var(--white);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 800;
+  }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.92em;
+    background: var(--black);
+    color: var(--white);
+    border-radius: 6px;
+    padding: 1px 5px;
+  }
+  pre {
+    background: var(--black);
+    color: var(--white);
+    border: 3px solid var(--black);
+    border-radius: 10px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; color: inherit; }
+  ul, ol { margin: 0 0 14px; padding-left: 22px; }
+  li { margin-bottom: 7px; }
+  .tag {
+    display: inline-block;
+    background: var(--black);
+    color: var(--white);
+    border: 2px solid var(--black);
+    border-radius: 8px;
+    padding: 3px 8px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  footer {
+    text-align: center;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 22px 0 0;
+  }
+  @media (max-width: 720px) {
+    .page { margin: 24px auto 56px; padding: 0 14px; }
+    section { padding: 20px 16px; }
+    table { font-size: 12px; }
+    th, td { padding: 8px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="masthead">
+    <span class="eyebrow">Technical system report</span>
+    <h1>Speech network architecture</h1>
+    <p>Local-network remote engine transport for Selah Live Sermon Assist. This report describes the behaviour of PR #81, commit <code>bb35c5e5</code> plus the documentation commit on the same bookmark.</p>
+    <div class="meta">
+      <span>Branch: feat/speech-network-remote</span>
+      <span>Protocol: v1</span>
+      <span>Posture: trusted LAN</span>
+      <span>No TLS</span>
+    </div>
+  </header>
+
+  <section aria-labelledby="outcome">
+    <h2 id="outcome">01 · Outcome</h2>
+    <p class="lead">Network mode now talks to a real speech engine on another machine: the app validates a configured <code>http(s)</code> endpoint and a session-only token, performs a tokened <code>GET /v1/health</code> with a bounded timeout and protocol check, then hands the renderer the same <code>{ endpoint, token, path }</code> dial-in block a local engine start returns so it can open <code>ws(s)://&lt;host&gt;/v1/stream?token=…</code> and stream raw PCM frames. Contract-valid transcript messages from that remote socket are relayed into the existing rail runtime. No local engine is forked in network mode, no local engine is used as a fallback, and a failed start clears health so the interface never claims “Remote engine” without evidence.</p>
+  </section>
+
+  <section aria-labelledby="architecture">
+    <h2 id="architecture">02 · Architecture</h2>
+    <div class="diagram-frame">
+      <svg viewBox="0 0 1100 430" role="img" aria-label="Architecture diagram: local renderer and audio capture on the left, trusted LAN boundary in the middle with health probe, WebSocket PCM and transcript return paths, remote speech engine on the right. Raw PCM audio and the token cross the network without TLS.">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#000000" />
+          </marker>
+          <marker id="arrow-back" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M 10 0 L 0 5 L 10 10 z" fill="#000000" />
+          </marker>
+        </defs>
+
+        <rect x="36" y="70" width="300" height="286" rx="10" fill="#ffffff" stroke="#000000" stroke-width="3" />
+        <text x="56" y="104" font-size="14" font-weight="800" letter-spacing="1">LOCAL MACHINE</text>
+        <line x1="56" y1="116" x2="316" y2="116" stroke="#000000" stroke-width="3" />
+        <rect x="56" y="136" width="260" height="48" rx="8" fill="#000000" stroke="#000000" stroke-width="3" />
+        <text x="70" y="166" font-size="13" font-weight="800" fill="#ffffff">RENDERER · AUDIO CAPTURE</text>
+        <rect x="56" y="200" width="260" height="48" rx="8" fill="#ffffff" stroke="#000000" stroke-width="3" />
+        <text x="70" y="230" font-size="13" font-weight="800">MAIN · speech:start / probe</text>
+        <rect x="56" y="264" width="260" height="48" rx="8" fill="#ffffff" stroke="#000000" stroke-width="3" />
+        <text x="70" y="294" font-size="13" font-weight="800">engineTransport · WS client</text>
+        <text x="56" y="338" font-size="12">No local fork. Token stays in session state.</text>
+
+        <rect x="382" y="52" width="336" height="322" rx="10" fill="#ffffff" stroke="#000000" stroke-width="3" stroke-dasharray="12 7" />
+        <text x="402" y="86" font-size="14" font-weight="800" letter-spacing="1">TRUSTED LAN · NO TLS</text>
+        <rect x="402" y="104" width="296" height="48" rx="8" fill="#000000" stroke="#000000" stroke-width="3" />
+        <text x="414" y="128" font-size="11" font-weight="800" fill="#ffffff">RAW PCM AUDIO + TOKEN</text>
+        <text x="414" y="144" font-size="11" font-weight="800" fill="#ffffff">CROSS THIS BOUNDARY</text>
+
+        <line x1="336" y1="188" x2="764" y2="188" stroke="#000000" stroke-width="3" marker-end="url(#arrow)" />
+        <text x="352" y="178" font-size="11" font-weight="800">1 · HEALTH + x-ld-speech-token → /v1/health</text>
+        <line x1="764" y1="218" x2="336" y2="218" stroke="#000000" stroke-width="3" marker-end="url(#arrow-back)" />
+        <text x="352" y="239" font-size="11" font-weight="800">2 ← HEALTH JSON (remote: true)</text>
+
+        <line x1="336" y1="282" x2="764" y2="282" stroke="#000000" stroke-width="3" marker-end="url(#arrow)" />
+        <text x="352" y="272" font-size="11" font-weight="800">3 · WS /v1/stream?token=… · PCM FRAMES</text>
+        <line x1="764" y1="324" x2="336" y2="324" stroke="#000000" stroke-width="3" marker-end="url(#arrow-back)" />
+        <text x="352" y="344" font-size="11" font-weight="800">4 ← PARTIAL / FINAL / VAD MESSAGES</text>
+
+        <rect x="764" y="70" width="300" height="286" rx="10" fill="#ffffff" stroke="#000000" stroke-width="3" />
+        <text x="784" y="104" font-size="14" font-weight="800" letter-spacing="1">REMOTE MACHINE</text>
+        <line x1="784" y1="116" x2="1044" y2="116" stroke="#000000" stroke-width="3" />
+        <rect x="784" y="136" width="260" height="48" rx="8" fill="#000000" stroke="#000000" stroke-width="3" />
+        <text x="798" y="166" font-size="13" font-weight="800" fill="#ffffff">HTTP /v1/health</text>
+        <rect x="784" y="200" width="260" height="48" rx="8" fill="#ffffff" stroke="#000000" stroke-width="3" />
+        <text x="798" y="230" font-size="13" font-weight="800">WS /v1/stream + SESSION</text>
+        <rect x="784" y="264" width="260" height="48" rx="8" fill="#ffffff" stroke="#000000" stroke-width="3" />
+        <text x="798" y="294" font-size="13" font-weight="800">SPEECH ENGINE / MODEL</text>
+        <text x="784" y="338" font-size="12">Bind requires explicit --allow-lan + token.</text>
+
+        <rect x="36" y="386" width="1028" height="30" rx="8" fill="#000000" stroke="#000000" stroke-width="3" />
+        <text x="52" y="406" font-size="12" font-weight="800" fill="#ffffff">PLAIN HTTP / WS:// · NO ENCRYPTION · THE TOKEN IS A GATE, NOT A SHARED SECRET CHANNEL</text>
+      </svg>
+    </div>
+    <p class="caption">Health and token travel from main to the remote engine first. Only after that probe succeeds does the renderer dial the remote WebSocket; the engine opens its session on the upgrade and returns validated messages. The app-side transcript-history recorder remains local-only in this branch — network mode relays live rail messages, it does not attach the main-process history store.</p>
+  </section>
+
+  <section aria-labelledby="flow">
+    <h2 id="flow">03 · Ins and outs</h2>
+    <table>
+      <thead>
+        <tr><th>Stage</th><th>In</th><th>Out</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="tag">Input</span><br />Endpoint validation</td>
+          <td><code>networkEndpoint</code> from settings (or registered default).</td>
+          <td>Origin-only <code>http(s)</code> URL with no credentials, wildcard host, path, query, or fragment. LAN hosts are accepted because choosing Network Device is the explicit operator opt-in.</td>
+        </tr>
+        <tr>
+          <td><span class="tag">Input</span><br />Token validation</td>
+          <td><code>networkToken</code> from session memory.</td>
+          <td>Non-empty string, 16–256 characters. Never persisted to localStorage; a reload asks again.</td>
+        </tr>
+        <tr>
+          <td><span class="tag">Probe</span><br />Health check</td>
+          <td>Validated endpoint + token.</td>
+          <td><code>GET &lt;endpoint&gt;/v1/health</code> with <code>x-ld-speech-token</code>, 5 s timeout, v1 compatibility check. Returns renderer-shaped health with <code>remote: true</code> and <code>status: 'ok'</code>.</td>
+        </tr>
+        <tr>
+          <td><span class="tag">Dial</span><br />Session</td>
+          <td><code>{ endpoint, token, path: '/v1/stream', remote: true }</code>.</td>
+          <td>The renderer dials <code>ws(s)://…/v1/stream?token=…</code>. The engine opens its own session on upgrade and emits a <code>ready</code> message. No local supervisor session is created.</td>
+        </tr>
+        <tr>
+          <td><span class="tag">Audio</span><br />PCM frames</td>
+          <td>16 kHz mono, Int16 little-endian, 100 ms / 3200-byte frames.</td>
+          <td>Frames are sent binary, back to back, with a bounded 300-frame drop-oldest queue while the socket opens. Audio crosses the LAN in cleartext.</td>
+        </tr>
+        <tr>
+          <td><span class="tag">Output</span><br />Transcript relay</td>
+          <td>JSON messages on the remote socket.</td>
+          <td>Every message is schema-validated; <code>partial</code>, <code>final</code>, <code>vad</code>, and <code>error</code> are fanned out to the existing rail runtime. Invalid messages are dropped and counted.</td>
+        </tr>
+        <tr>
+          <td><span class="tag">Stop</span><br />Teardown</td>
+          <td><code>speech:stop</code>.</td>
+          <td>Closes the renderer socket, clears queued audio and remote health, and reports <code>stopped:false, remote:true</code>. It never kills a remote process and never calls the local supervisor kill path for a remote-only session.</td>
+        </tr>
+        <tr>
+          <td><span class="tag">Guard</span><br />No local fork</td>
+          <td><code>where === 'network'</code>.</td>
+          <td>The remote branch returns before every local provider/binary/model gate. If a local engine was running from an earlier local session, a successful switch stops it; it never starts one.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section aria-labelledby="security">
+    <h2 id="security">04 · Security model</h2>
+    <ul>
+      <li><strong>Local default.</strong> The engine binds <code>127.0.0.1</code> unless the operator explicitly sets <code>--allow-lan</code> or <code>LD_SPEECH_ALLOW_LAN=1</code>. A non-loopback host without the opt-in throws at construction and at <code>listen()</code>. The opt-in prints an auditable <code>LAN OPT-IN</code> line naming the host, never the token.</li>
+      <li><strong>Token requirement.</strong> The opt-in requires an explicit token of at least 16 characters, supplied by <code>--token</code> or <code>LD_SPEECH_TOKEN</code>. There is no generated-token fallback for a LAN bind; the entry point exits 2 without one. The same token gates REST (<code>x-ld-speech-token</code>) and the WebSocket upgrade (<code>?token=…</code>) with a timing-safe compare.</li>
+      <li><strong>Origin / CORS posture.</strong> By default the engine accepts only the pinned loopback dev origins (or any loopback http(s) origin from the packaged app), and refuses any other <code>Origin</code> before the token check. A CORS preflight is origin-checked but token-less by browser design. The LAN opt-in widens this to any <code>http(s)</code> Origin and permits non-loopback peers; the token gate remains. Requests with no Origin are still allowed as non-browser clients, gated by the token.</li>
+      <li><strong>No TLS.</strong> Transport is plain HTTP and <code>ws://</code> on a trusted LAN. Raw PCM audio crosses the network, and the shared token appears in the WebSocket query string. The token is an access gate, not encryption.</li>
+      <li><strong>Trusted-LAN assumption.</strong> Only run the engine on a network you control. The application refuses to dial a LAN endpoint unless main returned <code>remote: true</code> from a health-checked network start <em>and</em> the caller asked for <code>where: 'network'</code>; local mode keeps its loopback-only dial gate.</li>
+      <li><strong>Hostile LAN peer.</strong> A peer on the same untrusted segment can passively observe sermon audio and the token in cleartext, replay the token to open its own REST/WS session, inject forged transcript messages into a connected renderer, or deny service by flooding/refusing connections. This is why the opt-in is explicit and why the UI warns that audio leaves the machine. The design does not claim confidentiality or peer authentication beyond possession of the shared token.</li>
+    </ul>
+    <div class="callout"><strong>Hard constraint:</strong> trusted LAN only. No TLS exists in this architecture. Do not expose the engine port to a public or shared network.</div>
+  </section>
+
+  <section aria-labelledby="files">
+    <h2 id="files">05 · File map</h2>
+    <table>
+      <thead><tr><th>File</th><th>Responsibility</th></tr></thead>
+      <tbody>
+        <tr><td><code>main/speechRemote.js</code></td><td>Pure validation of endpoint/token, tokened health probe with timeout and protocol check; returns evidence-backed remote health or a machine code.</td></tr>
+        <tr><td><code>main/speechIpc.js</code></td><td>Network start branch, refusal shapes, renderer dial-in reply, read-only <code>speech:test-network</code> handler, remote-aware stop and get-state.</td></tr>
+        <tr><td><code>preload.js</code></td><td>Exposes <code>speech.testNetwork</code> alongside the pinned speech IPC surface.</td></tr>
+        <tr><td><code>speech-engine/server.js</code></td><td>Bind opt-in gate, Origin/CORS posture, token gate, REST <code>/v1/health</code> and contract routes.</td></tr>
+        <tr><td><code>speech-engine/index.js</code></td><td>Parses <code>--allow-lan</code> / env opt-in, refuses LAN without an explicit token, passes the posture to REST and WS.</td></tr>
+        <tr><td><code>speech-engine/wsTransport.js</code></td><td>WS upgrade path, token query gate, LAN peer/origin gates, PCM ingest and bus fan-out.</td></tr>
+        <tr><td><code>src/speech/engineTransport.js</code></td><td>Validates main's dial-in, dials only remote-confirmed LAN endpoints in network mode, queues PCM, validates downstream messages, relays remote messages, clears stale health on close.</td></tr>
+        <tr><td><code>src/hooks/useAudioCapture.js</code></td><td>Passes <code>where</code>, endpoint, and session token into the single <code>speech:start</code> path.</td></tr>
+        <tr><td><code>src/hooks/useSpeechRuntime.js</code></td><td>Subscribes to remote transport messages as well as IPC relay so partials/finals/VAD/errors reach the same rail code.</td></tr>
+        <tr><td><code>src/context/SpeechStore.js</code></td><td>Persists <code>networkEndpoint</code>; keeps <code>networkToken</code> in runtime state only.</td></tr>
+        <tr><td><code>src/components/Speech/SpeechSettingsSection.jsx</code></td><td>Network Device block: endpoint input, password token input, Test connection button, trusted-LAN/no-TLS/audio copy.</td></tr>
+        <tr><td><code>src/speech/engineTruth.js</code></td><td>Label gate: “Remote engine” only with remote health evidence, otherwise “Network · not connected”.</td></tr>
+        <tr><td><code>tests/speech/networkEngineStart.test.js</code>, <code>tests/speech/speechRemote.test.js</code>, <code>speech-engine/test/lanOptIn.test.js</code></td><td>Fake-remote main path, pure contract gates, and LAN opt-in enforcement. No second machine required.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section aria-labelledby="failures">
+    <h2 id="failures">06 · Failure taxonomy</h2>
+    <p>Main-process refusals all return <code>{ ok:false, started:false, engine:null }</code>, broadcast <code>speech:error</code>, clear <code>speech:health</code>, and leave the label at “Network · not connected”.</p>
+    <table>
+      <thead><tr><th>Code</th><th>Trigger</th><th>Operator sees</th></tr></thead>
+      <tbody>
+        <tr><td><code>network-endpoint-missing</code></td><td>No endpoint in payload or registered config.</td><td>Enter the remote engine URL in Settings before starting Network Device.</td></tr>
+        <tr><td><code>network-endpoint-invalid</code></td><td>Not a URL, wrong scheme, wildcard host, or path/query/fragment present.</td><td>Use a full http(s) origin such as <code>http://192.168.1.20:4731</code>.</td></tr>
+        <tr><td><code>network-endpoint-credentials</code></td><td><code>user:pass@</code> in the URL.</td><td>Remove credentials; use the token field.</td></tr>
+        <tr><td><code>network-token-missing</code></td><td>No token typed this session.</td><td>Enter the engine launch token; start refuses.</td></tr>
+        <tr><td><code>network-token-invalid</code></td><td>Token shorter than 16 or longer than 256 characters.</td><td>Token length requirement sentence.</td></tr>
+        <tr><td><code>network-unreachable</code></td><td>fetch error, refused connection, or health timeout.</td><td>Check that the engine is running and reachable on the trusted LAN.</td></tr>
+        <tr><td><code>network-unauthorized</code></td><td>Health answered 401 or 403.</td><td>The remote engine rejected the token.</td></tr>
+        <tr><td><code>network-incompatible</code></td><td>Health answered 404.</td><td>No <code>/v1/health</code> route; this app needs the v1 engine.</td></tr>
+        <tr><td><code>network-health-failed</code></td><td>Any other non-2xx health status.</td><td>Remote engine answered HTTP <em>status</em>.</td></tr>
+        <tr><td><code>network-invalid-response</code></td><td>Health body is not JSON or not an object.</td><td>Remote engine health response is malformed.</td></tr>
+        <tr><td><code>network-api-incompatible</code></td><td>Reported <code>apiVersion</code> has a different major or is malformed.</td><td>Update both machines together; protocol mismatch.</td></tr>
+        <tr><td><code>network-fetch-unavailable</code></td><td>No <code>fetch</code> implementation in the runtime.</td><td>This build cannot make the remote health check.</td></tr>
+      </tbody>
+    </table>
+    <h3>Related gates outside the main refusal table</h3>
+    <ul>
+      <li><strong>Engine REST/WS:</strong> <code>origin-not-allowed</code>, <code>non-loopback-peer</code>, <code>missing-token</code>, <code>invalid-token</code>. Bind refusal without opt-in is a construction/listen error; opt-in without a token exits 2.</li>
+      <li><strong>Renderer dial guards:</strong> <code>invalid-endpoint</code>, <code>non-loopback-endpoint</code>, <code>missing-token</code>, <code>missing-path</code>, <code>websocket-unavailable</code>, <code>dial-failed</code>. No socket is created for these.</li>
+      <li><strong>Cloud mode:</strong> still <code>where-not-implemented</code>; it has no transport and never uses the network path.</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="runbook">
+    <h2 id="runbook">07 · Setup ownership and lab verification</h2>
+    <div class="callout"><strong>Product rule:</strong> all Sermon Assist setup is owned by the Selah desktop app and lives in this repository. No external plugins, sidecar repos, separate installer projects, or zip bundles of loose executables. The app probes the machine, verifies downloads, installs engine and model, selects them, and explains every step in plain language. A volunteer is never asked to locate, copy, configure, or run a file by hand.</div>
+    <p>This PR implements the transport contract only. The one-click, app-owned provisioning of a remote engine is required product work and is not delegated outside the app repo. The commands below are <strong>developer lab verification only</strong>: they exist to exercise the LAN opt-in gate in a test harness. They are not an operator setup path and must not be shipped as one.</p>
+    <h3>Lab verification only — engine host</h3>
+    <pre><code># Explicit token + explicit LAN opt-in are BOTH required.
+# Default port is 4731; use --port or LD_SPEECH_PORT if you change it.
+node speech-engine/index.js \
+  --host=192.168.1.20 \
+  --port=4731 \
+  --allow-lan \
+  --token=&lt;same-long-token&gt;
+
+# Equivalent environment form:
+LD_SPEECH_ALLOW_LAN=1 \
+LD_SPEECH_HOST=192.168.1.20 \
+LD_SPEECH_PORT=4731 \
+LD_SPEECH_TOKEN=&lt;same-long-token&gt; \
+node speech-engine/index.js</code></pre>
+    <ul>
+      <li>Token must be the same value entered in the app and at least 16 characters. It is never generated for a LAN bind.</li>
+      <li>Allow inbound TCP on the chosen engine port from the app machine. The renderer connects directly to that port over <code>ws://</code>.</li>
+      <li>Expect an <code>LAN OPT-IN</code> warning naming the bind host. A non-loopback bind without the opt-in, or the opt-in without a token, is refused.</li>
+      <li>Run a real recognizer on that machine; the canned fake backend reports itself honestly and will be labelled as canned text in the rail.</li>
+    </ul>
+    <h3>In-app transport configuration (this PR)</h3>
+    <ol>
+      <li>Open <strong>User Preferences → Experimental → Speech &amp; AI</strong>, enable Sermon Assist, and choose <strong>Network Device</strong>.</li>
+      <li>Enter the engine origin, for example <code>http://192.168.1.20:4731</code>. No path or credentials.</li>
+      <li>Enter the launch token. It lives only in session memory; a reload asks again. The endpoint is saved.</li>
+      <li>Press <strong>Test connection</strong>. Success means the tokened health probe answered; it does not start a session.</li>
+      <li>Arm an audio source. Only after a successful start does the label read “Remote engine · &lt;model&gt;”; otherwise it reads “Network · not connected”.</li>
+      <li>Stopping closes the stream and the session view. It does not shut down the remote machine or its engine process.</li>
+    </ol>
+  </section>
+
+  <section aria-labelledby="proof">
+    <h2 id="proof">08 · Tests and proof</h2>
+    <p>Observed in this session on the implementation commit. The fake remote is an in-process tokened HTTP + WS engine on loopback; it exercises the same contract without a second machine.</p>
+    <pre><code>node --test speech-engine/
+  → 125 pass, 0 fail (jj workspace)
+
+npx vitest run tests/speech src/speech src/components/Speech \
+  tests/SpeechSettingsSection.test.jsx src/hooks/__tests__/useAudioCapture.test.js \
+  --exclude tests/speech/invariants.test.js
+  → 45 files, 778 pass, 1 todo, 0 fail (jj workspace)
+
+# Same commit copied to a temporary git-backed checkout:
+npx vitest run tests/speech/invariants.test.js
+  → 39 pass, 1 todo
+npx vitest run tests/speech/
+  → 27 files, 471 pass, 1 todo
+npm run build
+  → built successfully (chunk-size warnings only)</code></pre>
+    <p><strong>jj / .git caveat:</strong> in this jj workspace <code>tests/speech/invariants.test.js</code> has three pre-existing failures because there is no <code>.git</code> directory for <code>git ls-files</code> / <code>git check-ignore</code>. The same commit in a git-backed checkout passes all 39 runnable invariant tests. Required GitHub Checks on PR #81 are green.</p>
+    <p><strong>Fake-remote limitation:</strong> the main-process start test uses a real loopback HTTP + WS server with the v1 engine contract; it proves validation, probe, dial-in, transcript relay, and stop semantics, but it cannot prove cross-host routing, firewall behaviour, or live network loss. Engine LAN tests bind a local non-loopback address when available and fall back to a wildcard bind; LAN peer and Origin decisions are also tested at their pure gates.</p>
+  </section>
+
+  <section aria-labelledby="not-verified">
+    <h2 id="not-verified">09 · Not verified</h2>
+    <ul>
+      <li>No second physical machine was available, so there has been no live two-machine smoke test.</li>
+      <li>Cross-host routing and firewall behaviour on a real church LAN are unverified.</li>
+      <li>Wi-Fi/Ethernet loss and reconnect behaviour during a service are unverified; the transport has no auto-reconnect in this branch.</li>
+      <li>TLS is not implemented and is not verified — by design. The trusted-LAN assumption is a manual operational control.</li>
+      <li>App-owned one-click provisioning of the remote engine is not implemented in this branch; only the transport, validation, and in-app endpoint/token controls are. The required follow-up stays inside src/, main/, shared/, speech-engine/, tests/ and docs/.</li>
+    </ul>
+  </section>
+
+  <footer>Selah · speech network architecture · PR #81 · trusted LAN / no TLS</footer>
+</div>
+</body>
+</html>

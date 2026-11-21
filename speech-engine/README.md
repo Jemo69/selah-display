@@ -2,7 +2,8 @@
 
 A **self-contained, zero-dependency** implementation of the v1 speech-engine
 contract (`shared/speech/protocol.js`) that Selah's main process talks
-to over loopback HTTP.
+to over loopback HTTP by default, or over a trusted LAN when explicitly
+opted in.
 
 ## What this is
 
@@ -32,10 +33,50 @@ to over loopback HTTP.
 
 | Rule | Where |
 | --- | --- |
-| Binds `127.0.0.1` (loopback) **only** — non-loopback host throws | `assertLoopbackBindHost()` in `server.js`, checked at construction AND `listen()` |
+| Binds `127.0.0.1` (loopback) by default — non-loopback host throws | `assertBindHost()` in `server.js`, checked at construction AND `listen()`; LAN needs the explicit opt-in below |
 | `Origin` must be in `ALLOWED_ORIGINS` (or absent, i.e. a non-browser client) | request handler, before any route |
 | `x-ld-speech-token` required on every request (401 missing / 403 wrong, timing-safe compare) | request handler; the CORS preflight is origin-checked but token-less by browser design |
-| Never logs tokens, audio, or transcript text | no logging of payloads anywhere in this package |
+| Never logs tokens, audio, or transcript text | no logging of payloads anywhere in this package; a LAN bind logs the host only |
+
+## Trusted-LAN remote engine (explicit opt-in)
+
+**Setup ownership:** all Sermon Assist setup belongs to the Selah desktop app
+and stays in this repository (`src/`, `main/`, `shared/`, `speech-engine/`,
+`tests/`, `docs/`). No external plugin, sidecar repo, separate installer
+project, or zip of loose executables; no volunteer-facing step that asks them
+to find, copy, configure, or run a file by hand. The app must probe the
+machine, verify downloads, install the engine and model, select them, and
+explain everything in plain language.
+
+The commands below are **developer lab verification only** for the LAN opt-in
+gate. They are not the operator setup path and must not be shipped as one.
+
+Default posture is unchanged: loopback-only, no exceptions. To exercise the
+transport against an engine on a second machine in a lab, both of these must
+be true on the engine machine:
+
+```sh
+# flag form — token is mandatory with a LAN bind (no generated fallback)
+node speech-engine/index.js --host=192.168.1.20 --port=4731 \
+  --allow-lan --token=<same-long-token>
+
+# or the env form
+LD_SPEECH_ALLOW_LAN=1 LD_SPEECH_HOST=192.168.1.20 LD_SPEECH_PORT=4731 \
+  LD_SPEECH_TOKEN=<same-long-token> node speech-engine/index.js
+```
+
+`--allow-lan` / `LD_SPEECH_ALLOW_LAN=1` widens the bind, HTTP `Origin`, and
+WebSocket peer gates to the trusted LAN. It also prints an auditable
+`LAN OPT-IN` warning naming the bind host. A non-loopback host **without**
+the opt-in is still refused; the opt-in **without** an explicit token is
+refused and exits non-zero.
+
+**Security caveat:** the transport is plain HTTP / `ws://` with **no TLS**.
+Raw PCM microphone audio crosses the network, as does the shared token in
+the WebSocket query string. The token is a gate, not encryption. Only use a
+LAN you control. In Selah, enter `http://192.168.1.20:4731` and the token in
+User Preferences → Experimental → Speech & AI → Network Device. The token
+is session-only (never written to localStorage); the endpoint is persisted.
 
 ## Running tests
 

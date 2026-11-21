@@ -11,6 +11,10 @@
  * the renderer to reach the engine directly, and "a remote
  * engine is a transport change, not a second contract" — so
  * this client speaks the SAME contract the supervisor speaks.
+ * A LAN endpoint is dialed ONLY when speech:start came back with
+ * `engine.remote === true` AND the caller asked for where:'network';
+ * local mode keeps its loopback-only gate. LAN is trusted, plain
+ * http/ws:// with no TLS: raw audio crosses the network.
  *
  * THE START PATH. start(payload) is the whole bridge: it
  * invokes `speech:start` with the payload (the renderer's
@@ -68,6 +72,12 @@
  * guard), so pagehide/unmount/feature-off, which all tear
  * down, never double-stop the engine.
  *
+ * REMOTE RELAY. A remote engine has no forked supervisor to mirror its bus
+ * onto speech:transcript/speech:vad. Contract-valid messages received on a
+ * remote socket are fanned out to listeners registered with
+ * onRemoteEngineMessage(); useSpeechRuntime subscribes there in addition to
+ * the IPC channels. No message is accepted from a local socket this way.
+ *
  * DIAGNOSTICS. getDiagnostics() reports state, the last close
  * code, and the dropped / invalid / queued counts — codes and
  * counts only. Never audio, never the token.
@@ -113,6 +123,43 @@ const ABNORMAL_CLOSE_CODE = 1006;
 export const FLUSH_GRACE_MS = 2500;
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Remote transcript listeners. Module-scoped because the transport is a
+ * singleton shared by useAudioCapture; useSpeechRuntime registers here so a
+ * remote engine's WS messages reach the SAME rail code as IPC relays.
+ */
+const remoteMessageListeners = new Set();
+
+/**
+ * Subscribe to contract-valid messages from a remote (network-mode) engine.
+ * Returns an unsubscribe function. Never called for a local socket.
+ */
+export function onRemoteEngineMessage(listener) {
+  if (typeof listener !== 'function') return () => {};
+  remoteMessageListeners.add(listener);
+  return () => remoteMessageListeners.delete(listener);
+}
+
+function dispatchRemoteMessage(message) {
+  for (const listener of remoteMessageListeners) {
+    try {
+      listener(message);
+    } catch {
+      // One bad subscriber must not break the audio path or other listeners.
+    }
+  }
+}
+
+/** A dropped remote socket must not leave the rail claiming a live engine. */
+function clearRemoteHealth() {
+  try {
+    const store = useSpeechStore.getState();
+    if (store.health?.remote === true) store.setHealth(null);
+  } catch {
+    /* no store available: nothing to clear */
+  }
+}
 
 /**
  * The hostname of an `http://host:port` engine endpoint — scheme,
@@ -164,6 +211,8 @@ function speechBridge() {
 export function createEngineTransport({ onMessage, WebSocketImpl } = {}) {
   /** The live socket, or null while idle. */
   let socket = null;
+  /** Was the last successful dial a trusted-LAN remote engine? */
+  let dialedRemote = false;
   /** 'idle' | 'connecting' | 'open'. */
   let state = 'idle';
   /** Last numeric close code seen (null until a socket has closed). */
@@ -281,7 +330,7 @@ export function createEngineTransport({ onMessage, WebSocketImpl } = {}) {
       return finishStart({ ok: true, reason: 'already-running' });
     }
 
-    const verdict = dial(reply.engine);
+    const verdict = dial(reply.engine, { allowRemote: payload.where === 'network' });
     if (!verdict.ok) {
       state = 'idle';
       dropped += queue.length;
@@ -293,15 +342,17 @@ export function createEngineTransport({ onMessage, WebSocketImpl } = {}) {
 
   /**
    * Open the PCM stream to the engine's own dial-in block.
-   * Everything is validated BEFORE any socket exists: a loopback
-   * endpoint, a launch token of real length, an absolute path.
-   * The queue is left alone — frames buffered while the invoke
-   * was in flight flush when the socket opens.
+   * Everything is validated BEFORE any socket exists: an http(s) origin, a
+   * launch token of real length, an absolute path. Loopback is required for
+   * local engines; a LAN host is allowed ONLY when main confirmed a network
+   * engine AND the caller asked for where:'network'. The queue is left alone
+   * — frames buffered while the invoke was in flight flush when it opens.
    *
-   * @param {{endpoint: string, token: string, path?: string}|null} config
+   * @param {{endpoint: string, token: string, path?: string, remote?: boolean}|null} config
+   * @param {{allowRemote?: boolean}} [options]
    * @returns {{ ok: boolean, reason?: string }}
    */
-  function dial(config) {
+  function dial(config, { allowRemote = false } = {}) {
     if (!config || typeof config !== 'object') {
       return { ok: false, reason: 'no-dial-config' };
     }
@@ -315,10 +366,17 @@ export function createEngineTransport({ onMessage, WebSocketImpl } = {}) {
     if (typeof path !== 'string' || !path.startsWith('/')) {
       return { ok: false, reason: 'missing-path' };
     }
-    // Loopback only — the renderer refuses to dial anything else,
-    // mirroring the engine's own bind gate (defense in depth).
+    // http(s) origin only, no embedded credentials/query (the token has its
+    // own parameter below). A LAN URL is never accepted from a local start.
+    if (!/^https?:\/\//i.test(endpoint.trim()) || /[@?#]/.test(endpoint.trim())) {
+      return { ok: false, reason: 'invalid-endpoint' };
+    }
     const host = hostnameOfEndpoint(endpoint);
-    if (!host || !isLoopbackHost(host)) {
+    if (!host) return { ok: false, reason: 'invalid-endpoint' };
+
+    const remote = allowRemote === true && config.remote === true;
+    if (!remote && !isLoopbackHost(host)) {
+      // Local mode keeps the old defense-in-depth gate untouched.
       return { ok: false, reason: 'non-loopback-endpoint' };
     }
 
@@ -337,6 +395,7 @@ export function createEngineTransport({ onMessage, WebSocketImpl } = {}) {
 
     try {
       socket = new SocketCtor(wsUrl);
+      dialedRemote = remote;
     } catch {
       socket = null;
       state = 'idle';
@@ -378,6 +437,9 @@ export function createEngineTransport({ onMessage, WebSocketImpl } = {}) {
         return;
       }
       if (typeof onMessage === 'function') onMessage(message);
+      // A remote engine has no IPC relay. Feed validated messages to the
+      // rail's runtime subscriber instead of inventing a second path.
+      if (dialedRemote) dispatchRemoteMessage(message);
     };
 
     socket.onerror = () => {
@@ -391,6 +453,7 @@ export function createEngineTransport({ onMessage, WebSocketImpl } = {}) {
       queue = [];
       state = 'idle';
       socket = null;
+      if (dialedRemote) clearRemoteHealth();
     };
 
     return { ok: true, reason: 'dialed' };
@@ -424,7 +487,10 @@ export function createEngineTransport({ onMessage, WebSocketImpl } = {}) {
     };
     const mySession = session;
     const active = socket;
+    const wasRemote = dialedRemote;
     socket = null;
+    dialedRemote = false;
+    if (wasRemote) clearRemoteHealth();
     state = 'idle';
     dropped += queue.length;
     queue = [];

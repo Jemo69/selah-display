@@ -16,6 +16,7 @@
  */
 import './test/server.test.js';
 import './test/wsTransport.test.js';
+import './test/lanOptIn.test.js';
 import './test/benchmark.test.js';
 // The OS on-device driver: same boundary, same requirement — its spawn,
 // parse, and cleanup paths run here, not only on a Windows machine.

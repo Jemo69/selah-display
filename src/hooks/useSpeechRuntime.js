@@ -36,6 +36,7 @@ import { diagInfo, diagWarn } from '../utils/diagnosticsLog';
 import { DEFAULT_BINDINGS } from '../constants/hotkeyBindings';
 import { SPEECH_PROVIDERS } from 'shared/speech';
 import { getBibleVerseText } from 'shared/bible';
+import { onRemoteEngineMessage } from '../speech/engineTransport';
 import { splitBibleTextIntoSlides, resolveBibleGeometry } from '../utils/bibleSplitter';
 import {
   clearsSuggestionFloor,
@@ -71,9 +72,8 @@ export function useSpeechRuntime(enabled = false) {
   useEffect(() => {
     if (!enabled) return undefined;
     const bridge = typeof window === 'undefined' ? null : window.electronAPI?.speech;
-    if (!bridge || typeof bridge.onTranscript !== 'function') return undefined;
 
-    const unsubscribe = bridge.onTranscript((message) => {
+    const handleTranscript = (message) => {
       if (!message || typeof message !== 'object') return;
       const store = useSpeechRuntimeStore.getState();
       if (message.t === 'final') {
@@ -89,9 +89,21 @@ export function useSpeechRuntime(enabled = false) {
           tailSize: store.segments.length,
         });
       } else if (message.t === 'partial') store.setPartial(message.text);
-    });
+    };
 
-    return typeof unsubscribe === 'function' ? unsubscribe : undefined;
+    const detach = [];
+    if (bridge && typeof bridge.onTranscript === 'function') {
+      const unsubscribe = bridge.onTranscript(handleTranscript);
+      if (typeof unsubscribe === 'function') detach.push(unsubscribe);
+    }
+    // A trusted-LAN engine has no forked supervisor to mirror its bus over
+    // speech:transcript. The transport fans its validated remote messages
+    // out here; the SAME handler keeps the rail's rules in one place.
+    detach.push(onRemoteEngineMessage(handleTranscript));
+
+    return () => {
+      for (const off of detach) off();
+    };
   }, [enabled]);
 
   // Engine errors. Before this, `speech:error` was broadcast to a channel no
@@ -102,9 +114,8 @@ export function useSpeechRuntime(enabled = false) {
   useEffect(() => {
     if (!enabled) return undefined;
     const bridge = typeof window === 'undefined' ? null : window.electronAPI?.speech;
-    if (!bridge || typeof bridge.onError !== 'function') return undefined;
 
-    const unsubscribe = bridge.onError((payload) => {
+    const handleError = (payload) => {
       if (!payload || typeof payload !== 'object') return;
       const store = useSpeechStore.getState();
       store.setLastError(
@@ -120,9 +131,22 @@ export function useSpeechRuntime(enabled = false) {
         code: payload.code,
         fatal: payload.fatal === true,
       });
-    });
+    };
 
-    return typeof unsubscribe === 'function' ? unsubscribe : undefined;
+    const detach = [];
+    if (bridge && typeof bridge.onError === 'function') {
+      const unsubscribe = bridge.onError(handleError);
+      if (typeof unsubscribe === 'function') detach.push(unsubscribe);
+    }
+    detach.push(
+      onRemoteEngineMessage((message) => {
+        if (message?.t === 'error') handleError(message);
+      })
+    );
+
+    return () => {
+      for (const off of detach) off();
+    };
   }, [enabled]);
 
   // Voice activity: the engine reports whether the last 100 ms frame carried
@@ -132,9 +156,8 @@ export function useSpeechRuntime(enabled = false) {
   useEffect(() => {
     if (!enabled) return undefined;
     const bridge = typeof window === 'undefined' ? null : window.electronAPI?.speech;
-    if (!bridge || typeof bridge.onVad !== 'function') return undefined;
 
-    const unsubscribe = bridge.onVad((payload) => {
+    const handleVad = (payload) => {
       if (!payload || typeof payload !== 'object') return;
       const previous = useSpeechStore.getState().vad?.state ?? null;
       useSpeechStore.getState().setVad(payload);
@@ -142,9 +165,22 @@ export function useSpeechRuntime(enabled = false) {
       // Transitions only: the engine emits every 100ms, and a per-frame log
       // line would bury every other entry in the journal.
       if (next !== previous) diagInfo('sermon-assist', 'voice activity changed', { from: previous, to: next });
-    });
+    };
 
-    return typeof unsubscribe === 'function' ? unsubscribe : undefined;
+    const detach = [];
+    if (bridge && typeof bridge.onVad === 'function') {
+      const unsubscribe = bridge.onVad(handleVad);
+      if (typeof unsubscribe === 'function') detach.push(unsubscribe);
+    }
+    detach.push(
+      onRemoteEngineMessage((message) => {
+        if (message?.t === 'vad') handleVad(message);
+      })
+    );
+
+    return () => {
+      for (const off of detach) off();
+    };
   }, [enabled]);
 
   // Engine health, in the same effect as the transcript and off the same

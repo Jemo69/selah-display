@@ -64,6 +64,10 @@ export const speechDefaults = () => ({
   quoteConsented: false,
   quoteKeyReady: false,
   networkEndpoint: null,
+  // Session-only remote engine secret. Deliberately NOT in PERSISTED_KEYS or
+  // partialize(): a reload must require the operator to type it again rather
+  // than leaving a LAN token in localStorage.
+  networkToken: null,
   audio: {
     sourceId: null, // stable identity (deviceId), NOT an index
     sourceKind: null, // 'microphone' | 'usb' | 'line' | 'loopback' | 'network'
@@ -257,6 +261,8 @@ const useSpeechStore = create(
       setModelId: (modelId) => set({ modelId }),
       setCloudProviderId: (cloudProviderId) => set({ cloudProviderId }),
       setNetworkEndpoint: (networkEndpoint) => set({ networkEndpoint }),
+      setNetworkToken: (networkToken) =>
+        set({ networkToken: typeof networkToken === 'string' && networkToken ? networkToken : null }),
 
       // --- audio source identity (fields exist from day one) ----------------
       setAudioSource: (partial) =>
