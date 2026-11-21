@@ -111,11 +111,19 @@ export function engineModeLabel({ where, modelId, cloudProviderId, health = null
     !isCannedEngine(health) && typeof health?.model === 'string' && health.model
       ? health.model
       : modelId;
+  // `where` is a CONFIGURATION choice, not proof of a connection. A remote
+  // engine is labelled "Remote engine" only when a health payload from a
+  // health-checked remote engine is present; a refused or dropped start
+  // reads "not connected" instead. This is what keeps a failed network
+  // start from wearing an honest-sounding but false badge.
+  const connectedRemote = health?.remote === true && health?.status === 'ok';
   const base =
     where === 'local'
       ? `Local · ${runningModel}`
       : where === 'network'
-        ? 'Remote engine'
+        ? connectedRemote
+          ? `Remote engine · ${health.model ?? 'connected'}`
+          : 'Network · not connected'
         : `Cloud · ${cloudProviderId ?? 'not configured'}`;
   return isCannedEngine(health) ? `${cannedEngineLabel()} (${base})` : base;
 }

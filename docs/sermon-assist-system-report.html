@@ -1,0 +1,754 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Selah · Sermon Assist · System Report</title>
+<style>
+  :root {
+    --ink: #000;
+    --paper: #fff;
+    --line: #fff;
+    --muted: #b9b9b9;
+    --faint: #6f6f6f;
+    --panel: #0a0a0a;
+    --panel-2: #121212;
+    --radius: 10px;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--ink);
+    color: var(--paper);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+  a:hover { background: #fff; color: #000; }
+  .shell { max-width: 1180px; margin: 0 auto; padding: 0 22px 90px; }
+  .topbar {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 12px 0;
+    background: #000;
+    border-bottom: 2px solid #fff;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .mark {
+    width: 30px; height: 30px; display: grid; place-items: center;
+    border: 2px solid #fff; border-radius: 8px; font-weight: 900;
+  }
+  .brand b { letter-spacing: .16em; text-transform: uppercase; font-size: 12px; }
+  .topnav { display: flex; gap: 14px; flex-wrap: wrap; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; font-weight: 800; }
+  .topnav a { text-decoration: none; border-bottom: 2px solid transparent; padding-bottom: 3px; }
+  .topnav a:hover { border-bottom-color: #fff; background: #000; color: #fff; }
+
+  header.hero { padding: 48px 0 26px; border-bottom: 2px solid #fff; }
+  .kicker { font-size: 10px; font-weight: 800; letter-spacing: .22em; text-transform: uppercase; color: var(--muted); }
+  h1 { font-size: clamp(34px, 6vw, 72px); line-height: .95; margin: 14px 0 18px; letter-spacing: -.035em; text-transform: uppercase; }
+  .hero-grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: 30px; align-items: end; }
+  .lede { max-width: 760px; font-size: 17px; color: #e6e6e6; margin: 0; }
+  .seal {
+    border: 2px solid #fff; border-radius: var(--radius); padding: 16px;
+    display: grid; gap: 8px; font-size: 10px; text-transform: uppercase; letter-spacing: .12em; font-weight: 800;
+  }
+  .seal div { display: flex; justify-content: space-between; gap: 18px; border-bottom: 1px solid #333; padding-bottom: 6px; }
+  .seal div:last-child { border-bottom: 0; padding-bottom: 0; }
+  .seal span { color: var(--muted); font-weight: 600; letter-spacing: .08em; }
+
+  .tagrow { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
+  .tag {
+    border: 2px solid #fff; border-radius: 8px; padding: 5px 9px;
+    font-size: 9px; font-weight: 900; letter-spacing: .14em; text-transform: uppercase;
+  }
+  .tag.inv { background: #fff; color: #000; }
+  .tag.dim { border-color: #555; color: var(--muted); }
+
+  section { padding: 40px 0 4px; }
+  .sec-head { display: flex; align-items: baseline; gap: 14px; border-bottom: 2px solid #fff; padding-bottom: 10px; margin-bottom: 18px; }
+  .num { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  h2 { margin: 0; font-size: clamp(22px, 3vw, 34px); text-transform: uppercase; letter-spacing: -.02em; line-height: 1.05; }
+  h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .1em; margin: 0 0 8px; }
+  p { margin: 0 0 12px; }
+  .muted { color: var(--muted); }
+  .mono { font-family: var(--mono); font-size: 12px; }
+  .small { font-size: 12px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .card {
+    border: 2px solid #fff; border-radius: var(--radius); padding: 16px;
+    background: var(--panel);
+  }
+  .card.flat { background: #000; }
+  .card h3 { color: #fff; }
+  .card p:last-child, .card ul:last-child { margin-bottom: 0; }
+  ul { margin: 8px 0 12px 18px; padding: 0; }
+  li { margin: 5px 0; }
+  code, pre { font-family: var(--mono); }
+  code { background: #1a1a1a; border: 1px solid #333; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  pre {
+    background: #050505; border: 2px solid #fff; border-radius: var(--radius);
+    padding: 14px; overflow: auto; font-size: 11.5px; line-height: 1.55;
+  }
+  .rule { height: 2px; background: #fff; margin: 18px 0; }
+  .status-table, .matrix { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .status-table th, .status-table td, .matrix th, .matrix td {
+    text-align: left; vertical-align: top; padding: 10px 12px; border: 1px solid #444;
+  }
+  .status-table th, .matrix th { background: #fff; color: #000; text-transform: uppercase; letter-spacing: .08em; font-size: 10px; }
+  .matrix tr:nth-child(even) td { background: #0b0b0b; }
+  .pill { display: inline-block; border: 1px solid #fff; border-radius: 6px; padding: 2px 6px; font-size: 9px; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; }
+  .pill.inv { background: #fff; color: #000; }
+  .pill.dim { border-color: #555; color: var(--muted); }
+  .stat { display: grid; gap: 2px; }
+  .stat b { font-size: 24px; letter-spacing: -.03em; }
+  .stat span { font-size: 9px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); }
+
+  figure { margin: 0; border: 2px solid #fff; border-radius: var(--radius); padding: 14px; background: #050505; }
+  figcaption { margin-top: 10px; font-size: 10px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); }
+  svg { width: 100%; height: auto; display: block; }
+  .node { fill: #000; stroke: #fff; stroke-width: 2; }
+  .node-alt { fill: #fff; stroke: #fff; stroke-width: 2; }
+  .node-dim { fill: #0a0a0a; stroke: #555; stroke-width: 1.5; stroke-dasharray: 5 4; }
+  .nlabel { fill: #fff; font-family: var(--sans); font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
+  .nlabel-dark { fill: #000; font-family: var(--sans); font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
+  .nsub { fill: #bbb; font-family: var(--mono); font-size: 8.5px; }
+  .nsub-dark { fill: #333; font-family: var(--mono); font-size: 8.5px; }
+  .arrow { stroke: #fff; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+  .arrow-dim { stroke: #666; stroke-width: 1.5; fill: none; stroke-dasharray: 6 5; marker-end: url(#arrow-dim); }
+  .note { fill: #bbb; font-family: var(--mono); font-size: 8.5px; }
+
+  .callout { border-left: 6px solid #fff; padding: 10px 14px; background: #101010; border-radius: 0 8px 8px 0; }
+  .callout.dim { border-left-color: #555; }
+  .kbd { border: 1px solid #fff; border-bottom-width: 3px; border-radius: 5px; padding: 0 5px; font-family: var(--mono); font-size: 11px; }
+  .foot { margin-top: 50px; border-top: 2px solid #fff; padding-top: 16px; color: var(--muted); font-size: 11px; display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .toc { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 14px; }
+  .toc a { border: 1px solid #333; border-radius: 8px; padding: 8px 10px; font-size: 10px; text-transform: uppercase; letter-spacing: .1em; text-decoration: none; font-weight: 800; }
+  .toc a:hover { border-color: #fff; }
+
+  @media (max-width: 900px) {
+    .hero-grid, .grid2, .grid3, .grid4, .toc { grid-template-columns: 1fr; }
+    .topnav { display: none; }
+    section { padding-top: 30px; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="topbar">
+    <div class="brand"><div class="mark">S</div><b>Selah / Sermon Assist</b></div>
+    <nav class="topnav">
+      <a href="#exec">00 Executive</a>
+      <a href="#map">01 Map</a>
+      <a href="#modes">02 Modes</a>
+      <a href="#path">03 Data path</a>
+      <a href="#detect">04 Detection</a>
+      <a href="#bench">05 Benchmark</a>
+      <a href="#cloud">06 Cloud</a>
+      <a href="#network">07 Network</a>
+      <a href="#readiness">08 Readiness</a>
+    </nav>
+  </div>
+
+  <header class="hero">
+    <div class="kicker">System architecture / internal engineering report</div>
+    <div class="hero-grid">
+      <div>
+        <h1>Sermon<br/>Assist</h1>
+        <p class="lede">
+          A local-first speech pipeline that turns a live sermon into the next lyric line,
+          the Bible reference being quoted, and a running sermon note. Every output is a
+          proposal until an operator presses a send key.
+        </p>
+        <div class="tagrow">
+          <span class="tag inv">Local path verified</span>
+          <span class="tag">One PR · #86</span>
+          <span class="tag">Cloud + LAN + GPU</span>
+          <span class="tag">Measured auto-select</span>
+          <span class="tag dim">OS experimental</span>
+        </div>
+      </div>
+      <div class="seal">
+        <div><span>Report</span><b>v1.0</b></div>
+        <div><span>Master</span><b>b751abf</b></div>
+        <div><span>Engine</span><b>whisper.cpp</b></div>
+        <div><span>Readiness</span><b>8 / 10</b></div>
+        <div><span>Domain</span><b>Church LAN</b></div>
+      </div>
+    </div>
+    <div class="toc">
+      <a href="#exec">00 / Executive</a>
+      <a href="#map">01 / Component map</a>
+      <a href="#modes">02 / Mode matrix</a>
+      <a href="#path">03 / Audio path</a>
+      <a href="#detect">04 / Verse detection</a>
+      <a href="#bench">05 / Benchmark</a>
+      <a href="#cloud">06 / Cloud</a>
+      <a href="#network">07 / Local network</a>
+      <a href="#os">08 / OS on-device</a>
+      <a href="#data">09 / Data &amp; privacy</a>
+      <a href="#failure">10 / Failure model</a>
+      <a href="#proof">11 / Proof</a>
+      <a href="#readiness">12 / Readiness</a>
+      <a href="#runbook">13 / Runbook</a>
+    </div>
+  </header>
+
+  <section id="exec">
+    <div class="sec-head"><span class="num">00</span><h2>Executive</h2></div>
+    <div class="grid2">
+      <div class="card">
+        <h3>What it is</h3>
+        <p>
+          Sermon Assist is an opt-in feature of the Selah control app. A local speech engine
+          (or a deliberate cloud / LAN engine) transcribes a segment, and a deterministic
+          detector proposes a Bible reference, a next lyric line, and a note. A proposal
+          reaches a screen only after the operator presses its own send action.
+        </p>
+        <p class="muted small">
+          The design default is local: the engine binds loopback, the model files never leave
+          the computer, and the feature is cold until explicitly enabled.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Current verdict</h3>
+        <div class="grid3">
+          <div class="stat"><b>8</b><span>overall / 10</span></div>
+          <div class="stat"><b>0%</b><span>benchmark WER</span></div>
+          <div class="stat"><b>0</b><span>OS finals on 24 min</span></div>
+        </div>
+        <p class="muted small" style="margin-top:12px">
+          The local pipeline is real, end-to-end, and verified with actual church audio.
+          Cloud and LAN have real implementations in PR #86, but neither has been
+          validated against a live provider or a second physical machine. OS on-device is
+          safe but not usable on the real recording.
+        </p>
+      </div>
+    </div>
+    <div class="callout" style="margin-top:16px">
+      <b>Production sentence:</b> ready for a controlled local church pilot; not ready to
+      promise general production until a production model and the target hardware are
+      validated. Cloud/network are architecture + unit proof, not live proof.
+    </div>
+  </section>
+
+  <section id="map">
+    <div class="sec-head"><span class="num">01</span><h2>Component map</h2></div>
+    <figure>
+      <svg viewBox="0 0 1120 470" role="img" aria-label="Selah Sermon Assist component architecture">
+        <defs>
+          <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="#fff"/>
+          </marker>
+          <marker id="arrow-dim" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="#666"/>
+          </marker>
+        </defs>
+
+        <rect class="node-dim" x="20" y="24" width="1060" height="420" rx="10"/>
+        <text class="note" x="34" y="46">SELAH DESKTOP APP · ELECTRON</text>
+
+        <rect class="node" x="42" y="66" width="230" height="138" rx="8"/>
+        <text class="nlabel" x="56" y="88">RENDERER</text>
+        <text class="nsub" x="56" y="107">control panel · sermon rail</text>
+        <text class="nsub" x="56" y="122">audio worklet 100 ms frames</text>
+        <text class="nsub" x="56" y="137">engine transport · UI state</text>
+        <text class="nsub" x="56" y="152">suggestion cards · send actions</text>
+        <text class="nsub" x="56" y="167">tuning events (local)</text>
+
+        <rect class="node" x="42" y="238" width="230" height="164" rx="8"/>
+        <text class="nlabel" x="56" y="260">MAIN PROCESS</text>
+        <text class="nsub" x="56" y="279">speech:start / stop / state</text>
+        <text class="nsub" x="56" y="294">engine supervisor + history</text>
+        <text class="nsub" x="56" y="309">secure key / token store</text>
+        <text class="nsub" x="56" y="324">transcript history · tuning</text>
+        <text class="nsub" x="56" y="339">benchmark + model install</text>
+        <text class="nsub" x="56" y="354">cloud / network gates</text>
+
+        <rect class="node" x="330" y="66" width="250" height="336" rx="8"/>
+        <text class="nlabel" x="344" y="88">SPEECH-ENGINE PROCESS</text>
+        <text class="nsub" x="344" y="108">loopback HTTP + WebSocket</text>
+        <text class="nsub" x="344" y="125">contract v1</text>
+        <text class="nsub" x="344" y="148">endpointing</text>
+        <text class="nsub" x="344" y="163">500 ms silence / 15 s cap</text>
+        <text class="nsub" x="344" y="186">drivers</text>
+        <text class="nsub" x="344" y="201">whisper-server (persistent)</text>
+        <text class="nsub" x="344" y="216">whisper-cli fallback</text>
+        <text class="nsub" x="344" y="231">OS on-device (Windows)</text>
+        <text class="nsub" x="344" y="246">cloud (PR #86)</text>
+        <text class="nsub" x="344" y="261">fake / rehearsal</text>
+        <text class="nsub" x="344" y="284">bus: one emission point</text>
+        <text class="nsub" x="344" y="299">validated messages only</text>
+        <text class="nsub" x="344" y="322">audio never logged</text>
+        <text class="nsub" x="344" y="338">request token gate</text>
+        <text class="nsub" x="344" y="354">origin gate</text>
+
+        <rect class="node" x="638" y="66" width="200" height="150" rx="8"/>
+        <text class="nlabel" x="652" y="88">DETECTOR</text>
+        <text class="nsub" x="652" y="108">1 spoken reference</text>
+        <text class="nsub" x="652" y="123">2 alias / phonetic</text>
+        <text class="nsub" x="652" y="138">3 indexed full-text</text>
+        <text class="nsub" x="652" y="153">full KJV · 31,102 verses</text>
+        <text class="nsub" x="652" y="168">confidence gate 0.60</text>
+        <text class="nsub" x="652" y="183">recent 600-char tail</text>
+
+        <rect class="node" x="638" y="246" width="200" height="156" rx="8"/>
+        <text class="nlabel" x="652" y="268">DATA LAYER</text>
+        <text class="nsub" x="652" y="288">transcript history JSON</text>
+        <text class="nsub" x="652" y="303">detection / action events</text>
+        <text class="nsub" x="652" y="318">local-only export</text>
+        <text class="nsub" x="652" y="333">64 MiB cap / 500 sessions</text>
+        <text class="nsub" x="652" y="348">erase-all path</text>
+        <text class="nsub" x="652" y="363">no network</text>
+
+        <rect class="node" x="880" y="66" width="176" height="92" rx="8"/>
+        <text class="nlabel" x="894" y="88">OPERATOR</text>
+        <text class="nsub" x="894" y="108">send / stage / dismiss</text>
+        <text class="nsub" x="894" y="123">panic stop Mod+Shift+M</text>
+        <text class="nsub" x="894" y="138">all sends explicit</text>
+
+        <rect class="node" x="880" y="188" width="176" height="104" rx="8"/>
+        <text class="nlabel" x="894" y="210">OUTPUTS</text>
+        <text class="nsub" x="894" y="230">Bible panel</text>
+        <text class="nsub" x="894" y="245">output windows 1 / 2</text>
+        <text class="nsub" x="894" y="260">stage display</text>
+        <text class="nsub" x="894" y="275">free notes</text>
+
+        <rect class="node-dim" x="880" y="330" width="176" height="72" rx="8"/>
+        <text class="nlabel" x="894" y="352">CLOUD / LAN</text>
+        <text class="nsub" x="894" y="370">PR #86</text>
+        <text class="nsub" x="894" y="385">not live-verified</text>
+
+        <path class="arrow" d="M272 135 L330 135"/>
+        <text class="note" x="280" y="127">PCM WS</text>
+        <path class="arrow" d="M330 210 L272 210"/>
+        <text class="note" x="278" y="202">final / error</text>
+        <path class="arrow" d="M580 140 L638 140"/>
+        <text class="note" x="588" y="132">text</text>
+        <path class="arrow" d="M638 300 L580 300"/>
+        <text class="note" x="586" y="292">history</text>
+        <path class="arrow" d="M838 140 L880 120"/>
+        <text class="note" x="840" y="112">suggestion</text>
+        <path class="arrow" d="M880 235 L838 235"/>
+        <text class="note" x="842" y="227">send</text>
+        <path class="arrow-dim" d="M272 340 L330 340"/>
+        <text class="note" x="280" y="332">control</text>
+        <path class="arrow-dim" d="M838 365 L880 365"/>
+        <text class="note" x="842" y="357">PR #86</text>
+      </svg>
+      <figcaption>One process owns audio and inference; one detector owns meaning; the renderer owns consent.</figcaption>
+    </figure>
+    <div class="grid3" style="margin-top:16px">
+      <div class="card"><h3>One contract</h3><p class="small">Local whisper, OS, cloud, and remote LAN engines all answer the same <span class="mono">/v1/health</span>, <span class="mono">/v1/session</span>, and <span class="mono">/v1/transcribe</span> + WS message contract. A mode change is a transport change, not a second app.</p></div>
+      <div class="card"><h3>One emission point</h3><p class="small">Engine messages go through <span class="mono">bus.js</span>; the parent mirror and every WebSocket are subscribers. That is why the rail survives a dropped renderer socket and why history sees the same finals.</p></div>
+      <div class="card"><h3>One refusal rule</h3><p class="small">A provider, model, key, consent, or transport that is missing must refuse with a sentence. A local process under a cloud label is forbidden by test and by code.</p></div>
+    </div>
+  </section>
+
+  <section id="modes">
+    <div class="sec-head"><span class="num">02</span><h2>Mode matrix</h2></div>
+    <table class="matrix">
+      <thead><tr><th>Mode</th><th>Status</th><th>Engine / path</th><th>Audio leaves PC?</th><th>Proof</th><th>Production call</th></tr></thead>
+      <tbody>
+        <tr><td><b>This Device</b></td><td><span class="pill inv">Verified</span></td><td>whisper.cpp persistent server; OS driver on Windows</td><td>No</td><td>Real app + virtual mic + church audio → Isaiah 45:2 card → Send Live</td><td>Pilot-ready with a production model; tiny is not.</td></tr>
+        <tr><td><b>Cloud · OpenAI / OpenRouter</b></td><td><span class="pill">PR #86</span></td><td>OpenAI <span class="mono">/v1/audio/transcriptions</span>; OpenRouter <span class="mono">/v1/responses</span> with Gemini; provider-scoped keys; explicit consent</td><td>Yes, audio</td><td>Fake-fetch contract tests; no live key/request</td><td>Architecture proven; live auth/quality/billing unverified. Not merged.</td></tr>
+        <tr><td><b>Local network</b></td><td><span class="pill">PR #86</span></td><td>Remote speech-engine over LAN; tokened health check + WS PCM</td><td>Yes, raw PCM + token; no TLS</td><td>Fake loopback remote health/WS; no second machine</td><td>Trusted-LAN prototype only. Not merged.</td></tr>
+        <tr><td><b>OS on-device</b></td><td><span class="pill dim">Experimental</span></td><td>Windows System.Speech via PowerShell; 0.25 confidence floor</td><td>No</td><td>0 finals / 97 chunks on full sermon recording</td><td>Do not ship as production. Keep fallback only.</td></tr>
+        <tr><td><b>Test engine</b></td><td><span class="pill dim">Rehearsal only</span></td><td>fakeEngine.js canned transcript</td><td>No</td><td>Canned engine is never eligible for a suggestion card</td><td>Rehearsal; cannot be a production green badge.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="path">
+    <div class="sec-head"><span class="num">03</span><h2>Audio path, exactly</h2></div>
+    <figure>
+      <svg viewBox="0 0 1120 300" role="img" aria-label="Audio pipeline timing">
+        <defs><marker id="a2" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#fff"/></marker></defs>
+        <path class="arrow" d="M60 150 L1050 150" marker-end="url(#a2)"/>
+        <rect class="node" x="60" y="86" width="150" height="48" rx="8"/>
+        <text class="nlabel" x="74" y="106">CAPTURE</text>
+        <text class="nsub" x="74" y="122">getUserMedia → worklet</text>
+        <rect class="node" x="250" y="86" width="150" height="48" rx="8"/>
+        <text class="nlabel" x="264" y="106">FRAME</text>
+        <text class="nsub" x="264" y="122">1600 samples · 3200 B</text>
+        <rect class="node" x="440" y="86" width="180" height="48" rx="8"/>
+        <text class="nlabel" x="454" y="106">WS / LOOPBACK</text>
+        <text class="nsub" x="454" y="122">drop-oldest 30 s queue</text>
+        <rect class="node" x="660" y="86" width="180" height="48" rx="8"/>
+        <text class="nlabel" x="674" y="106">ENDPOINT</text>
+        <text class="nsub" x="674" y="122">500 ms silence / 15 s cap</text>
+        <rect class="node" x="880" y="86" width="170" height="48" rx="8"/>
+        <text class="nlabel" x="894" y="106">INFERENCE</text>
+        <text class="nsub" x="894" y="122">WAV → driver → final</text>
+
+        <text class="note" x="60" y="180">EVERY 100 ms</text>
+        <text class="note" x="250" y="180">10 FRAMES / s</text>
+        <text class="note" x="440" y="180">BACKPRESSURE: bounded queue</text>
+        <text class="note" x="660" y="180">SILENCE = 500 ms; NO PAUSE = 15 s</text>
+        <text class="note" x="880" y="180">TINY ≈ 0.2× RT · LARGE CPU ≈ &gt;1× RT</text>
+
+        <text class="note" x="60" y="224">renderer</text>
+        <text class="note" x="250" y="224">PCM</text>
+        <text class="note" x="440" y="224">engine input</text>
+        <text class="note" x="660" y="224">segment boundary</text>
+        <text class="note" x="880" y="224">text out</text>
+        <text class="note" x="60" y="252">The audio object never leaves the renderer except through this one socket. The engine computes RMS for the VAD and never logs samples.</text>
+      </svg>
+      <figcaption>100 ms frames; endpointing at 500 ms silence or 15 s hard cap; persistent model for speed.</figcaption>
+    </figure>
+    <div class="grid3" style="margin-top:16px">
+      <div class="card"><h3>No pause</h3><p class="small">The 15 s cap guarantees a final even during continuous speech. First card ≈ 15 s audio + inference. With tiny that is ~16 s; a CPU large model can fall behind.</p></div>
+      <div class="card"><h3>Normal sermon pause</h3><p class="small">500 ms of silence finalizes the segment. First card ≈ 0.5 s + inference (~1–3 s). This is the designed live path.</p></div>
+      <div class="card"><h3>Backpressure</h3><p class="small">The renderer queue is bounded to 30 s and drops the oldest frames. The engine serializes transcribes; a slow model becomes latency, not unbounded memory.</p></div>
+    </div>
+  </section>
+
+  <section id="detect">
+    <div class="sec-head"><span class="num">04</span><h2>Verse detection</h2></div>
+    <div class="grid2">
+      <div class="card">
+        <h3>Strict detector order</h3>
+        <ol class="small">
+          <li><b>Spoken reference.</b> “Isaiah chapter 45, verse 2” normalizes to <span class="mono">Isaiah 45:2</span>. ASR punctuation is handled; a comma no longer falls back to verse 1.</li>
+          <li><b>Alias table.</b> Misheard book names (“Revelations”, “Corinthian”) resolve through data, with ambiguity disclosed.</li>
+          <li><b>Full-text index.</b> When no reference is spoken, the recent 600-character tail is searched against the active translation using the inverted index (IDF + phrase bonus), not a containment counter.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <h3>Gates before a card</h3>
+        <ul class="small">
+          <li>Hallucination gate runs on the newest segment: noise/VAD flags can blank every lane.</li>
+          <li>Confidence = match quality × segment weight; below <span class="mono">0.60</span> nothing renders.</li>
+          <li>Short tails are refused; one- and two-word queries cannot become a verse.</li>
+          <li>Operator dismissals are per reference; dismissal does not move any output.</li>
+          <li>The card shows the resolved text and translation before Send Live is enabled.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout" style="margin-top:16px">
+      <b>Measured truth:</b> on 24 minutes of real sermon captions the indexed scorer returned only actual references (John 10:35, Numbers 23:19, Genesis 27:38–40). The old containment worker produced four wrong references at 0.62–0.73. On garbled tiny-model ASR, false hits are still possible; production accuracy depends on the ASR model.
+    </div>
+  </section>
+
+  <section id="bench">
+    <div class="sec-head"><span class="num">05</span><h2>Benchmark &amp; model choice</h2></div>
+    <div class="grid2">
+      <div class="card">
+        <h3>What is measured</h3>
+        <p class="small">The app ships a 6.3 s John 10:10 clip and its hand-verified transcript. The engine runs the actual model, then reports WER, RTF, backend, load time, memory, and partial latency. A model that cannot keep up is marked “excluded”, not recommended.</p>
+        <pre>Real app result — tiny.en:
+ERROR RATE   0.0%
+SPEED        0.20x
+SUGGESTED    tiny.en</pre>
+      </div>
+      <div class="card">
+        <h3>Measured limits</h3>
+        <table class="status-table">
+          <tr><th>Workload</th><th>Wall</th><th>RTF</th><th>RAM</th></tr>
+          <tr><td>tiny.en, 24 min</td><td>253 s</td><td>0.18×</td><td>~190 MB</td></tr>
+          <tr><td>large-v3-turbo Q8, 35 s</td><td>40.2 s</td><td>1.15×</td><td>1.19 GB</td></tr>
+          <tr><td>large-v3-turbo Q8, 3 min</td><td>176.7 s</td><td>0.98×</td><td>1.19 GB</td></tr>
+        </table>
+        <p class="muted small" style="margin-top:10px">The persistent server removes model reload. It does not turn a CPU that is too slow into a GPU. GPU builds and auto-selection remain the 8→10 work.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="cloud">
+    <div class="sec-head"><span class="num">06</span><h2>Cloud · PR #86</h2></div>
+    <div class="grid2">
+      <div class="card">
+        <h3>Implemented shape</h3>
+        <ul class="small">
+          <li>Renderer keeps the same PCM loopback WS. Two provider lanes share the contract: OpenAI <span class="mono">/v1/audio/transcriptions</span> (multipart) and OpenRouter <span class="mono">/v1/responses</span> (JSON base64 <span class="mono">input_audio</span>).</li>
+          <li>OpenAI: <span class="mono">whisper-1</span> default, <span class="mono">gpt-4o-transcribe</span> opt-in. OpenRouter: <span class="mono">google/gemini-2.5-flash</span> default and <span class="mono">google/gemini-3.8-flash</span>; unknown/provider-mismatched models refused.</li>
+          <li>Keys are provider-scoped: keytar → separate AES-256-GCM 0600 fallback files; renderer sees only <span class="mono">{configured}</span> per provider.</li>
+          <li>Explicit, session-scoped egress acknowledgement. Leaving Cloud revokes it.</li>
+          <li>Missing provider/key/consent or Test Mode refuses before any fork.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Why it is not production yet</h3>
+        <ul class="small">
+          <li>No live OpenAI or OpenRouter key was available; auth, billing, retention, rate limits, and real sermon quality are unverified for both lanes.</li>
+          <li>Cloud audio leaves the building. The operator must understand that the live feed can contain off-mic speech.</li>
+          <li>PR #86, not merged. No nightly contains it.</li>
+          <li>Error taxonomy is real: <span class="mono">cloud-auth-invalid</span>, <span class="mono">cloud-rate-limited</span>, <span class="mono">cloud-network-error</span>, <span class="mono">cloud-bad-response</span>, …</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout dim" style="margin-top:16px">
+      Cloud is a <b>transport</b>, not a label. Until this PR lands, the production build refuses Cloud with <span class="mono">where-not-implemented</span>. That refusal is deliberately safer than a local engine wearing a cloud badge.
+    </div>
+  </section>
+
+  <section id="network">
+    <div class="sec-head"><span class="num">07</span><h2>Local network · PR #86</h2></div>
+    <div class="grid2">
+      <div class="card">
+        <h3>Implemented shape</h3>
+        <ul class="small">
+          <li>Remote speech-engine health-checked at <span class="mono">/v1/health</span> with a token; protocol major must match.</li>
+          <li>Renderer dials the remote WebSocket and streams the same PCM frames. No local fork, no fallback.</li>
+          <li>Remote engine gets <span class="mono">--allow-lan</span> / <span class="mono">LD_SPEECH_ALLOW_LAN=1</span> plus an explicit token; default remains loopback-only.</li>
+          <li>Endpoint persisted; token session-only.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Security truth</h3>
+        <ul class="small">
+          <li><b>No TLS.</b> Raw PCM and the token cross the LAN. Trusted LAN only.</li>
+          <li>The token is a gate, not encryption. A hostile LAN peer can observe traffic.</li>
+          <li>No second physical machine was available; only fake loopback health/WS tests.</li>
+          <li>Cross-host firewall, Wi-Fi loss, reconnect, and port policy remain unverified.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout dim" style="margin-top:16px">
+      Network is <b>not</b> “only text crosses the network” — the current architecture sends audio to the remote recognizer. The copy now says that plainly. A text-only remote design would be a different product.
+    </div>
+  </section>
+
+  <section id="os">
+    <div class="sec-head"><span class="num">08</span><h2>OS on-device · experimental</h2></div>
+    <div class="grid2">
+      <div class="card">
+        <h3>Full recording result</h3>
+        <div class="grid3">
+          <div class="stat"><b>97</b><span>chunks</span></div>
+          <div class="stat"><b>0</b><span>finals</span></div>
+          <div class="stat"><b>95</b><span>low-confidence</span></div>
+        </div>
+        <p class="small muted" style="margin-top:10px">24 minutes of the actual church recording through Windows System.Speech. One silent skip, one no-transcript, zero usable finals.</p>
+      </div>
+      <div class="card">
+        <h3>What is safe</h3>
+        <ul class="small">
+          <li>The driver refuses recognition below <span class="mono">0.25</span> confidence; no wrong verse from low-confidence text.</li>
+          <li>The PowerShell script loops to EOF and reports the minimum confidence across utterances.</li>
+          <li>On clean synthetic audio it works (0.0% WER); on real church audio it does not.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="muted small" style="margin-top:12px">System.Speech 8.0 is a 2006-era recognizer. To make OS on-device real, replace it with WinRT <span class="mono">Windows.Media.SpeechRecognition</span> and validate on church hardware. Until then it is an experimental fallback, not a production provider.</p>
+  </section>
+
+  <section id="data">
+    <div class="sec-head"><span class="num">09</span><h2>Data, history, tuning</h2></div>
+    <div class="grid2">
+      <div class="card">
+        <h3>Local history</h3>
+        <p class="small">One JSON file per session under <span class="mono">&lt;userData&gt;/speech-engine/history/</span>. Capped at 64 MiB / 500 sessions; oldest rotates first; the drive never fills. The repo is never written to.</p>
+        <pre>{
+  "schema": 1,
+  "sessionId": "...",
+  "modelId": "tiny.en",
+  "providerId": "whispercpp",
+  "where": "local",
+  "segments": [ ... ],
+  "events": [
+    { "type": "suggestion", "lane": "verse",
+      "reference": "Isaiah 45:2",
+      "detector": "spoken", "confidence": 0.95 },
+    { "type": "action", "lane": "verse",
+      "action": "send", "reference": "Isaiah 45:2" }
+  ]
+}</pre>
+      </div>
+      <div class="card">
+        <h3>Tuning data</h3>
+        <ul class="small">
+          <li>Events are whitelist-only: type/lane/action/reference/detector/confidence/code/timestamps. No transcript copy, no audio, no free text.</li>
+          <li>Bounded 2,000 events per session.</li>
+          <li>Export via <b>Preferences → Experimental → Speech → Local tuning data</b>; JSON includes transcript + events.</li>
+          <li>Nothing is uploaded. The export path is shown; the operator copies it deliberately.</li>
+          <li>Erase-all removes history, events, and exports.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="failure">
+    <div class="sec-head"><span class="num">10</span><h2>Failure &amp; security model</h2></div>
+    <table class="status-table">
+      <thead><tr><th>Gate</th><th>Rule</th><th>Failure surface</th></tr></thead>
+      <tbody>
+        <tr><td>Loopback bind</td><td>Engine refuses non-loopback unless an explicit LAN opt-in and token are both present.</td><td>Process exits 2 with a sentence; no silent LAN listen.</td></tr>
+        <tr><td>Launch token</td><td>Every REST request and WS upgrade carries the per-launch token; timing-safe compare.</td><td>401/403; token never logged.</td></tr>
+        <tr><td>Origin</td><td>Browser origins must be loopback; foreign origins rejected before token check.</td><td>403 <span class="mono">origin-not-allowed</span>.</td></tr>
+        <tr><td>Provider</td><td>Only wired providers; unwired provider ids are refused, not routed to whisper.</td><td><span class="mono">provider-not-supported</span>.</td></tr>
+        <tr><td>Mode</td><td>Cloud/network without a transport refuses before fork.</td><td><span class="mono">where-not-implemented</span> until PRs land.</td></tr>
+        <tr><td>Model</td><td>Missing binary/weights refuses; never falls back to fake in production.</td><td><span class="mono">engine-not-installed</span> / <span class="mono">model-not-installed</span>.</td></tr>
+        <tr><td>Canned engine</td><td>Fake output can never become a suggestion card.</td><td>Cards blank; engine label says test.</td></tr>
+        <tr><td>Low confidence OS</td><td>Below 0.25 is an error, not a final.</td><td><span class="mono">low-confidence</span>; no verse.</td></tr>
+        <tr><td>Short tail</td><td>One/two-word queries are refused by the scorer.</td><td>No card; no false verse.</td></tr>
+        <tr><td>Logs</td><td>No audio, token, key, or transcript text in logs.</td><td>Codes, counts, timings only.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="proof">
+    <div class="sec-head"><span class="num">11</span><h2>Proof &amp; test inventory</h2></div>
+    <div class="grid3">
+      <div class="card">
+        <h3>Live end-to-end</h3>
+        <p class="small">Real Electron app, Xvfb, virtual mic fed the actual church recording; KJV imported; transcript; <b>Isaiah 45:2</b> card; <b>Send Live</b> loaded the verse. The app used the persistent server.</p>
+      </div>
+      <div class="card">
+        <h3>Engine / app suites</h3>
+        <p class="small"><span class="mono">node --test speech-engine/</span> — 120 pass on master. Speech/UI suites — 798 pass on master. Staged cloud PR reports 130 engine / 786 where its branch adds tests.</p>
+      </div>
+      <div class="card">
+        <h3>CI</h3>
+        <p class="small">Speech Live Smoke (Linux whisper + Windows OS) passes. Build-on-push, plugin conformance, and nightly installers pass on master. Cloud/network PR checks are green on their branches.</p>
+      </div>
+    </div>
+    <pre style="margin-top:16px">$ node --test speech-engine/
+ℹ tests 120   ℹ pass 120   ℹ fail 0
+
+$ npx vitest run tests/speech src/speech src/components/Speech
+Test Files 43 passed (43)
+Tests 772 passed | 2 todo
+
+$ node speech-engine/scripts/smoke.mjs
+WER 0.0% (0 sub, 0 del, 0 ins)
+verse John 10:10 (fuzzy, confidence 1.00)
+PASS</pre>
+    <p class="muted small">CI proof is synthetic; real-sermon and real-hardware proof are separate. Cloud/LAN/GPU are in PR #86 and not part of master until merged.</p>
+  </section>
+
+  <section id="readiness">
+    <div class="sec-head"><span class="num">12</span><h2>Production readiness</h2></div>
+    <div class="grid2">
+      <div class="card">
+        <h3>Score</h3>
+        <div class="grid3">
+          <div class="stat"><b>8</b><span>local pipeline</span></div>
+          <div class="stat"><b>7</b><span>voice engine</span></div>
+          <div class="stat"><b>2</b><span>OS provider</span></div>
+        </div>
+        <p class="small muted" style="margin-top:12px">Local path: runnable, measured, safe. Engine: production-capable only with a production model + hardware validation. OS: not production. Cloud/LAN: implemented in PR #86, not live-verified.</p>
+      </div>
+      <div class="card">
+        <h3>What moves 8 → 10</h3>
+        <ol class="small">
+          <li>Validate a production model on the actual church PC/mixer feed: WER ≤10–15%, RTF &lt;1.</li>
+          <li>Ship GPU builds (CUDA/Vulkan/Metal) and macOS engine packaging. <span class="muted">CUDA selection is in PR #86; Vulkan and Metal still need real builds.</span></li>
+          <li>Make benchmark auto-select the largest model that passes RTF. <span class="muted">Sequential measured matrix is in PR #86.</span></li>
+          <li>Test on a physical Windows church PC with a real microphone or dry aux.</li>
+          <li>Merge + live-test cloud (real key) and network (second machine).</li>
+          <li>Decide OS on-device: replace with WinRT or keep it explicitly experimental.</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <section id="runbook">
+    <div class="sec-head"><span class="num">13</span><h2>Operator runbook</h2></div>
+    <div class="grid3">
+      <div class="card">
+        <h3>Local</h3>
+        <pre>Settings → Speech
+  Where: This Device
+  Engine: whisper.cpp
+  Model: benchmark the installed models
+  Audio: choose the mixer/interface input
+  Start → speak → Send Live</pre>
+      </div>
+      <div class="card">
+        <h3>Collect tuning data</h3>
+        <pre>Keep "Save transcripts" on
+Run the service
+Settings → Speech
+  Local tuning data
+  Export tuning data (JSON)</pre>
+      </div>
+      <div class="card">
+        <h3>Cloud / LAN</h3>
+        <pre>Cloud: PR #86
+  key + explicit consent + OpenAI/OpenRouter
+Network: PR #86
+  remote engine --allow-lan
+  endpoint + token, trusted LAN only</pre>
+      </div>
+    </div>
+    <div class="callout" style="margin-top:16px">
+      <b>Panic stop:</b> <span class="kbd">Ctrl+Shift+M</span> mutes and closes the microphone even while the rail is collapsed. <b>Rail toggle:</b> <span class="kbd">Ctrl+Shift+A</span>.
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="num">14</span><h2>Live validation tracks</h2></div>
+    <p class="muted">These are separated so a green unit test is never mistaken for a green church test. Each track has its own PR or prerequisite and must be signed off independently.</p>
+    <table class="status-table">
+      <thead><tr><th>Track</th><th>Needs</th><th>Pass gate</th><th>Current state</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>GPU builds</b><br/><span class="muted small">CUDA · Vulkan · Metal</span></td>
+          <td>A Windows/Linux GPU PC and a macOS build; pinned GPU assets from the release.</td>
+          <td>large-v3/turbo on GPU: RTF &lt; 0.3, no thermal collapse over 20 min, CPU fallback still works.</td>
+          <td><span class="pill">PR #86</span> Three real CUDA archives pinned; no Vulkan/macOS CLI asset exists at b5454. No GPU RTF measured.</td>
+        </tr>
+        <tr>
+          <td><b>Smart model selection</b></td>
+          <td>Installed models and a benchmark run per model.</td>
+          <td>App selects the largest model that keeps RTF &lt; 1.0 and stays within the WER margin; refuses when no measured model passes.</td>
+          <td><span class="pill">PR #86</span> Option A: stop → load model → health-check → benchmark → next; picks biggest within RTF/WER gates.</td>
+        </tr>
+        <tr>
+          <td><b>Booth hardware</b><br/><span class="muted small">Windows church PC</span></td>
+          <td>Actual PC, mixer aux feed, USB interface/line-in, physical microphone.</td>
+          <td>2-hour service: no dropout, correct gain/no clipping, transcript and Isaiah 45:2 card; no invented references; export local tuning JSON.</td>
+          <td><span class="pill dim">Requires owner hardware</span></td>
+        </tr>
+        <tr>
+          <td><b>Local network</b></td>
+          <td>Two physical PCs on the same trusted LAN; remote engine token; firewall port.</td>
+          <td>Health check succeeds; 30-minute PCM stream with no stalls; final card; stop leaves no local/remote confusion; no-TLS risk accepted.</td>
+          <td><span class="pill">PR #86</span> fake loopback remote only.</td>
+        </tr>
+        <tr>
+          <td><b>Cloud · OpenAI / OpenRouter + Gemini</b></td>
+          <td>Real API key, billing account, outbound network, explicit consent.</td>
+          <td>One live sermon clip: transcript comes back from the provider, error codes are honest, cost/retention understood, key can be cleared, no local fallback.</td>
+          <td><span class="pill">PR #86</span> OpenAI + OpenRouter/Gemini implemented and fake-fetch tested; no live key for either lane.</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="callout dim" style="margin-top:16px">
+      <b>What the owner must provide:</b> the Windows booth PC + mixer aux, a second LAN PC, a real OpenAI/OpenRouter key, and a GPU machine (or acceptance that CPU-only launches at small/base models). Without those, these tracks stay hardware-unverified — not production-proven.
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="num">A</span><h2>File map</h2></div>
+    <table class="status-table">
+      <thead><tr><th>Area</th><th>Key files</th></tr></thead>
+      <tbody>
+        <tr><td>Renderer capture</td><td><span class="mono">src/hooks/useAudioCapture.js</span>, <span class="mono">src/workers/pcmWorklet.js</span>, <span class="mono">src/workers/pcmCapture.js</span></td></tr>
+        <tr><td>Transport</td><td><span class="mono">src/speech/engineTransport.js</span>, <span class="mono">speech-engine/wsTransport.js</span>, <span class="mono">speech-engine/server.js</span></td></tr>
+        <tr><td>Supervisor / IPC</td><td><span class="mono">main/speechIpc.js</span>, <span class="mono">main/speechEngine.js</span>, <span class="mono">preload.js</span></td></tr>
+        <tr><td>Drivers</td><td><span class="mono">speech-engine/drivers/whisperServer.js</span>, <span class="mono">whispercpp.js</span>, <span class="mono">osdevice.js</span>; cloud drivers in PR #86</td></tr>
+        <tr><td>GPU install</td><td>PR #86 <span class="mono">main/speechGpuProbe.js</span>, CUDA asset pins in <span class="mono">main/speechEngineInstaller.js</span>, <span class="mono">src/speech/modelGuidance.js</span></td></tr>
+        <tr><td>Auto-select</td><td>PR #86 <span class="mono">shared/speech/modelSelection.js</span>, <span class="mono">speech-engine/autoModel.js</span>, <span class="mono">src/components/Speech/ModelBenchmarkPanel.jsx</span></td></tr>
+        <tr><td>Detection</td><td><span class="mono">src/speech/detectVerse.js</span>, <span class="mono">spokenForm.js</span>, <span class="mono">verseIndex.js</span>, <span class="mono">verseScore.js</span>, <span class="mono">src/workers/verseSearch.worker.js</span></td></tr>
+        <tr><td>UI</td><td><span class="mono">src/components/Speech/</span> (rail, cards, settings, benchmark, tuning card)</td></tr>
+        <tr><td>Data</td><td><span class="mono">main/speechHistory.js</span>, <span class="mono">src/speech/tuningData.js</span>, speech history browser/card</td></tr>
+        <tr><td>Network / cloud</td><td>PR #86 <span class="mono">main/speechRemote.js</span>; PR #86 <span class="mono">speech-engine/drivers/cloudOpenAI.js</span>, <span class="mono">cloudOpenRouter.js</span>, <span class="mono">main/speechCloudKeyStore.js</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="foot">
+    <div>Selah · Sermon Assist · system report · master b751abf</div>
+    <div>Local verified · Cloud/LAN/GPU/auto-select in PR #86 · OS experimental</div>
+  </div>
+</div>
+</body>
+</html>

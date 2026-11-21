@@ -376,12 +376,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   speech: {
     start: (payload) => ipcRenderer.invoke('speech:start', payload),
+    // Read-only health check for the Network Device settings block. It does
+    // not start, fork, or change the running engine.
+    testNetwork: (payload) => ipcRenderer.invoke('speech:test-network', payload),
     stop: () => ipcRenderer.invoke('speech:stop'),
     getState: () => ipcRenderer.invoke('speech:get-state'),
     install: (payload) => ipcRenderer.invoke('speech:install', payload),
     // The real engine binary (whisper.cpp). Production mode refuses to run
     // without it, so this is the control that makes the mode toggle honest.
-    installEngine: () => ipcRenderer.invoke('speech:install-engine'),
+    installEngine: (payload) => ipcRenderer.invoke('speech:install-engine', payload),
+    setSetupLock: (locked) => ipcRenderer.invoke('speech:setup-lock', { locked: Boolean(locked) }),
+    // Read-only accelerator evidence for the benchmark panel. No RTF claim.
+    gpuCapabilities: () => ipcRenderer.invoke('speech:gpu-capabilities'),
     // Actually spawn the installed binary once. A file that exists is not a
     // binary the OS can load (the Windows build needs the VC++ runtime), and
     // this is the only check that tells those apart.
@@ -393,6 +399,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     uninstall: (payload) => ipcRenderer.invoke('speech:uninstall', payload),
     selectModel: (payload) => ipcRenderer.invoke('speech:select-model', payload),
     benchmark: (payload) => ipcRenderer.invoke('speech:benchmark', payload),
+    // Real cloud control plane. `key:get` answers with a boolean only;
+    // no key text ever crosses this bridge.
+    cloudKeyStatus: (provider) => ipcRenderer.invoke('speech:cloud:key:get', { provider }),
+    saveCloudKey: (payload) => ipcRenderer.invoke('speech:cloud:key:set', payload),
+    clearCloudKey: (payload) => ipcRenderer.invoke('speech:cloud:key:clear', payload),
+    setCloudConsent: (provider, granted) => ipcRenderer.invoke('speech:cloud:consent', { provider, granted }),
+    // Sequential, measured auto-selection: starts/stops the engine per installed
+    // model, runs the committed benchmark clip, and returns the measured choice.
+    autoSelectModel: (payload) => ipcRenderer.invoke('speech:auto-select-model', payload),
     history: {
       list: () => ipcRenderer.invoke('speech:history:list'),
       get: (sessionId) => ipcRenderer.invoke('speech:history:get', { sessionId }),

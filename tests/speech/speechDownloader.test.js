@@ -739,7 +739,9 @@ describe('speech: IPC wiring (electron mocked, no network, no spawn)', () => {
     // the invokes (14 -> 15) and speech:vad joined the events (6 -> 7). The
     // probe is what tells "installed" from "runnable", and vad is the only
     // feedback the real engine gives before its first final.
-    expect(SPEECH_INVOKE_CHANNELS).toHaveLength(15);
+    // 15 original invokes + test-network + four cloud control-plane invokes
+    // + auto-select-model + read-only gpu-capabilities.
+    expect(SPEECH_INVOKE_CHANNELS).toHaveLength(23);
     expect(SPEECH_EVENT_CHANNELS).toHaveLength(7);
   });
 

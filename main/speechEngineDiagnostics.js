@@ -68,9 +68,9 @@ export function classifyBinaryFailure({ stderr = '', stdout = '', exitCode = 0, 
     return {
       code: 'missing-vc-runtime',
       message:
-        'The speech engine cannot start because the Microsoft Visual C++ runtime is missing. ' +
-        `Install the Visual C++ Redistributable, then press Test engine again: ${vcRuntimeUrl(arch)} ` +
-        'The engine files are installed correctly — this is a Windows system component, not a download problem.',
+        'The speech engine is missing a Windows system component (the Microsoft Visual C++ Redistributable). ' +
+        `A technician can install it from ${vcRuntimeUrl(arch)}, then press Set up Sermon Assist again. ` +
+        'The Selah engine files are installed correctly; this is not a download problem.',
     };
   }
 
@@ -87,7 +87,7 @@ export function classifyBinaryFailure({ stderr = '', stdout = '', exitCode = 0, 
     message:
       'The speech engine file is installed but did not start' +
       `${exitCode ? ` (exit code ${exitCode})` : ''}${suffix}. ` +
-      'Reinstall the engine, and if it still fails, run whisper-cli --help in the engine bin folder to see the system error.',
+      'Press Set up Sermon Assist again to repair it; if it still fails, share this detail with support.',
   };
 }
 
@@ -122,7 +122,7 @@ export function probeEngineBinary({
         code: 'binary-missing',
         message:
           'The speech engine is not installed. Open User Preferences → Experimental → ' +
-          'Live Sermon Assist and click "Install speech engine".',
+          'Live Sermon Assist and press Set up Sermon Assist.',
       });
       return;
     }

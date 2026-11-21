@@ -2,7 +2,8 @@
 
 A **self-contained, zero-dependency** implementation of the v1 speech-engine
 contract (`shared/speech/protocol.js`) that Selah's main process talks
-to over loopback HTTP.
+to over loopback HTTP by default, or over a trusted LAN when explicitly
+opted in.
 
 ## What this is
 
@@ -32,10 +33,107 @@ to over loopback HTTP.
 
 | Rule | Where |
 | --- | --- |
-| Binds `127.0.0.1` (loopback) **only** — non-loopback host throws | `assertLoopbackBindHost()` in `server.js`, checked at construction AND `listen()` |
+| Binds `127.0.0.1` (loopback) by default — non-loopback host throws | `assertBindHost()` in `server.js`, checked at construction AND `listen()`; LAN needs the explicit opt-in below |
 | `Origin` must be in `ALLOWED_ORIGINS` (or absent, i.e. a non-browser client) | request handler, before any route |
 | `x-ld-speech-token` required on every request (401 missing / 403 wrong, timing-safe compare) | request handler; the CORS preflight is origin-checked but token-less by browser design |
-| Never logs tokens, audio, or transcript text | no logging of payloads anywhere in this package |
+| Never logs tokens, audio, or transcript text | no logging of payloads anywhere in this package; a LAN bind logs the host only |
+
+## Trusted-LAN remote engine (explicit opt-in)
+
+**Setup ownership:** all Sermon Assist setup belongs to the Selah desktop app
+and stays in this repository (`src/`, `main/`, `shared/`, `speech-engine/`,
+`tests/`, `docs/`). No external plugin, sidecar repo, separate installer
+project, or zip of loose executables; no volunteer-facing step that asks them
+to find, copy, configure, or run a file by hand. The app must probe the
+machine, verify downloads, install the engine and model, select them, and
+explain everything in plain language.
+
+The commands below are **developer lab verification only** for the LAN opt-in
+gate. They are not the operator setup path and must not be shipped as one.
+
+Default posture is unchanged: loopback-only, no exceptions. To exercise the
+transport against an engine on a second machine in a lab, both of these must
+be true on the engine machine:
+
+```sh
+# flag form — token is mandatory with a LAN bind (no generated fallback)
+node speech-engine/index.js --host=192.168.1.20 --port=4731 \
+  --allow-lan --token=<same-long-token>
+
+# or the env form
+LD_SPEECH_ALLOW_LAN=1 LD_SPEECH_HOST=192.168.1.20 LD_SPEECH_PORT=4731 \
+  LD_SPEECH_TOKEN=<same-long-token> node speech-engine/index.js
+```
+
+`--allow-lan` / `LD_SPEECH_ALLOW_LAN=1` widens the bind, HTTP `Origin`, and
+WebSocket peer gates to the trusted LAN. It also prints an auditable
+`LAN OPT-IN` warning naming the bind host. A non-loopback host **without**
+the opt-in is still refused; the opt-in **without** an explicit token is
+refused and exits non-zero.
+
+**Security caveat:** the transport is plain HTTP / `ws://` with **no TLS**.
+Raw PCM microphone audio crosses the network, as does the shared token in
+the WebSocket query string. The token is a gate, not encryption. Only use a
+LAN you control. In Selah, enter `http://192.168.1.20:4731` and the token in
+User Preferences → Experimental → Speech & AI → Network Device. The token
+is session-only (never written to localStorage); the endpoint is persisted.
+
+## Real cloud modes: OpenAI and OpenRouter
+
+`--engine=cloud` (or `LD_SPEECH_ENGINE=cloud`) supports two real lanes through
+the **same** session/frames engine contract as the local drivers. Neither needs
+a binary or model weights: the loopback HTTP/WS surface is unchanged, so the
+renderer still streams PCM locally and only the engine talks to the provider.
+
+- `openai`: multipart WAV POST to
+  `https://api.openai.com/v1/audio/transcriptions`, JSON `text` response.
+- `openrouter`: documented Responses API POST to
+  `https://openrouter.ai/api/v1/responses` with base64 `input_audio` WAV and
+  a Google Gemini model; text is read from `output[].content[]` entries of
+  type `output_text`. This is **not** the OpenAI transcriptions endpoint.
+
+Launch configuration:
+
+```sh
+LD_SPEECH_CLOUD_PROVIDER=openai \
+LD_SPEECH_CLOUD_KEY='sk-...' \
+LD_SPEECH_CLOUD_MODEL=whisper-1 \
+node speech-engine/index.js --engine=cloud --port=4731
+```
+
+Provider and model may also be passed as `--cloud-provider=openai` /
+`--cloud-model=whisper-1`; the key is **environment-only** so it cannot leak
+into the process table. A missing provider or key exits 2 with an actionable
+message — there is no fallback to the canned or a local engine.
+
+**Model ids** come from documented/catalog sources, never guesses:
+
+- OpenAI: `whisper-1` (default; long-standing endpoint, stable `{"text": ...}`
+  body) or `gpt-4o-transcribe` (newer accuracy option).
+- OpenRouter: `google/gemini-2.5-flash` (default; the id in OpenRouter's audio
+  guide) or `google/gemini-3.8-flash` (current catalog row advertising `audio`
+  input). Exact ids are passed through unchanged.
+
+OpenRouter launch example:
+
+```sh
+LD_SPEECH_CLOUD_PROVIDER=openrouter \
+LD_SPEECH_CLOUD_KEY='sk-or-...' \
+LD_SPEECH_CLOUD_MODEL=google/gemini-2.5-flash \
+node speech-engine/index.js --engine=cloud --port=4731
+```
+
+In the app, each provider has its own key in the keytar-first /
+encrypted-file-fallback pattern (`main/speechCloudKeyStore.js`), and the
+renderer only learns `{ configured }` per provider. Settings exposes
+provider selection, model choice, explicit **Save** / **Clear** buttons, a
+boolean status, and an egress acknowledgement that must be checked before the
+first cloud start and again after switching lanes. Other providers are shown
+as unavailable and refuse before any fork. No error path logs the key, the
+audio, or the transcript.
+
+Documentation used: `https://openrouter.ai/docs/guides/overview/multimodal/audio.md`
+and `https://openrouter.ai/docs/api_reference/responses/overview.md`.
 
 ## Running tests
 

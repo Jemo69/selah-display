@@ -41,6 +41,9 @@ export const speechDefaults = () => ({
   providerId: 'whispercpp',
   modelId: 'large-v3',
   cloudProviderId: null,
+  // Provider-specific cloud model. Null means "use that provider's default";
+  // it is deliberately runtime-only so a stale choice cannot survive restart.
+  cloudModelId: null,
 
   // Phase 3 — the language the congregation actually speaks, used for the
   // spoken number words AND the "chapter"/"verse" keywords.
@@ -64,6 +67,10 @@ export const speechDefaults = () => ({
   quoteConsented: false,
   quoteKeyReady: false,
   networkEndpoint: null,
+  // Session-only remote engine secret. Deliberately NOT in PERSISTED_KEYS or
+  // partialize(): a reload must require the operator to type it again rather
+  // than leaving a LAN token in localStorage.
+  networkToken: null,
   audio: {
     sourceId: null, // stable identity (deviceId), NOT an index
     sourceKind: null, // 'microphone' | 'usb' | 'line' | 'loopback' | 'network'
@@ -114,6 +121,10 @@ const runtimeDefaults = () => ({
   // Deliberately NOT persisted: a crash mid-benchmark must not resurrect a
   // "running" claim on next launch, exactly like `status` itself.
   benchmarkRunningId: null,
+  // A one-click setup completion asks the mounted rail to arm the microphone
+  // once. It is consumed immediately and never persisted; a crash or reload
+  // must not open the microphone later.
+  autoStartRequested: false,
 });
 
 const PERSISTED_KEYS = [
@@ -255,8 +266,18 @@ const useSpeechStore = create(
         set({ engineMode: VALID_ENGINE_MODE.includes(engineMode) ? engineMode : 'prod' }),
       setProviderId: (providerId) => set({ providerId }),
       setModelId: (modelId) => set({ modelId }),
-      setCloudProviderId: (cloudProviderId) => set({ cloudProviderId }),
+      setCloudProviderId: (cloudProviderId) =>
+        set({
+          cloudProviderId,
+          // A Gemini id is meaningless to OpenAI and vice versa. Changing
+          // provider always falls back to that provider's documented default.
+          cloudModelId: null,
+        }),
+      setCloudModelId: (cloudModelId) =>
+        set({ cloudModelId: typeof cloudModelId === 'string' && cloudModelId.trim() ? cloudModelId : null }),
       setNetworkEndpoint: (networkEndpoint) => set({ networkEndpoint }),
+      setNetworkToken: (networkToken) =>
+        set({ networkToken: typeof networkToken === 'string' && networkToken ? networkToken : null }),
 
       // --- audio source identity (fields exist from day one) ----------------
       setAudioSource: (partial) =>
@@ -322,6 +343,8 @@ const useSpeechStore = create(
           : null }),
 
       // --- runtime status (never persisted) ---------------------------------
+      requestAutoStart: () => set({ autoStartRequested: true }),
+      consumeAutoStart: () => set({ autoStartRequested: false }),
       setStatus: (status) =>
         set({ status: VALID_STATUS.includes(status) ? status : 'idle' }),
       setHealth: (health) => set({ health }),
@@ -387,5 +410,7 @@ const useSpeechStore = create(
 );
 
 log.info('SpeechStore initialized');
+
+if (typeof window !== 'undefined') window.__speechStore = useSpeechStore;
 
 export default useSpeechStore;

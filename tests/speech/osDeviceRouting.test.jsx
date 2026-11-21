@@ -112,16 +112,28 @@ describe('speech:start provider routing', () => {
     expect(reply.error.message).toMatch(/whisper/i);
   });
 
-  it.each(['cloud', 'network'])('%s refuses before the local engine starts', async (where) => {
+  it('network with no endpoint refuses before the local engine starts', async () => {
     const reply = await ipcHandles['speech:start'](null, {
       enabled: true,
       engineMode: 'prod',
       providerId: 'whispercpp',
-      where,
+      where: 'network',
     });
     expect(reply.ok).toBe(false);
-    expect(reply.reason).toBe('where-not-implemented');
-    expect(reply.error.message).toMatch(/This Device/);
+    expect(reply.reason).toBe('network-endpoint-missing');
+    expect(reply.error.message).toMatch(/Engine URL|endpoint/i);
+  });
+
+  it('cloud refuses an unconfigured provider rather than starting a local engine', async () => {
+    const reply = await ipcHandles['speech:start'](null, {
+      enabled: true,
+      engineMode: 'prod',
+      providerId: 'whispercpp',
+      where: 'cloud',
+      cloudProviderId: null,
+    });
+    expect(reply.ok).toBe(false);
+    expect(reply.reason).toBe('cloud-provider-not-supported');
   });
 
   it('an unwired provider refuses instead of forking the wrong engine', async () => {

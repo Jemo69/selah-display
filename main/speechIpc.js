@@ -11,7 +11,8 @@
  * adding or renaming a channel is a visible, reviewed diff in BOTH files.
  *
  * LIVE vs STUB (Phase 2):
- *   live  speech:start, speech:stop, speech:get-state, speech:install (the
+ *   live  speech:start (local fork OR trusted-LAN remote engine), speech:stop,
+ *         speech:get-state, speech:test-network, speech:install (the
  *         resumable model downloader in main/speechDownloader.js — progress
  *         streams on speech:progress and install state republishes on
  *         speech:install-state), speech:select-model (digest-verifies the
@@ -60,6 +61,8 @@ import {
   installEngineBinary,
   hasEngineBinary,
   engineAssetFor,
+  readEngineManifest,
+  selectEngineAsset,
   ENGINE_RELEASE,
 } from './speechEngineInstaller.js';
 import {
@@ -67,13 +70,46 @@ import {
   probeEngineBinaryCached,
   clearProbeCache,
 } from './speechEngineDiagnostics.js';
+import { probeGpuCapabilities } from './speechGpuProbe.js';
 import { planErase, removePathStep, describeErase, formatBytes } from './speechErase.js';
 import { createSpeechHistoryStore, resolveHistoryDir } from './speechHistory.js';
+import {
+  validateNetworkEndpoint,
+  validateNetworkToken,
+  probeRemoteEngine,
+} from './speechRemote.js';
+import { runAutoModelSelection } from '../speech-engine/autoModel.js';
 import { getModel, generateEngineToken } from '../shared/speech/index.js';
 import createMainLogger from './logger.js';
 import { diagMain } from './diagnosticsLog.js';
+import { speechCloudKeyStore } from './speechCloudKeyStore.js';
+import {
+  CLOUD_PROVIDER as OPENAI_PROVIDER,
+  DEFAULT_CLOUD_MODEL as OPENAI_DEFAULT_MODEL,
+  CLOUD_MODELS as OPENAI_MODELS,
+} from '../speech-engine/drivers/cloudOpenAI.js';
+import {
+  CLOUD_PROVIDER as OPENROUTER_PROVIDER,
+  DEFAULT_CLOUD_MODEL as OPENROUTER_DEFAULT_MODEL,
+  CLOUD_MODELS as OPENROUTER_MODELS,
+} from '../speech-engine/drivers/cloudOpenRouter.js';
 
 const log = createMainLogger('SpeechIpc');
+
+/** The only cloud lanes this build can actually run. */
+const CLOUD_PROVIDERS = Object.freeze({
+  [OPENAI_PROVIDER]: {
+    label: 'OpenAI',
+    models: OPENAI_MODELS,
+    defaultModel: OPENAI_DEFAULT_MODEL,
+  },
+  [OPENROUTER_PROVIDER]: {
+    label: 'OpenRouter',
+    models: OPENROUTER_MODELS,
+    defaultModel: OPENROUTER_DEFAULT_MODEL,
+  },
+});
+const DEFAULT_CLOUD_PROVIDER = OPENAI_PROVIDER;
 
 /**
  * The renderer's WebSocket stream path (plan section 3).
@@ -96,17 +132,21 @@ export const SPEECH_EVENT_CHANNELS = Object.freeze([
   'speech:install-state', // engine discovery + installed models + resumable partials
 ]);
 
-/** renderer -> main invoke handles. Thirteen channels, two of them stubs. */
+/** renderer -> main invoke handles. Cloud key/consent are control-plane only. */
 export const SPEECH_INVOKE_CHANNELS = Object.freeze([
-  'speech:start', // LIVE: { enabled, modelId?, providerId?, where? } -> { ok, started, reason, health, installState, engine }
-  'speech:stop', // LIVE: -> { ok, stopped }
+  'speech:start', // LIVE: { enabled, modelId?, providerId?, where?, networkEndpoint?, networkToken? } -> { ok, started, reason, health, installState, engine }
+  'speech:stop', // LIVE: -> { ok, stopped } (tears down remote sessions without killing a remote process)
+  'speech:test-network', // LIVE: { networkEndpoint, networkToken } -> { ok, code, message, health }
   'speech:get-state', // LIVE: -> { status, health, lastError, running, mode, endpoint, pid, installState, guardrail }
   'speech:install', // LIVE: { modelId } -> download result; { modelId, cancel:true } -> cancel
   'speech:install-engine', // LIVE: -> download + verify + unpack the real whisper.cpp binary
+  'speech:setup-lock', // LIVE: { locked:boolean } -> hold/release the whole setup window
+  'speech:gpu-capabilities', // LIVE: -> probe result; evidence only, never a speed claim
   'speech:engine-selftest', // LIVE: -> actually spawn whisper-cli --help; reports loader failures
   'speech:uninstall', // LIVE: { confirm:false } -> preview; { confirm:true } -> erase + bytes reclaimed
   'speech:select-model', // LIVE: { modelId } -> digest-verified selection
   'speech:benchmark', // LIVE: { modelId, clip? } -> engine result row; { modelId, cancel:true } -> stop
+  'speech:auto-select-model', // LIVE: { clip, providerId?, where?, engineMode? } -> measured matrix + verified choice
   // Decision D9 / Phase 4 — transcript history (summaries only except
   // get/search, which the renderer explicitly asked to see text from).
   'speech:history:list', // LIVE: -> { ok, sessions: summaries (no text), status }
@@ -115,6 +155,12 @@ export const SPEECH_INVOKE_CHANNELS = Object.freeze([
   'speech:history:export', // LIVE: { format:'json'|'text', sessionId? } -> { ok, path, bytes }
   'speech:history:erase', // LIVE: -> { ok, bytesReclaimed, sessionsRemoved, exportsRemoved }
   'speech:history:append', // LIVE: { op:'begin'|'segment'|'end', ... } -> the history write path
+  // Real OpenAI cloud: the renderer can save/check/clear a key and grant the
+  // explicit egress acknowledgement, but can never read the key back.
+  'speech:cloud:key:get', // LIVE: -> { ok, configured, provider } — never the key text
+  'speech:cloud:key:set', // LIVE: { provider, key } -> saves to the OS keychain
+  'speech:cloud:key:clear', // LIVE: { provider } -> deletes the stored key
+  'speech:cloud:consent', // LIVE: { granted } -> explicit 'audio leaves this machine' ack
 ]);
 
 /**
@@ -159,6 +205,11 @@ let registered = null;
  *   (dev checkout and the Phase 3 install directory).
  * @param {string|null} [options.endpoint] explicit loopback engine endpoint.
  * @param {string|null} [options.engineToken] pre-shared token for endpoint mode.
+ * @param {string|null} [options.networkEndpoint] default remote endpoint; the
+ *   renderer's settings value is authoritative when supplied.
+ * @param {string|null} [options.networkToken] session-only default token.
+ * @param {Function} [options.probeRemote] injected health probe (tests).
+ * @param {Function} [options.fetchImpl] injected fetch for the real probe.
  * @param {string|null} [options.modelsDir] model directory; defaults to
  *   `<userData>/speech-engine/models` — the documented offline drop-in
  *   directory. The repo's `speech-engine/` is NEVER written to.
@@ -166,6 +217,8 @@ let registered = null;
  *   defaults to `<userData>/speech-engine/history` (Decision D9 — history
  *   on by default, stored under userData). The repo's `speech-engine/` is
  *   NEVER written to here either.
+ * @param {object} [options.cloudKeyStore] keytar-backed store injected in
+ *   tests; defaults to main/speechCloudKeyStore.js
  * @returns {{ start: Function, stop: Function, getState: Function,
  *             getInstallState: Function, publishInstallState: Function,
  *             publishProgress: Function, history: Object }}
@@ -197,9 +250,14 @@ export function registerSpeechIpc({
   engineRoots = [],
   endpoint = null,
   engineToken = null,
+  networkEndpoint = null,
+  networkToken = null,
+  probeRemote = probeRemoteEngine,
+  fetchImpl = undefined,
   binDir = null,
   modelsDir = null,
   historyDir = null,
+  cloudKeyStore = speechCloudKeyStore,
 } = {}) {
   if (registered) return registered;
 
@@ -214,6 +272,14 @@ export function registerSpeechIpc({
     entry: discovery.entry,
     reason: discovery.reason,
   });
+
+  // Main-process setup lock. Quick Setup holds this across engine install,
+  // model downloads, and the measured matrix; speech:start refuses while it
+  // is held. `installInProgress` is the narrower installer lock so the
+  // installer itself cannot overlap another installer call.
+  let setupLocked = false;
+  let setupLockTimer = null;
+  let installInProgress = false;
 
   const activeBinDir =
     typeof binDir === 'string' && binDir
@@ -233,6 +299,14 @@ export function registerSpeechIpc({
   const activeHistoryDir =
     typeof historyDir === 'string' && historyDir ? historyDir : resolveHistoryDir(app.getPath('userData'));
   const history = createSpeechHistoryStore({ historyDir: activeHistoryDir });
+
+  // Cloud egress consent is deliberately NOT persisted and NOT sent from the
+  // renderer on every start. Checking the box in Settings is an explicit
+  // session action; a restart or a stale localStorage blob cannot silently
+  // re-authorise sending a sermon to a third party.
+  // Consent is per destination, not one global yes. Switching provider must
+  // be acknowledged again; a stale renderer cannot reuse another lane's yes.
+  const cloudEgressConsent = new Set();
 
   // The launch token (plan 7.1): ONE per-launch secret that
   // gates REST (x-ld-speech-token), the WebSocket upgrade
@@ -278,11 +352,17 @@ export function registerSpeechIpc({
     // The engine half of the story: Production mode is only honest when the
     // real binary is actually on disk. The renderer needs this to offer the
     // install button instead of a toggle that silently runs the canned engine.
+    const manifest = readEngineManifest(activeBinDir);
     const engine = {
       installed: hasEngineBinary(activeBinDir),
       binDir: activeBinDir,
       supported: Boolean(engineAssetFor()),
       release: ENGINE_RELEASE.version,
+      // What was actually installed, not what the current probe wishes were
+      // installed. `null` means an older engine with no manifest; the setup
+      // card treats that as CPU rather than guessing GPU.
+      backend: manifest?.backend ?? null,
+      manifest,
     };
     return { ...engineInstallState, ...snapshot, engine };
   };
@@ -324,27 +404,147 @@ export function registerSpeechIpc({
   const stringField = (value) =>
     typeof value === 'string' && value.trim() ? value : null;
 
+  /** TRUE only while a health-checked remote engine is our active transport. */
+  let remoteActive = false;
+
+  /** Resolve the endpoint/token pair. The renderer's settings win over boot env. */
+  const remoteConfig = (payload) => {
+    const endpointVerdict = validateNetworkEndpoint(
+      stringField(payload?.networkEndpoint) ?? networkEndpoint
+    );
+    const tokenVerdict = validateNetworkToken(
+      stringField(payload?.networkToken) ?? networkToken
+    );
+    return { endpointVerdict, tokenVerdict };
+  };
+
+  /**
+   * One refusal shape for every remote gate: a machine code, one sentence,
+   * no local fork, and health cleared so the rail cannot claim a remote
+   * engine that was never reached.
+   */
+  const refuseRemote = (error, startedAt, where = 'network') => {
+    publishInstallState();
+    log.info(`Remote engine not started: ${error.code}`);
+    diagMain('info', 'engine', 'start refused by gate', {
+      reason: error.code,
+      where,
+      durationMs: Date.now() - startedAt,
+    });
+    broadcast('speech:error', error);
+    broadcast('speech:health', null);
+    return {
+      ok: false,
+      started: false,
+      reason: error.code,
+      mode: 'network',
+      installState: buildInstallState(),
+      engine: null,
+      health: null,
+      error,
+    };
+  };
+
+  /**
+   * Network mode: health-check the configured remote engine, then hand the
+   * renderer the SAME dial-in shape a local start returns. No fork, no local
+   * fallback, no transcript relay via the supervisor — the renderer's
+   * engineTransport opens the remote WebSocket itself.
+   */
+  const startRemote = async (payload, startedAt) => {
+    const { endpointVerdict, tokenVerdict } = remoteConfig(payload);
+    if (!endpointVerdict.ok) return refuseRemote(endpointVerdict, startedAt);
+    if (!tokenVerdict.ok) return refuseRemote(tokenVerdict, startedAt);
+
+    const verdict = await probeRemote({
+      endpoint: endpointVerdict.endpoint,
+      token: tokenVerdict.token,
+      ...(fetchImpl === undefined ? {} : { fetchImpl }),
+    });
+    if (!verdict.ok) return refuseRemote(verdict, startedAt);
+
+    // A local engine from an earlier session must not keep running after we
+    // switch to the remote transport. This is the ONLY local process touch
+    // in the network path, and it is a stop — never a start or a fallback.
+    if (getSpeechEngineSnapshot().running) {
+      stopSpeechEngine({ reason: 'switch-to-network' });
+    }
+
+    remoteActive = true;
+    broadcast('speech:health', verdict.health);
+    broadcast('speech:status', { status: 'idle', reason: 'remote-connected', at: Date.now() });
+    log.info('Remote engine connected (health ok; token never logged)');
+    diagMain('info', 'engine', 'start settled', {
+      ok: true,
+      started: true,
+      reason: 'remote-connected',
+      engineKind: 'network',
+      durationMs: Date.now() - startedAt,
+    });
+    return {
+      ok: true,
+      started: true,
+      reason: 'remote-connected',
+      mode: 'network',
+      health: verdict.health,
+      installState: buildInstallState(),
+      // The renderer needs exactly { endpoint, token, path } to dial the
+      // remote WebSocket. `remote` is evidence for the label, not a second
+      // transport: the renderer validates it against where === 'network'.
+      engine: {
+        endpoint: endpointVerdict.endpoint,
+        token: tokenVerdict.token,
+        path: SPEECH_ENGINE_WS_PATH,
+        remote: true,
+      },
+      ...(verdict.warning ? { warning: verdict.warning } : {}),
+    };
+  };
+
+  // One in-flight matrix run at a time. It is also the fence between a
+  // benchmark restart and a renderer/arming start: no live session may grab
+  // the engine while models are being swapped underneath it.
+  let autoSelectRunning = false;
+  const isBenchmarkStart = (payload) => payload?.benchmarkOnly === true;
   /** The one start path: renderer invoke AND app boot both land here. */
   const start = async (payload) => {
     const startStartedAt = Date.now();
+    // The measured matrix is allowed through the setup lock, but only while
+    // the auto-select handler is the one running it. A renderer cannot fake
+    // benchmarkOnly to bypass the lock.
+    if (installInProgress || (setupLocked && !(autoSelectRunning && isBenchmarkStart(payload)))) {
+      const error = {
+        code: 'setup-busy',
+        message: 'Sermon Assist setup is running. Wait for it to finish before starting.',
+      };
+      broadcast('speech:error', error);
+      return {
+        ok: false,
+        started: false,
+        reason: 'setup-busy',
+        mode: engineInstallState.mode,
+        installState: buildInstallState(),
+        engine: null,
+        error,
+      };
+    }
+    if (autoSelectRunning && !isBenchmarkStart(payload)) {
+      return {
+        ok: false,
+        started: false,
+        reason: 'auto-select-in-progress',
+        message: 'A model auto-selection run owns the engine right now. Try again when it finishes.',
+      };
+    }
     const enabled = payload?.enabled === true;
     const requestedWhere = stringField(payload?.where) ?? 'local';
 
-    // Cloud and local-network transcription have no transport in this build.
-    // Refuse BEFORE the local engine starts: otherwise the rail would label a
-    // local whisper process as "Cloud · openai" or "Remote engine" — a lie
-    // about where the sermon audio went.
-    if (enabled && requestedWhere !== 'local') {
-      const error = {
-        code: 'where-not-implemented',
-        message:
-          'Cloud and local-network transcription are not implemented in this build. ' +
-          'Choose This Device. The cloud/network choices are catalog placeholders only.',
-      };
+    /** One honest refusal shape for every pre-fork gate. No key in payloads. */
+    const refuse = (reason, error) => {
       publishInstallState();
-      log.info('Speech engine not started: where-not-implemented');
+      log.info(`Speech engine not started: ${reason}`);
       diagMain('info', 'engine', 'start refused by gate', {
-        reason: 'where-not-implemented',
+        reason,
         where: requestedWhere,
         durationMs: Date.now() - startStartedAt,
       });
@@ -353,19 +553,92 @@ export function registerSpeechIpc({
       return {
         ok: false,
         started: false,
-        reason: 'where-not-implemented',
+        reason,
         mode: engineInstallState.mode,
         installState: buildInstallState(),
         engine: null,
+        health: null,
         error,
       };
+    };
+
+    // Network has a real transport: health-check the other machine and return
+    // its dial-in. It must never fall through to a local fork.
+    if (enabled && requestedWhere === 'network') {
+      return startRemote(payload, startStartedAt);
     }
 
-    const decision = describeStartDecision({
-      enabled,
-      endpoint,
-      engineAvailable: engineInstallState.available,
-    });
+    // Past the remote branch, any successful start is local or cloud, never a
+    // lingering remote transport.
+    remoteActive = false;
+
+    // Cloud configuration gate — no filesystem probe, no model requirement,
+    // no local engine. Anything missing refuses loudly with an actionable
+    // code. The key is read from the secure store here and handed only to
+    // the forked engine's environment (never logged or returned to IPC).
+    let cloud = null;
+    if (enabled && requestedWhere === 'cloud') {
+      const provider = stringField(payload?.cloudProviderId);
+      const config = CLOUD_PROVIDERS[provider];
+      if (!config) {
+        return refuse('cloud-provider-not-supported', {
+          code: 'cloud-provider-not-supported',
+          message:
+            `Cloud provider "${provider ?? 'not configured'}" is not supported. ` +
+            'Choose OpenAI or OpenRouter in Settings.',
+        });
+      }
+      if (payload?.engineMode === 'test' || payload?.engineKind === 'fake') {
+        return refuse('cloud-test-mode-unsupported', {
+          code: 'cloud-test-mode-unsupported',
+          message:
+            'Test Mode cannot run in Cloud: it would label canned text as cloud ' +
+            'transcription. Switch to Production Mode to send audio to the selected cloud provider.',
+        });
+      }
+      const model = stringField(payload?.cloudModelId) ?? config.defaultModel;
+      if (!config.models.includes(model)) {
+        return refuse('cloud-model-not-supported', {
+          code: 'cloud-model-not-supported',
+          message:
+            `Model "${model}" cannot be used with ${config.label}. ` +
+            `Choose one of the models listed in Settings → Speech & AI → Cloud.`,
+        });
+      }
+      if (!cloudEgressConsent.has(provider)) {
+        return refuse('cloud-egress-required', {
+          code: 'cloud-egress-required',
+          message:
+            'Before the first cloud start, open Settings → Speech & AI → Cloud and tick ' +
+            'the acknowledgement that audio leaves this computer and is sent to the selected provider.',
+        });
+      }
+      let apiKey = null;
+      try {
+        apiKey = await cloudKeyStore.read(provider);
+      } catch {
+        apiKey = null;
+      }
+      if (typeof apiKey !== 'string' || !apiKey) {
+        return refuse('cloud-key-missing', {
+          code: 'cloud-key-missing',
+          message:
+            `No ${config.label} API key is saved. Open Settings → Speech & AI → Cloud, ` +
+            'paste your key and click Save.',
+        });
+      }
+      cloud = { provider, apiKey, model };
+    }
+
+    // A cloud fork does not need an installed whisper binary or weights, so
+    // the local discovery decision is skipped entirely for cloud starts.
+    const decision = cloud
+      ? { start: true, reason: 'cloud-provider-ready' }
+      : describeStartDecision({
+          enabled,
+          endpoint,
+          engineAvailable: engineInstallState.available,
+        });
 
     // The renderer needs the current install state either way — this is the
     // event that tells a settings panel WHY nothing started.
@@ -407,7 +680,7 @@ export function registerSpeechIpc({
     // Test mode always wins, as before: the canned engine runs for rehearsal
     // regardless of provider, so an unwired provider id must not refuse a
     // test-mode start that used to work.
-    if (providerEngineKind === null && !wantsTestEngine) {
+    if (!cloud && providerEngineKind === null && !wantsTestEngine) {
       const error = {
         code: 'provider-not-supported',
         message:
@@ -428,13 +701,13 @@ export function registerSpeechIpc({
         error,
       };
     }
-    const targetEngineKind = wantsTestEngine ? 'fake' : providerEngineKind;
+    const targetEngineKind = cloud ? 'cloud' : (wantsTestEngine ? 'fake' : providerEngineKind);
 
     // OS on-device needs no binary and no model file, so the whisper gates
     // below do not apply. The one gate that does: the OS backend only exists
     // on Windows. Refuse early (no fork) anywhere else, naming the path that
     // works — forking just to exit 2 would read as a crash.
-    if (targetEngineKind === 'osdevice' && process.platform !== 'win32') {
+    if (!cloud && targetEngineKind === 'osdevice' && process.platform !== 'win32') {
       const error = {
         code: 'os-device-unavailable',
         message:
@@ -457,7 +730,7 @@ export function registerSpeechIpc({
       };
     }
 
-    if (targetEngineKind === 'whisper' && !hasWhisperBinary(activeBinDir)) {
+    if (!cloud && targetEngineKind === 'whisper' && !hasWhisperBinary(activeBinDir)) {
       const error = {
         code: 'engine-not-installed',
         message:
@@ -486,7 +759,7 @@ export function registerSpeechIpc({
     // the loader and the rail used to show nothing. Probe once (successes are
     // cached), and refuse with the actual remedy instead of starting an
     // engine that cannot transcribe.
-    if (targetEngineKind === 'whisper') {
+    if (!cloud && targetEngineKind === 'whisper') {
       const probeStartedAt = Date.now();
       const probe = await probeEngineBinaryCached({ binDir: activeBinDir });
       diagMain('info', 'engine', 'binary probe finished', {
@@ -515,8 +788,8 @@ export function registerSpeechIpc({
     // Determine targetModelId. A configured model this machine does not have
     // must fail with a sentence, not an opaque engine exit code: the engine
     // refuses to start without weights, by design.
-    let targetModelId = stringField(payload?.modelId);
-    if (targetEngineKind === 'whisper') {
+    let targetModelId = cloud ? cloud.model : stringField(payload?.modelId);
+    if (!cloud && targetEngineKind === 'whisper') {
       if (!targetModelId || !installedIds.has(targetModelId)) {
         targetModelId = installedList[0]?.id ?? null;
       }
@@ -542,7 +815,7 @@ export function registerSpeechIpc({
           error,
         };
       }
-    } else if (!targetModelId && installedList.length > 0) {
+    } else if (!cloud && !targetModelId && installedList.length > 0) {
       targetModelId = installedList[0].id;
     }
     // History attribution for the OS engine names the OS model, not a whisper
@@ -550,7 +823,9 @@ export function registerSpeechIpc({
     // installed-list fallback), and OS-engine segments attributed to it would
     // read as transcribed by a model that never ran. Mirrors the driver's
     // OSDEVICE_MODEL ('os-device').
-    const historyModelId = targetEngineKind === 'osdevice' ? 'os-device' : targetModelId;
+    const historyModelId = cloud
+      ? cloud.model
+      : (targetEngineKind === 'osdevice' ? 'os-device' : targetModelId);
     const startOutcome = (outcome) => {
       diagMain('info', 'engine', 'start settled', {
         ok: outcome?.ok === true,
@@ -564,10 +839,14 @@ export function registerSpeechIpc({
     };
 
     // Transcript history (Decision D9) and the session boundary
-    // metadata ride the SAME start call: the shared 
+    // metadata ride the SAME start call: the shared
     // store instance (so the supervisor and the speech:history:*
     // handlers use ONE directory) plus the model context the
     // renderer sends with the start.
+    //
+    // benchmarkOnly is the sequential-benchmark boundary. An auto-selection
+    // run starts/stops the engine several times with DIFFERENT weights; none
+    // of those starts is a sermon session, so none may open a history session.
     const result = await startSpeechEngine({
       enabled,
       endpoint,
@@ -577,10 +856,15 @@ export function registerSpeechIpc({
       modelsDir: activeModelsDir,
       historyDir: activeHistoryDir,
       historyStore: history,
+      historyless: payload?.benchmarkOnly === true,
       engineKind: targetEngineKind,
       modelId: historyModelId,
-      providerId: stringField(payload?.providerId),
+      providerId: cloud ? `cloud-${cloud.provider}` : stringField(payload?.providerId),
       where: stringField(payload?.where),
+      computeBackend: cloud ? null : (readEngineManifest(activeBinDir)?.backend ?? null),
+      // The key exists only in this call and the child's environment. It is
+      // never included in an IPC reply, a health snapshot, or a log line.
+      ...(cloud ? { cloud } : {}),
       ...callbacks,
     });
 
@@ -608,19 +892,39 @@ export function registerSpeechIpc({
   };
 
   const stop = (reason = 'renderer-request') => {
+    // A remote engine is someone else's process: closing the renderer's
+    // WebSocket (done by engineTransport) and dropping our health is the
+    // whole teardown. NEVER send a kill to a local supervisor that never
+    // forked anything in network mode.
+    if (remoteActive) {
+      remoteActive = false;
+      broadcast('speech:health', null);
+      broadcast('speech:status', { status: 'idle', reason: 'remote-stopped', at: Date.now() });
+      log.info(`Remote engine session closed (${reason}; no local process killed)`);
+      return { ok: true, stopped: false, remote: true, ...snapshot() };
+    }
+    if (autoSelectRunning && !String(reason).startsWith('auto-select')) {
+      return { ok: false, stopped: false, reason: 'auto-select-in-progress' };
+    }
+
     const { stopped } = stopSpeechEngine({ reason });
     // Health describes a RUNNING engine. Leaving the last engine's snapshot in
     // the renderer is how a stopped TEST session kept labelling the rail
     // "TEST ENGINE" after the operator switched to PROD.
     broadcast('speech:health', null);
-    return { ok: true, stopped, ...snapshot() };
+    return { ok: true, stopped, remote: false, ...snapshot() };
   };
 
   // The Phase 6 guardrail rides along on get-state rather than getting its own
   // channel: the safety panel needs the limits and the current trip count on
   // open, and get-state is already the "what is true right now" answer.
   // A separate channel for two numbers would be a channel to keep in sync.
-  const getState = () => ({ ok: true, ...snapshot(), guardrail: guardrailReport() });
+  const getState = () => ({
+    ok: true,
+    ...snapshot(),
+    remote: remoteActive,
+    guardrail: guardrailReport(),
+  });
 
   // --- invoke handles ------------------------------------------------------
 
@@ -629,6 +933,126 @@ export function registerSpeechIpc({
   ipcMain.handle('speech:stop', () => stop());
 
   ipcMain.handle('speech:get-state', () => getState());
+
+  // LIVE — the settings panel's "Test connection". Read-only: it neither
+  // forks nor changes session state, and it never broadcasts health (only a
+  // successful speech:start is allowed to claim a running engine).
+  ipcMain.handle('speech:test-network', async (_event, payload) => {
+    const { endpointVerdict, tokenVerdict } = remoteConfig(payload ?? {});
+    if (!endpointVerdict.ok) return endpointVerdict;
+    if (!tokenVerdict.ok) return tokenVerdict;
+    const verdict = await probeRemote({
+      endpoint: endpointVerdict.endpoint,
+      token: tokenVerdict.token,
+      ...(fetchImpl === undefined ? {} : { fetchImpl }),
+    });
+    return {
+      ok: verdict.ok === true,
+      code: verdict.code ?? null,
+      message: verdict.ok
+        ? `Connected to ${endpointVerdict.endpoint}. Audio will cross this LAN when you start.`
+        : verdict.message,
+      health: verdict.health ?? null,
+    };
+  });
+
+  // --- Cloud control plane -------------------------------------------------
+  // The renderer never receives the key. These handlers answer with a
+  // boolean status only, and the key travels from the secure store straight
+  // into the forked engine's environment on a cloud start.
+  ipcMain.handle('speech:cloud:key:get', async (_event, payload) => {
+    const provider = typeof payload?.provider === 'string' && payload.provider.trim()
+      ? payload.provider.trim()
+      : DEFAULT_CLOUD_PROVIDER;
+    if (!CLOUD_PROVIDERS[provider]) {
+      return {
+        ok: false,
+        success: false,
+        code: 'cloud-provider-not-supported',
+        message: `Only ${Object.keys(CLOUD_PROVIDERS).join(' and ')} cloud keys are supported.`,
+      };
+    }
+    try {
+      return {
+        ok: true,
+        success: true,
+        provider,
+        configured: await cloudKeyStore.has(provider),
+      };
+    } catch {
+      return {
+        ok: false,
+        success: false,
+        code: 'cloud-key-read-failed',
+        message: 'The saved cloud key could not be read. Try saving it again.',
+      };
+    }
+  });
+
+  ipcMain.handle('speech:cloud:key:set', async (_event, payload) => {
+    const provider = typeof payload?.provider === 'string' && payload.provider.trim()
+      ? payload.provider.trim()
+      : DEFAULT_CLOUD_PROVIDER;
+    if (!CLOUD_PROVIDERS[provider]) {
+      return {
+        ok: false,
+        success: false,
+        code: 'cloud-provider-not-supported',
+        message: `Only ${Object.keys(CLOUD_PROVIDERS).join(' and ')} cloud keys are supported.`,
+      };
+    }
+    if (typeof payload?.key !== 'string' || !payload.key.trim()) {
+      return { ok: false, success: false, code: 'invalid-argument', field: 'key', message: 'key must be a non-empty string' };
+    }
+    try {
+      await cloudKeyStore.save(payload.key, provider);
+      return { ok: true, success: true, provider, configured: true };
+    } catch {
+      return {
+        ok: false,
+        success: false,
+        code: 'cloud-key-save-failed',
+        message: 'The cloud key could not be saved to secure storage.',
+      };
+    }
+  });
+
+  ipcMain.handle('speech:cloud:key:clear', async (_event, payload) => {
+    const provider = typeof payload?.provider === 'string' && payload.provider.trim()
+      ? payload.provider.trim()
+      : DEFAULT_CLOUD_PROVIDER;
+    if (!CLOUD_PROVIDERS[provider]) {
+      return {
+        ok: false,
+        success: false,
+        code: 'cloud-provider-not-supported',
+        message: `Only ${Object.keys(CLOUD_PROVIDERS).join(' and ')} cloud keys are supported.`,
+      };
+    }
+    try {
+      await cloudKeyStore.clear(provider);
+      return { ok: true, success: true, provider, configured: false };
+    } catch {
+      return {
+        ok: false,
+        success: false,
+        code: 'cloud-key-clear-failed',
+        message: 'The saved cloud key could not be cleared.',
+      };
+    }
+  });
+
+  ipcMain.handle('speech:cloud:consent', (_event, payload) => {
+    const provider = typeof payload?.provider === 'string' && payload.provider
+      ? payload.provider
+      : DEFAULT_CLOUD_PROVIDER;
+    if (!CLOUD_PROVIDERS[provider]) {
+      return { ok: false, code: 'cloud-provider-not-supported', message: 'Unknown cloud provider.' };
+    }
+    if (payload?.granted === true) cloudEgressConsent.add(provider);
+    else cloudEgressConsent.delete(provider);
+    return { ok: true, provider, granted: cloudEgressConsent.has(provider) };
+  });
 
   // LIVE — the resumable, verified model downloader.
   // in:  { modelId: string }            -> start (or JOIN) the download
@@ -690,36 +1114,145 @@ export function registerSpeechIpc({
   // mode has nothing real to run on a normal install.
   //
   // in:  {} -> install result
-  // out: { ok:true, version, binDir, bytes, sha256, files }
+  // out: { ok:true, version, binDir, bytes, sha256, files, backend,
+  //        selection:{status,code,reason,gpuBackend} }
   //      { ok:false, code, message }
-  ipcMain.handle('speech:install-engine', async () => {
-    if (hasEngineBinary(activeBinDir)) {
+  ipcMain.handle('speech:install-engine', async (_event, payload) => {
+    if (payload !== undefined && payload !== null && typeof payload !== 'object') {
+      return { ok: false, code: 'invalid-argument', field: 'payload', message: 'The engine install request was invalid.' };
+    }
+    if (installInProgress) {
       return {
-        ok: true,
-        alreadyInstalled: true,
-        version: ENGINE_RELEASE.version,
-        binDir: activeBinDir,
+        ok: false,
+        code: 'setup-busy',
+        message: 'Setup is already running. Wait for it to finish.',
       };
     }
-    const engineInstallStartedAt = Date.now();
-    const result = await installEngineBinary({
-      binDir: activeBinDir,
-      downloadsDir: activeDownloadsDir,
-      onProgress: (progress) => broadcast('speech:progress', { kind: 'engine', ...progress }),
-    });
-    // A fresh file invalidates any cached "this binary runs" answer.
-    clearProbeCache();
-    publishInstallState();
-    log.info(`Engine install ${result.ok ? 'ok' : `failed: ${result.code}`} (${ENGINE_RELEASE.version})`);
-    diagMain('info', 'engine', 'engine install settled', {
-      ok: result.ok === true,
-      code: result.code ?? null,
-      bytes: result.bytes ?? null,
-      files: Array.isArray(result.files) ? result.files.length : null,
-      durationMs: Date.now() - engineInstallStartedAt,
-    });
-    return result;
+    installInProgress = true;
+    try {
+      if (getSpeechEngineSnapshot().running || remoteActive) {
+        return {
+          ok: false,
+          code: 'setup-busy',
+          message: 'Sermon Assist is live. Stop it before changing the speech engine.',
+        };
+      }
+      const replace = payload?.replace === true;
+      // Probe inside the lock: the archive selector may only use evidence
+      // gathered here, and a concurrent start must see the lock first.
+      const gpu = await probeGpuCapabilities();
+      const selection = selectEngineAsset({ platform: process.platform, arch: process.arch, gpu });
+      const manifest = readEngineManifest(activeBinDir);
+
+      if (hasEngineBinary(activeBinDir) && !replace) {
+        // An existing binary is NOT necessarily the backend this machine
+        // would select now. Say so instead of implying a GPU build was
+        // installed, and never send the volunteer to delete files by hand.
+        return {
+          ok: true,
+          alreadyInstalled: true,
+          version: ENGINE_RELEASE.version,
+          binDir: activeBinDir,
+          backend: manifest?.backend ?? 'existing-binary',
+          engineBackend: manifest?.backend ?? null,
+          gpuBackend: gpu.backend,
+          selection: {
+            status: 'already-installed',
+            code: null,
+            gpuBackend: gpu.backend,
+            reason: 'An engine is already installed. Selah can replace it automatically if this computer needs a different engine.',
+          },
+        };
+      }
+
+      if (hasEngineBinary(activeBinDir) && replace && manifest && manifest.backend === selection.backend) {
+        // No-op repair: the installed backend already matches what this
+        // machine's current probe selects. This is what prevents a repeated
+        // 650 MB download on an unchanged CPU-fallback machine, while still
+        // allowing a later driver upgrade (selection.backend becomes cuda).
+        return {
+          ok: true,
+          alreadyInstalled: true,
+          version: ENGINE_RELEASE.version,
+          binDir: activeBinDir,
+          backend: manifest.backend,
+          engineBackend: manifest.backend,
+          gpuBackend: gpu.backend,
+          selection: {
+            status: 'already-installed',
+            code: selection.code,
+            gpuBackend: gpu.backend,
+            reason: 'The installed engine already matches what this computer selects now.',
+          },
+        };
+      }
+
+      const engineInstallStartedAt = Date.now();
+      const result = await installEngineBinary({
+        binDir: activeBinDir,
+        downloadsDir: activeDownloadsDir,
+        gpu,
+        onProgress: (progress) => broadcast('speech:progress', { kind: 'engine', ...progress }),
+      });
+      // A fresh file invalidates any cached "this binary runs" answer.
+      clearProbeCache();
+      publishInstallState();
+      log.info(`Engine install ${result.ok ? 'ok' : `failed: ${result.code}`} (${ENGINE_RELEASE.version})`);
+      diagMain('info', 'engine', 'engine install settled', {
+        ok: result.ok === true,
+        code: result.code ?? null,
+        bytes: result.bytes ?? null,
+        files: Array.isArray(result.files) ? result.files.length : null,
+        probeBackend: gpu.backend,
+        selectedBackend: result.backend ?? null,
+        selectionCode: result.selection?.code ?? null,
+        durationMs: Date.now() - engineInstallStartedAt,
+      });
+      return result;
+    } finally {
+      installInProgress = false;
+    }
   });
+
+  // The renderer holds this for the WHOLE one-press setup: engine install,
+  // model downloads, measured matrix, and final selection. A Start during
+  // that window would steal the engine and make auto-select fail. The timer
+  // is a crash recovery belt, not a normal path.
+  ipcMain.handle('speech:setup-lock', (_event, payload) => {
+    if (!payload || typeof payload.locked !== 'boolean') {
+      return { ok: false, code: 'invalid-argument', field: 'locked' };
+    }
+    if (payload.locked) {
+      // A heartbeat refreshes the lock already owned by this setup, even while
+      // the internal benchmark engine is running. Only a NEW acquisition is
+      // refused while live.
+      if (!setupLocked && (getSpeechEngineSnapshot().running || remoteActive)) {
+        return {
+          ok: false,
+          code: 'setup-busy',
+          message: 'Sermon Assist is live. Stop it before running setup again.',
+        };
+      }
+      setupLocked = true;
+      if (setupLockTimer) clearTimeout(setupLockTimer);
+      setupLockTimer = setTimeout(() => {
+        setupLocked = false;
+        setupLockTimer = null;
+      }, 2 * 60 * 1000); // refreshed by the renderer heartbeat; crash recovery only
+      setupLockTimer.unref?.();
+      return { ok: true, locked: true };
+    }
+    setupLocked = false;
+    if (setupLockTimer) clearTimeout(setupLockTimer);
+    setupLockTimer = null;
+    return { ok: true, locked: false };
+  });
+
+  // LIVE — read-only GPU probe for the model guidance line. It reports what
+  // was observed (and what was not), never a predicted RTF or speedup.
+  //
+  // in:  {} -> { platform, arch, backend, available, reason, checked, backends }
+  ipcMain.handle('speech:gpu-capabilities', async () => probeGpuCapabilities());
 
   // LIVE — the explicit self-test behind "Test engine". Same probe the start
   // gate uses, but it always re-spawns (no cached success) and broadcasts the
@@ -840,17 +1373,15 @@ export function registerSpeechIpc({
   // in:  { modelId: string }
   // out: { ok:true, modelId, bytes, sha256, digestSource, verified:true }
   //      { ok:false, code:'model-not-installed'|'digest-mismatch'|..., message }
-  ipcMain.handle('speech:select-model', async (_event, payload) => {
-    if (typeof payload?.modelId !== 'string' || !payload.modelId) {
-      return invalidArgument('modelId');
-    }
-    const model = getModel(payload.modelId);
+  const verifySelection = async (modelId) => {
+    if (typeof modelId !== 'string' || !modelId) return invalidArgument('modelId');
+    const model = getModel(modelId);
     if (!model) {
       return {
         ok: false,
         code: 'unknown-model',
         field: 'modelId',
-        message: `${payload.modelId} is not in the model catalog.`,
+        message: `${modelId} is not in the model catalog.`,
       };
     }
     const verdict = await installer.verify(model);
@@ -859,7 +1390,11 @@ export function registerSpeechIpc({
       log.info(`Model verify failed: ${verdict.code} (${model.fileName})`);
     }
     return verdict;
-  });
+  };
+
+  ipcMain.handle('speech:select-model', async (_event, payload) =>
+    verifySelection(payload?.modelId)
+  );
 
   // LIVE — Phase 3 benchmark. Forwards to the engine's POST /v1/benchmark.
   //
@@ -919,6 +1454,177 @@ export function registerSpeechIpc({
         modelId: payload.modelId,
         message: 'The benchmark could not be run. See the engine log for the error code.',
       };
+    }
+  });
+
+  // LIVE — sequential, measured auto-selection. This is the ONLY path that
+  // may change the recommended model without a human picking a row by hand.
+  //
+  // in:  { clip:{pcm, transcript, sampleRate?}, providerId?, where?, engineMode? }
+  // out: { ok, code, reason, results[], decision, selection, verified[],
+  //        rejected[], installState }
+  //
+  // THE HONESTY CONTRACT: every result row came from actually starting the
+  // engine with that model and running the committed reference clip. A model
+  // that could not be verified, loaded, or measured gets `measured:false`
+  // with the reason; no number is inferred from the catalog or the model's
+  // name. Selection math lives in shared/speech/modelSelection.js and the
+  // start/stop sequence in speech-engine/autoModel.js — both pure and tested
+  // with fake engines, so no GPU is needed to prove the ordering.
+  ipcMain.handle('speech:auto-select-model', async (_event, payload) => {
+    if (payload !== undefined && payload !== null && typeof payload !== 'object') {
+      return invalidArgument('payload');
+    }
+    if (autoSelectRunning) {
+      return {
+        ok: false,
+        code: 'auto-select-in-progress',
+        message: 'An auto-selection run is already in progress.',
+      };
+    }
+    if ((setupLocked && payload?.fromSetup !== true) || installInProgress) {
+      return {
+        ok: false,
+        code: 'setup-busy',
+        message: 'Sermon Assist setup is running. Wait for it to finish before auto-selecting.',
+      };
+    }
+
+    const clip = payload?.clip;
+    if (!clip || !clip.pcm || typeof clip.transcript !== 'string' || !clip.transcript.trim()) {
+      return invalidArgument('clip');
+    }
+    const providerId = typeof payload.providerId === 'string' && payload.providerId
+      ? payload.providerId
+      : 'whispercpp';
+    const where = typeof payload.where === 'string' ? payload.where : 'local';
+    const engineMode = typeof payload.engineMode === 'string' ? payload.engineMode : 'prod';
+
+    if (where !== 'local' || engineMode !== 'prod') {
+      return {
+        ok: false,
+        code: 'unsupported-mode',
+        message:
+          'Auto-selection measures models on this computer. It needs This Device and PROD mode — ' +
+          'the TEST engine replays canned text and cannot measure anything.',
+      };
+    }
+    if (engineKindForProviderId(providerId) !== 'whisper') {
+      return {
+        ok: false,
+        code: 'provider-not-supported',
+        message: 'This provider has no runnable local engine in this build, so no model can be measured.',
+      };
+    }
+
+    // NO HOT-SWAP. A live session owns the engine; restarting it under a
+    // different model mid-service would be the worst possible 'upgrade'.
+    if (getSpeechEngineSnapshot().running || remoteActive) {
+      return {
+        ok: false,
+        code: 'session-active',
+        message:
+          'A speech session is already running. Stop it before auto-selecting a model — ' +
+          'weights cannot be hot-swapped while transcription is active, and a local matrix must not tear down a LAN session.',
+      };
+    }
+    const guard = guardrailReport();
+    if (guard.status === 'suspended') {
+      return {
+        ok: false,
+        code: 'guardrail-suspended',
+        message: guard.lastMessage || 'The speech guardrail has suspended the engine on this computer.',
+      };
+    }
+
+    const installedIds = [...new Set((buildInstallState().installed || [])
+      .map((model) => model?.id)
+      .filter((id) => typeof id === 'string' && getModel(id)?.providerId === providerId))];
+    if (installedIds.length === 0) {
+      return {
+        ok: false,
+        code: 'no-installed-candidates',
+        reason: 'No models for this provider are installed on this computer. Nothing was measured or selected.',
+        results: [],
+      };
+    }
+    // Biggest first: the operator wants the largest model that actually
+    // keeps up, so start there and step down only when the numbers say so.
+    const models = installedIds.map((id) => getModel(id));
+    const candidates = [...installedIds].sort((a, b) => {
+      const sizeA = Number(getModel(a)?.downloadBytes) || 0;
+      const sizeB = Number(getModel(b)?.downloadBytes) || 0;
+      return sizeB - sizeA || a.localeCompare(b);
+    });
+
+    autoSelectRunning = true;
+    try {
+      // Only an actually installed CUDA engine makes a CPU measurement a
+      // fallback. A detected GPU with a CPU engine is a repair case, not a
+      // reason to reject every CPU measurement.
+      const expectedAccel = readEngineManifest(activeBinDir)?.backend === 'cuda';
+      const outcome = await runAutoModelSelection({
+        candidateIds: candidates,
+        models,
+        verifyModel: (modelId) => verifySelection(modelId),
+        startModel: async (modelId) => {
+          const reply = await start({
+            enabled: true,
+            providerId,
+            where: 'local',
+            engineMode: 'prod',
+            modelId,
+            benchmarkOnly: true,
+          });
+          if (!reply?.ok) {
+            return { ok: false, reason: reply?.reason || 'The engine refused to start with this model.' };
+          }
+          return { ok: true, health: reply.health ?? null };
+        },
+        benchmarkModel: async (modelId) => runEngineBenchmark({ modelId, clip }),
+        stopModel: async () => stop('auto-select'),
+        expectedAccel,
+        onProgress: ({ stage, modelId, index, total }) =>
+          publishProgress({ taskId: 'auto-select', stage, modelId, index, total }),
+      });
+
+      let selection = null;
+      if (outcome.ok && outcome.decision?.modelId) {
+        // The final apply goes through the SAME digest check as a manual pick.
+        selection = await verifySelection(outcome.decision.modelId);
+        if (!selection.ok) {
+          return {
+            ...outcome,
+            ok: false,
+            code: 'selection-verification-failed',
+            reason: `The winning model failed its final digest check (${selection.code}). Nothing was selected.`,
+            selection,
+          };
+        }
+      }
+
+      return {
+        ok: outcome.ok,
+        code: outcome.code,
+        reason: outcome.reason,
+        results: outcome.results,
+        decision: outcome.decision,
+        selection,
+        verified: outcome.verified,
+        rejected: outcome.rejected,
+        installState: buildInstallState(),
+      };
+    } catch (error) {
+      log.warn(`Auto-selection failed: ${error?.code ?? error?.name ?? 'Error'}`);
+      return {
+        ok: false,
+        code: 'auto-select-failed',
+        reason: 'Auto-selection could not complete. No model was selected.',
+      };
+    } finally {
+      autoSelectRunning = false;
+      try { stop('auto-select-cleanup'); } catch { /* the orchestrator already stops; this is the belt */ }
+      publishInstallState();
     }
   });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent, within, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, within, cleanup, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import UserPreferencesModal from '@/components/UserPreferencesModal';
 import useSpeechStore, { speechDefaults } from '@/context/SpeechStore';
@@ -218,6 +218,9 @@ const card = screen.getByTestId('sermon-assist-experimental-card');
     expect(
       document.querySelector('[aria-disabled="true"]')
     ).not.toBeNull();
+    expect(
+      screen.getByTestId('speech-quick-setup').closest('[aria-disabled="true"]')
+    ).toBeNull();
   });
 
   itRenders('defaults the three-way control to This Device with local copy first', () => {
@@ -247,11 +250,16 @@ const card = screen.getByTestId('sermon-assist-experimental-card');
       screen.getByRole('radiogroup', { name: 'Cloud provider' })
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId('speech-cloud-provider-groq'));
-    expect(getState().cloudProviderId).toBe('groq');
+    // OpenAI and OpenRouter are the two selectable lanes. Other rows are
+    // shown as unavailable rather than silently selectable but non-functional.
+    expect(screen.getByTestId('speech-cloud-provider-groq')).toBeDisabled();
+    expect(screen.getByTestId('speech-cloud-provider-groq')).toHaveTextContent('Unavailable');
+    expect(screen.getByTestId('speech-cloud-provider-openrouter')).not.toBeDisabled();
+    fireEvent.click(screen.getByTestId('speech-cloud-provider-openai'));
+    expect(getState().cloudProviderId).toBe('openai');
     expect(
       screen.getByTestId('speech-settings-mode')
-    ).toHaveTextContent('Cloud · groq');
+    ).toHaveTextContent('Cloud · openai');
 
     fireEvent.click(screen.getByTestId('speech-where-local'));
     expect(screen.queryByTestId('speech-cloud-block')).toBeNull();
@@ -402,13 +410,95 @@ const card = screen.getByTestId('sermon-assist-experimental-card');
     expect(mode).toHaveTextContent('Local · large-v3');
 
     fireEvent.click(screen.getByTestId('speech-where-network'));
-    expect(mode).toHaveTextContent('Remote engine');
+    // Choosing the mode is not proof of a connection: no health has arrived.
+    expect(mode).toHaveTextContent('Network · not connected');
 
     fireEvent.click(screen.getByTestId('speech-where-cloud'));
     expect(mode).toHaveTextContent('Cloud · not configured');
 
-    fireEvent.click(screen.getByTestId('speech-cloud-provider-deepgram'));
-    expect(mode).toHaveTextContent('Cloud · deepgram');
+    expect(screen.getByTestId('speech-cloud-provider-deepgram')).toBeDisabled();
+    fireEvent.click(screen.getByTestId('speech-cloud-provider-openai'));
+    expect(mode).toHaveTextContent('Cloud · openai');
+  });
+
+  itRenders('stores the OpenAI key through the bridge and reports status without persisting text', async () => {
+    const KEY = 'sk-ui-test-NEVER-STORED';
+    const cloudKeyStatus = vi.fn(async () => ({ ok: true, configured: false }));
+    const saveCloudKey = vi.fn(async () => ({ ok: true, configured: true }));
+    const clearCloudKey = vi.fn(async () => ({ ok: true, configured: false }));
+    window.electronAPI = { speech: { cloudKeyStatus, saveCloudKey, clearCloudKey } };
+    try {
+      resetStore({ where: 'cloud', cloudProviderId: 'openai' });
+      renderLocalAi();
+
+      expect(await screen.findByTestId('speech-cloud-key-status-openai')).toHaveTextContent('No key saved');
+      expect(cloudKeyStatus).toHaveBeenCalledWith('openai');
+      const input = screen.getByTestId('speech-cloud-key-input-openai');
+      fireEvent.change(input, { target: { value: KEY } });
+      fireEvent.click(screen.getByTestId('speech-cloud-key-save-openai'));
+
+      await vi.waitFor(() => expect(saveCloudKey).toHaveBeenCalledWith({ provider: 'openai', key: KEY }));
+      await vi.waitFor(() => expect(screen.getByTestId('speech-cloud-key-status-openai')).toHaveTextContent('Key saved in secure storage'));
+      expect(input).toHaveValue('');
+      expect(JSON.stringify(localStorage)).not.toContain(KEY);
+
+      fireEvent.click(screen.getByTestId('speech-cloud-key-clear-openai'));
+      await vi.waitFor(() => expect(clearCloudKey).toHaveBeenCalledWith({ provider: 'openai' }));
+      await vi.waitFor(() => expect(screen.getByTestId('speech-cloud-key-status-openai')).toHaveTextContent('No key saved'));
+    } finally {
+      delete window.electronAPI;
+    }
+  });
+
+  itRenders('selects OpenRouter/Gemini, changes model, and scopes key status to the provider', async () => {
+    const OR_KEY = 'sk-or-ui-test-NEVER-STORED';
+    const cloudKeyStatus = vi.fn(async (provider) => ({
+      ok: true,
+      configured: provider === 'openai',
+    }));
+    const saveCloudKey = vi.fn(async () => ({ ok: true, configured: true }));
+    const setCloudConsent = vi.fn(async () => ({ ok: true, granted: true }));
+    window.electronAPI = { speech: { cloudKeyStatus, saveCloudKey, setCloudConsent } };
+    try {
+      resetStore({ where: 'cloud', cloudProviderId: 'openai' });
+      renderLocalAi();
+      expect(await screen.findByTestId('speech-cloud-key-status-openrouter')).toHaveTextContent('Key saved in secure storage');
+
+      fireEvent.click(screen.getByTestId('speech-cloud-provider-openrouter'));
+      expect(getState().cloudProviderId).toBe('openrouter');
+      expect(getState().cloudModelId).toBeNull();
+      expect(await screen.findByTestId('speech-cloud-key-status-openrouter')).toHaveTextContent('No key saved');
+      await vi.waitFor(() => expect(cloudKeyStatus).toHaveBeenCalledWith('openrouter'));
+      await vi.waitFor(() => expect(setCloudConsent).toHaveBeenCalledWith('openai', false));
+
+      const modelSelect = screen.getByTestId('speech-cloud-model-openrouter');
+      expect(modelSelect).toHaveValue('google/gemini-2.5-flash');
+      fireEvent.change(modelSelect, { target: { value: 'google/gemini-3.8-flash' } });
+      expect(getState().cloudModelId).toBe('google/gemini-3.8-flash');
+
+      fireEvent.change(screen.getByTestId('speech-cloud-key-input-openrouter'), { target: { value: OR_KEY } });
+      fireEvent.click(screen.getByTestId('speech-cloud-key-save-openrouter'));
+      await vi.waitFor(() => expect(saveCloudKey).toHaveBeenCalledWith({ provider: 'openrouter', key: OR_KEY }));
+      expect(JSON.stringify(localStorage)).not.toContain(OR_KEY);
+    } finally {
+      delete window.electronAPI;
+    }
+  });
+
+  itRenders('requires an explicit egress acknowledgement action', async () => {
+    const setCloudConsent = vi.fn(async () => ({ ok: true, granted: true }));
+    window.electronAPI = { speech: { setCloudConsent } };
+    try {
+      resetStore({ where: 'cloud', cloudProviderId: 'openai' });
+      renderLocalAi();
+      const checkbox = screen.getByTestId('speech-cloud-consent');
+      expect(checkbox).not.toBeChecked();
+      fireEvent.click(checkbox);
+      await vi.waitFor(() => expect(setCloudConsent).toHaveBeenCalledWith('openai', true));
+      expect(checkbox).toBeChecked();
+    } finally {
+      delete window.electronAPI;
+    }
   });
 
   itRenders('resets every Sermon Assist setting in one click and stays off', () => {
@@ -457,6 +547,70 @@ const card = screen.getByTestId('sermon-assist-experimental-card');
     resetStore({ enabled: false, ui: { ...speechDefaults().ui, showEngineErrors: false } });
     renderExperimental();
     expect(screen.getByTestId('speech-show-engine-errors-setting')).not.toBeChecked();
+  });
+
+  itRenders('Network Device exposes an endpoint, a session-only token, and a real test button', async () => {
+    const testNetwork = vi.fn(async () => ({
+      ok: true,
+      code: 'ok',
+      message: 'Connected to http://192.168.1.20:4731.',
+      health: { remote: true, status: 'ok', backend: 'whispercpp' },
+    }));
+    window.electronAPI = { speech: { testNetwork } };
+    try {
+      renderLocalAi();
+      expect(screen.queryByTestId('speech-network-block')).toBeNull();
+
+      fireEvent.click(screen.getByTestId('speech-where-network'));
+      const block = screen.getByTestId('speech-network-block');
+      expect(block).toHaveTextContent(/trusted LAN/i);
+      expect(block).toHaveTextContent(/no TLS/i);
+      expect(block).toHaveTextContent(/raw microphone audio crosses the network/i);
+
+      fireEvent.change(screen.getByTestId('speech-network-endpoint'), {
+        target: { value: 'http://192.168.1.20:4731' },
+      });
+      fireEvent.change(screen.getByTestId('speech-network-token'), {
+        target: { value: 'a'.repeat(64) },
+      });
+      expect(getState().networkEndpoint).toBe('http://192.168.1.20:4731');
+      expect(getState().networkToken).toBe('a'.repeat(64));
+      expect(screen.getByTestId('speech-network-token')).toHaveAttribute('type', 'password');
+
+      // The endpoint is a preference; the token is NOT written to storage.
+      const persisted = JSON.parse(localStorage.getItem('speech-store') ?? '{}');
+      expect(JSON.stringify(persisted)).toContain('networkEndpoint');
+      expect(JSON.stringify(persisted)).not.toContain('networkToken');
+      expect(JSON.stringify(persisted)).not.toContain('a'.repeat(64));
+
+      fireEvent.click(screen.getByTestId('speech-network-test'));
+      await waitFor(() => expect(testNetwork).toHaveBeenCalledWith({
+        networkEndpoint: 'http://192.168.1.20:4731',
+        networkToken: 'a'.repeat(64),
+      }));
+      expect(await screen.findByTestId('speech-network-status')).toHaveTextContent(/Connected/i);
+      // Choosing the mode is not a connection claim until health arrives.
+      expect(screen.getByTestId('speech-settings-mode')).toHaveTextContent('Network · not connected');
+    } finally {
+      delete window.electronAPI;
+    }
+  });
+
+  itRenders('a failed network test shows the reason without claiming a connection', async () => {
+    window.electronAPI = {
+      speech: { testNetwork: vi.fn(async () => ({ ok: false, code: 'network-unauthorized', message: 'Token rejected.' })) },
+    };
+    try {
+      renderLocalAi();
+      fireEvent.click(screen.getByTestId('speech-where-network'));
+      fireEvent.click(screen.getByTestId('speech-network-test'));
+      const status = await screen.findByTestId('speech-network-status');
+      expect(status).toHaveTextContent('Not connected.');
+      expect(status).toHaveTextContent('Token rejected.');
+      expect(screen.getByTestId('speech-settings-mode')).toHaveTextContent('Network · not connected');
+    } finally {
+      delete window.electronAPI;
+    }
   });
 
   itRenders('AGENTS.md guard: Import Bible Translation stays available in User Preferences > Bible', () => {

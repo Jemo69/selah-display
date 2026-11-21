@@ -1199,13 +1199,21 @@ describe('invariant 4: off by default, cold by default', () => {
     const extractSpeechChannels = (relPath) =>
       [...new Set([...readText(relPath).matchAll(/'(speech:[a-z0-9:-]+)'/g)].map((m) => m[1]))].sort();
 
-    // The inventory: 22 channels — 14 renderer->main invokes and 8
-    // main->renderer events. Sorted, so the comparison is order-blind.
+    // The inventory: every renderer->main invoke and main->renderer event,
+    // including the trusted-LAN probe, cloud control plane, measured
+    // auto-selection, and read-only GPU probe. Sorted, so order-blind.
     const EXPECTED_SPEECH_CHANNELS = [
+      'speech:auto-select-model', // INVOKE, live: measured matrix + verified auto-selection
       'speech:benchmark', // INVOKE, stub: Phase 3 benchmark
+      'speech:cloud:consent', // INVOKE: explicit egress acknowledgement before first cloud start
+      'speech:cloud:key:clear', // INVOKE: delete the stored OpenAI key
+      'speech:cloud:key:get', // INVOKE: { configured } only — never the key text
+      'speech:cloud:key:set', // INVOKE: save the key through the keytar-backed store
       'speech:engine-selftest', // INVOKE, live: spawn whisper-cli --help and report loader failures
       'speech:error', // EVENT: one clear engine error (crash loop, bad API, spawn failure)
       'speech:get-state', // INVOKE, live: current supervisor + install state
+      // Added with GPU builds: read-only probe evidence, never a speed claim.
+      'speech:gpu-capabilities', // INVOKE, live: detected backend + evidence for large-model guidance
       'speech:health', // EVENT: engine health snapshot (apiVersion, rtf, memory, pid, uptime)
       // Decision D9 / Phase 4 — the six transcript-history invokes (added
       // with the history feature; summaries-only list, full get, bounded
@@ -1222,9 +1230,11 @@ describe('invariant 4: off by default, cold by default', () => {
       'speech:install-state', // EVENT: discovery outcome { available, mode, endpoint, reason }
       'speech:progress', // EVENT: model download / benchmark progress
       'speech:select-model', // INVOKE, stub: engine session wiring
+      'speech:setup-lock', // INVOKE, live: hold/release the whole one-press setup window
       'speech:start', // INVOKE, live: the one start path (invariant 4's gate)
       'speech:status', // EVENT: supervisor lifecycle { status, reason, at }
-      'speech:stop', // INVOKE, live: SIGTERM now, SIGKILL escalated at 2000 ms
+      'speech:stop', // INVOKE, live: stop the local engine, or just tear down a remote session
+      'speech:test-network', // INVOKE, live: read-only health check for the trusted-LAN engine
       'speech:transcript', // EVENT: relayed partial/final segments (the only channel carrying text)
       'speech:uninstall', // INVOKE: { confirm:false } preview; { confirm:true } erase
       'speech:vad', // EVENT: voice-activity state word — feedback before the first final, never audio
@@ -1345,6 +1355,10 @@ describe('invariant 5: audio stays local unless cloud is chosen', () => {
     for (const relPath of bindScanTargets()) {
       const lines = readText(relPath).split('\n');
       lines.forEach((line, index) => {
+        // A `bind-scan-exempt:` marker is an explicit, reviewed decision for a
+        // client-side REJECTION of a wildcard endpoint (speechRemote.js): the
+        // literal is banned as a BIND target, not as a value we refuse.
+        if (/bind-scan-exempt:/.test(line)) return;
         // Comments are fine (a comment may explain "never 0.0.0.0"); an
         // occurrence in code is not. Cheap and honest: strip `//` comments.
         const code = line.split('//')[0];
@@ -1381,11 +1395,9 @@ describe('invariant 5: audio stays local unless cloud is chosen', () => {
     expect(quitting.allowed).toBe(false);
   });
 
-  // Visible gap: Phase 5 builds the cloud acknowledgement flow (stored key +
-  // explicit "audio leaves this machine" confirmation). Until then, the cloud
-  // path is unreachable only because cloudProviderId defaults to null — this
-  // todo keeps the remaining half of the invariant in test output.
-  it.todo('cloud path requires a stored provider key and an explicit acknowledgement that audio leaves the machine (Phase 5)');
+  // The cloud half of this invariant is now exercised for real in
+  // tests/speech/cloudOpenAiRouting.test.js: a stored key AND an explicit
+  // egress acknowledgement are both required before any fork happens.
 });
 
 // ===========================================================================

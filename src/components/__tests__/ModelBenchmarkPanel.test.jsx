@@ -98,6 +98,27 @@ describe('ModelBenchmarkPanel', () => {
     expect(screen.queryByTestId('benchmark-recommendation')).toBeNull();
   });
 
+  it('states the CPU benchmark gate when no GPU probe answered', () => {
+    render(<ModelBenchmarkPanel />);
+    expect(screen.getByTestId('benchmark-gpu-guidance')).toHaveTextContent(/Backend: CPU/);
+    expect(screen.getByTestId('benchmark-gpu-guidance')).toHaveTextContent(/benchmark-gated/);
+  });
+
+  it('states CUDA evidence without claiming a speedup', async () => {
+    window.electronAPI = {
+      speech: {
+        gpuCapabilities: async () => ({ available: true, backend: 'cuda', cudaVersion: '12.4' }),
+      },
+    };
+    render(<ModelBenchmarkPanel />);
+    await waitFor(() => {
+      expect(screen.getByTestId('benchmark-gpu-guidance')).toHaveTextContent(/Backend: CUDA/);
+    });
+    const guidance = screen.getByTestId('benchmark-gpu-guidance');
+    expect(guidance).toHaveTextContent(/large-v3 and large-v3-turbo may be benchmarked/);
+    expect(guidance).toHaveTextContent(/No speedup is claimed/);
+  });
+
   it('offers Run on every catalog model', () => {
     render(<ModelBenchmarkPanel />);
     expect(screen.getByTestId('benchmark-run-large-v3')).toBeInTheDocument();
@@ -288,6 +309,131 @@ describe('ModelBenchmarkPanel', () => {
     // A benchmark is explicit user action (plan 9.4: "never on install, never
     // on a schedule, never on launch").
     expect(benchmark).not.toHaveBeenCalled();
+  });
+
+  // --- sequential auto-selection (real matrix benchmarking) --------------
+  const installAutoBridge = (reply) => {
+    const autoSelectModel = vi.fn(reply ?? (async () => ({ ok: false, reason: 'nothing measured' })));
+    window.electronAPI = { speech: { benchmark: vi.fn(), autoSelectModel } };
+    return autoSelectModel;
+  };
+
+  it('auto-selects only from rows the main process actually measured', async () => {
+    const results = [
+      MEASURED('large-v3', 0.04, 1.8),
+      MEASURED('large-v3-turbo-q8_0', 0.046, 0.5),
+    ];
+    const autoSelectModel = installAutoBridge(async () => ({
+      ok: true,
+      code: 'selected',
+      reason: 'No refusal',
+      results,
+      decision: {
+        ok: true,
+        modelId: 'large-v3-turbo-q8_0',
+        result: results[1],
+        reason: 'Largest installed model under 1.0x real time within the 2.0 point margin.',
+      },
+    }));
+
+    render(<ModelBenchmarkPanel />);
+    fireEvent.click(screen.getByTestId('benchmark-auto-select-button'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('auto-selection-result')).toHaveTextContent(
+        'large-v3-turbo-q8_0'
+      )
+    );
+    expect(autoSelectModel).toHaveBeenCalledWith(
+      expect.objectContaining({ clip: expect.any(Object), engineMode: 'prod', where: 'local' })
+    );
+    expect(screen.getByTestId('auto-selection-result')).toHaveTextContent(
+      /Largest installed model under 1\.0x real time/
+    );
+    expect(useSpeechStore.getState().modelId).toBe('large-v3-turbo-q8_0');
+    expect(useSpeechStore.getState().benchmarkResults).toHaveLength(2);
+    expect(screen.getByTestId('benchmark-notice')).toHaveTextContent(/engine is stopped/i);
+  });
+
+  it('shows the refusal and keeps the current model when nothing passes', async () => {
+    installAutoBridge(async () => ({
+      ok: false,
+      code: 'no-passing-results',
+      reason: 'No installed model produced a measured result that keeps up.',
+      results: [{ ...UNMEASURED, measured: false, reason: 'engine could not measure' }],
+    }));
+
+    render(<ModelBenchmarkPanel />);
+    fireEvent.click(screen.getByTestId('benchmark-auto-select-button'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('auto-selection-refusal')).toHaveTextContent(
+        /No installed model produced a measured result/i
+      )
+    );
+    expect(screen.queryByTestId('auto-selection-result')).toBeNull();
+    expect(useSpeechStore.getState().modelId).toBe('large-v3');
+    // The honest non-measurement is still persisted, with its reason.
+    expect(useSpeechStore.getState().benchmarkResults[0].measured).toBe(false);
+  });
+
+  it('refuses an uninstalled candidate without selecting it', async () => {
+    installAutoBridge(async () => ({
+      ok: false,
+      code: 'no-installed-candidates',
+      reason: 'No models for this provider are installed on this computer.',
+      results: [],
+    }));
+
+    render(<ModelBenchmarkPanel />);
+    fireEvent.click(screen.getByTestId('benchmark-auto-select-button'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('auto-selection-refusal')).toHaveTextContent(
+        /No models for this provider are installed/i
+      )
+    );
+    expect(useSpeechStore.getState().benchmarkResults).toHaveLength(0);
+  });
+
+  it('never selects a model when the reply has no measured decision', async () => {
+    installAutoBridge(async () => ({
+      ok: true,
+      results: [],
+      decision: { ok: false, modelId: null, reason: 'No measured model passed the gates.' },
+    }));
+
+    render(<ModelBenchmarkPanel />);
+    fireEvent.click(screen.getByTestId('benchmark-auto-select-button'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('auto-selection-refusal')).toHaveTextContent(
+        /No measured model passed/i
+      )
+    );
+    expect(useSpeechStore.getState().modelId).toBe('large-v3');
+  });
+
+  it('refuses to hot-swap while a live session owns the engine', () => {
+    const autoSelectModel = installAutoBridge();
+    useSpeechStore.getState().setStatus('listening');
+    render(<ModelBenchmarkPanel />);
+    const button = screen.getByTestId('benchmark-auto-select-button');
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('title', expect.stringMatching(/hot-swapped/i));
+    fireEvent.click(button);
+    expect(autoSelectModel).not.toHaveBeenCalled();
+  });
+
+  it('refuses the TEST engine, which cannot measure anything', () => {
+    const autoSelectModel = installAutoBridge();
+    useSpeechStore.getState().setEngineMode('test');
+    render(<ModelBenchmarkPanel />);
+    const button = screen.getByTestId('benchmark-auto-select-button');
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('title', expect.stringMatching(/TEST engine/i));
+    fireEvent.click(button);
+    expect(autoSelectModel).not.toHaveBeenCalled();
   });
 
   it('persists results but never runtime state', () => {

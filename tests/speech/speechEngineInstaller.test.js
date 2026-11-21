@@ -18,10 +18,14 @@ import {
   ENGINE_ASSETS,
   engineAssetFor,
   engineBinaryName,
+  engineManifestPath,
   hasEngineBinary,
   installEngineBinary,
+  readEngineManifest,
+  replaceEngineDirectory,
   unpackEngineArchive,
   verifyEngineArchive,
+  writeEngineManifest,
 } from '../../main/speechEngineInstaller.js';
 
 /** Minimal structurally-real zip (stored entries, no compression). */
@@ -227,5 +231,59 @@ describe('installEngineBinary', () => {
     const digest = createHash('sha256').update(buffer).digest('hex');
     expect(verifyEngineArchive(buffer, { sha256: digest })).toBe(true);
     expect(verifyEngineArchive(buffer, { sha256: 'deadbeef' })).toBe(false);
+  });
+});
+
+describe('engine manifest and atomic replacement', () => {
+  it('records the backend that was actually installed', async () => {
+    const binDir = path.join(tmp, 'bin');
+    fs.mkdirSync(binDir, { recursive: true });
+    await writeEngineManifest(binDir, {
+      backend: 'cuda',
+      assetKey: 'win32-x64-cuda-12.4',
+      version: 'b5454',
+      selectionCode: null,
+      gpuBackend: 'cuda',
+    });
+    expect(readEngineManifest(binDir)).toMatchObject({
+      backend: 'cuda',
+      assetKey: 'win32-x64-cuda-12.4',
+      version: 'b5454',
+      gpuBackend: 'cuda',
+    });
+    expect(engineManifestPath(binDir)).toBe(path.join(binDir, 'engine-manifest.json'));
+  });
+
+  it('treats an old engine with no manifest as unknown, not as GPU', () => {
+    const binDir = path.join(tmp, 'bin');
+    fs.mkdirSync(binDir, { recursive: true });
+    expect(readEngineManifest(binDir)).toBeNull();
+  });
+
+  it('swaps a complete staging directory into place and removes the old one', async () => {
+    const binDir = path.join(tmp, 'bin');
+    const stagingDir = path.join(tmp, 'staging');
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.mkdirSync(stagingDir, { recursive: true });
+    fs.writeFileSync(path.join(binDir, 'old.dll'), 'old');
+    fs.writeFileSync(path.join(stagingDir, 'whisper-cli'), 'new', { mode: 0o755 });
+
+    const result = await replaceEngineDirectory({ stagingDir, binDir });
+    expect(result.ok).toBe(true);
+    expect(fs.existsSync(path.join(binDir, 'old.dll'))).toBe(false);
+    expect(fs.readFileSync(path.join(binDir, 'whisper-cli'), 'utf8')).toBe('new');
+    expect(fs.existsSync(stagingDir)).toBe(false);
+  });
+
+  it('restores the old engine when a replacement cannot be swapped in', async () => {
+    const binDir = path.join(tmp, 'bin');
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.writeFileSync(path.join(binDir, 'whisper-cli'), 'old');
+    const result = await replaceEngineDirectory({
+      stagingDir: path.join(tmp, 'missing-staging'),
+      binDir,
+    });
+    expect(result).toMatchObject({ ok: false, code: 'install-failed' });
+    expect(fs.readFileSync(path.join(binDir, 'whisper-cli'), 'utf8')).toBe('old');
   });
 });
