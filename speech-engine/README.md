@@ -40,9 +40,20 @@ opted in.
 
 ## Trusted-LAN remote engine (explicit opt-in)
 
-Default posture is unchanged: loopback-only, no exceptions. To run the
-engine on a second machine for Selah's **Network Device** mode, the operator
-must do **both** of these on the engine machine:
+**Setup ownership:** all Sermon Assist setup belongs to the Selah desktop app
+and stays in this repository (`src/`, `main/`, `shared/`, `speech-engine/`,
+`tests/`, `docs/`). No external plugin, sidecar repo, separate installer
+project, or zip of loose executables; no volunteer-facing step that asks them
+to find, copy, configure, or run a file by hand. The app must probe the
+machine, verify downloads, install the engine and model, select them, and
+explain everything in plain language.
+
+The commands below are **developer lab verification only** for the LAN opt-in
+gate. They are not the operator setup path and must not be shipped as one.
+
+Default posture is unchanged: loopback-only, no exceptions. To exercise the
+transport against an engine on a second machine in a lab, both of these must
+be true on the engine machine:
 
 ```sh
 # flag form — token is mandatory with a LAN bind (no generated fallback)

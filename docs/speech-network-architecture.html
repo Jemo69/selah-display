@@ -383,8 +383,10 @@
   </section>
 
   <section aria-labelledby="runbook">
-    <h2 id="runbook">07 · Setup runbook</h2>
-    <h3>Remote machine (the engine host)</h3>
+    <h2 id="runbook">07 · Setup ownership and lab verification</h2>
+    <div class="callout"><strong>Product rule:</strong> all Sermon Assist setup is owned by the Selah desktop app and lives in this repository. No external plugins, sidecar repos, separate installer projects, or zip bundles of loose executables. The app probes the machine, verifies downloads, installs engine and model, selects them, and explains every step in plain language. A volunteer is never asked to locate, copy, configure, or run a file by hand.</div>
+    <p>This PR implements the transport contract only. The one-click, app-owned provisioning of a remote engine is required product work and is not delegated outside the app repo. The commands below are <strong>developer lab verification only</strong>: they exist to exercise the LAN opt-in gate in a test harness. They are not an operator setup path and must not be shipped as one.</p>
+    <h3>Lab verification only — engine host</h3>
     <pre><code># Explicit token + explicit LAN opt-in are BOTH required.
 # Default port is 4731; use --port or LD_SPEECH_PORT if you change it.
 node speech-engine/index.js \
@@ -405,7 +407,7 @@ node speech-engine/index.js</code></pre>
       <li>Expect an <code>LAN OPT-IN</code> warning naming the bind host. A non-loopback bind without the opt-in, or the opt-in without a token, is refused.</li>
       <li>Run a real recognizer on that machine; the canned fake backend reports itself honestly and will be labelled as canned text in the rail.</li>
     </ul>
-    <h3>App machine</h3>
+    <h3>In-app transport configuration (this PR)</h3>
     <ol>
       <li>Open <strong>User Preferences → Experimental → Speech &amp; AI</strong>, enable Sermon Assist, and choose <strong>Network Device</strong>.</li>
       <li>Enter the engine origin, for example <code>http://192.168.1.20:4731</code>. No path or credentials.</li>
@@ -445,6 +447,7 @@ npm run build
       <li>Cross-host routing and firewall behaviour on a real church LAN are unverified.</li>
       <li>Wi-Fi/Ethernet loss and reconnect behaviour during a service are unverified; the transport has no auto-reconnect in this branch.</li>
       <li>TLS is not implemented and is not verified — by design. The trusted-LAN assumption is a manual operational control.</li>
+      <li>App-owned one-click provisioning of the remote engine is not implemented in this branch; only the transport, validation, and in-app endpoint/token controls are. The required follow-up stays inside src/, main/, shared/, speech-engine/, tests/ and docs/.</li>
     </ul>
   </section>
 
