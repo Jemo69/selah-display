@@ -66,9 +66,12 @@ export function stripRuntimeSettings(settings) {
 
 const baseOutputSettings = { ...defaultOutput1Settings };
 
-const getBaseSettings = (outputKey) => {
-  if (outputKey === 'output2') return { ...defaultOutput2Settings };
-  if (outputKey === 'stream') return { ...defaultStreamSettings };
+const getBaseSettings = (outputKeyOrOutput) => {
+  const key = typeof outputKeyOrOutput === 'object' && outputKeyOrOutput !== null
+    ? (outputKeyOrOutput.key || outputKeyOrOutput.id)
+    : outputKeyOrOutput;
+  if (key === 'output2') return { ...defaultOutput2Settings };
+  if (key === 'stream') return { ...defaultStreamSettings };
   return { ...defaultOutput1Settings };
 };
 
@@ -100,7 +103,7 @@ export const bibleTemplates = [
       const key = typeof outputKeyOrOutput === 'object' ? (outputKeyOrOutput?.key || outputKeyOrOutput?.id) : outputKeyOrOutput;
       const isStage = (() => { if (typeof outputKeyOrOutput === 'object' && outputKeyOrOutput !== null) return outputKeyOrOutput.type === 'stage' || outputKeyOrOutput.key === 'stage' || outputKeyOrOutput.id === 'stage'; return key === 'stage'; })();
       if (isStage) return { ...defaultStageSettings, fontStyle: 'Inter', liveFontSize: 96, liveAlign: 'center', liveColor: '#FFFFFF', liveBold: true, nextFontSize: 48, nextColor: '#808080', prevFontSize: 36, showNextArrow: false, showUpcomingSong: false, bibleReferencePosition: 'bottom-center', bibleReferenceSize: 32, showBibleVersion: true, transitionAnimation: 'fade', transitionSpeed: 200 };
-      const base = key === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(key);
       return { ...base, fontStyle: 'Inter', fontSize: 60, textAlign: 'center', lyricsPosition: 'center', bibleReferenceSize: 32, showBibleVersion: true };
   }},
 ];
@@ -126,14 +129,14 @@ export const freeNoteTemplates = [
       const key = typeof outputKeyOrOutput === 'object' ? (outputKeyOrOutput?.key || outputKeyOrOutput?.id) : outputKeyOrOutput;
       const isStage = (() => { if (typeof outputKeyOrOutput === 'object' && outputKeyOrOutput !== null) return outputKeyOrOutput.type === 'stage' || outputKeyOrOutput.key === 'stage' || outputKeyOrOutput.id === 'stage'; return key === 'stage'; })();
       if (isStage) return { ...defaultStageSettings, fontStyle: 'Inter', liveFontSize: 96, liveAlign: 'center', liveColor: '#FBBF24', liveBold: true, nextFontSize: 40, nextColor: '#808080', prevFontSize: 32, showNextArrow: false, showUpcomingSong: false, transitionAnimation: 'fade', transitionSpeed: 200 };
-      const base = key === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(key);
       return { ...base, fontStyle: 'Inter', fontSize: 60, textAlign: 'center', lyricsPosition: 'center' };
   }},
   { id: 'freenote-stage-alert', title: 'Stage — Alert Banner', description: 'Stage confidence monitor urgent cue or alert banner', audience: 'freenote', getSettings: (outputKeyOrOutput) => {
       const key = typeof outputKeyOrOutput === 'object' ? (outputKeyOrOutput?.key || outputKeyOrOutput?.id) : outputKeyOrOutput;
       const isStage = (() => { if (typeof outputKeyOrOutput === 'object' && outputKeyOrOutput !== null) return outputKeyOrOutput.type === 'stage' || outputKeyOrOutput.key === 'stage' || outputKeyOrOutput.id === 'stage'; return key === 'stage'; })();
       if (isStage) return { ...defaultStageSettings, fontStyle: 'Inter', backgroundColor: '#450A0A', liveFontSize: 104, liveAlign: 'center', liveColor: '#FEF2F2', liveBold: true, nextFontSize: 0, prevFontSize: 0, showNextArrow: false, showUpcomingSong: false, transitionAnimation: 'none' };
-      const base = key === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(key);
       return { ...base, fontStyle: 'Inter', bold: true, fontSize: 68, textAlign: 'center', lyricsPosition: 'center', backgroundColor: '#B91C1C' };
   }},
 ];

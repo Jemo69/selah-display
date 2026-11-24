@@ -6,9 +6,12 @@ const log = createLogger('OutputTemplates');
 const baseOutputSettings = { ...defaultOutput1Settings };
 
 // Stream keeps its band geometry when any template is applied to it.
-const getBaseSettings = (outputKey) => {
-  if (outputKey === 'output2') return { ...defaultOutput2Settings };
-  if (outputKey === 'stream') return { ...defaultStreamSettings };
+const getBaseSettings = (outputKeyOrOutput) => {
+  const key = typeof outputKeyOrOutput === 'object' && outputKeyOrOutput !== null
+    ? (outputKeyOrOutput.key || outputKeyOrOutput.id)
+    : outputKeyOrOutput;
+  if (key === 'output2') return { ...defaultOutput2Settings };
+  if (key === 'stream') return { ...defaultStreamSettings };
   return { ...defaultOutput1Settings };
 };
 
@@ -220,7 +223,7 @@ export const bibleTemplates = [
           transitionSpeed: 200,
         };
       }
-      const base = key === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(key);
       return {
         ...base,
         fontStyle: 'Inter',
@@ -358,7 +361,7 @@ export const freeNoteTemplates = [
           transitionSpeed: 200,
         };
       }
-      const base = key === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(key);
       return {
         ...base,
         fontStyle: 'Inter',
@@ -397,7 +400,7 @@ export const freeNoteTemplates = [
           transitionAnimation: 'none',
         };
       }
-      const base = key === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(key);
       return {
         ...base,
         fontStyle: 'Inter',
