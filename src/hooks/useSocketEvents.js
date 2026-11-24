@@ -276,6 +276,8 @@ const useSocketEvents = (role) => {
         store.setOutput1Enabled(enabled);
       } else if (output === 'output2') {
         store.setOutput2Enabled(enabled);
+      } else if (output === 'stream') {
+        store.setStreamEnabled(enabled);
       } else if (output === 'stage') {
         store.setStageEnabled(enabled);
       } else if (output && output.startsWith('custom_')) {
@@ -309,7 +311,7 @@ const useSocketEvents = (role) => {
             instanceCount: instanceCount || 1,
           };
 
-          if (output === 'output1' || output === 'output2' || output?.startsWith('custom_')) {
+          if (output === 'output1' || output === 'output2' || output === 'stream' || output?.startsWith('custom_')) {
             updateOutputSettings(output, updates);
 
             if (instanceCount > 1) {
@@ -803,6 +805,9 @@ const useSocketEvents = (role) => {
             }
             if (typeof currentState.output2Enabled === 'boolean') {
               socket.emit('individualOutputToggle', { output: 'output2', enabled: currentState.output2Enabled });
+            }
+            if (typeof currentState.streamEnabled === 'boolean') {
+              socket.emit('individualOutputToggle', { output: 'stream', enabled: currentState.streamEnabled });
             }
             if (typeof currentState.stageEnabled === 'boolean') {
               socket.emit('individualOutputToggle', { output: 'stage', enabled: currentState.stageEnabled });

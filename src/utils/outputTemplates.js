@@ -586,11 +586,9 @@ export function resolveTemplateById(templateId, outputKey, userTemplates = []) {
       id: 'default',
       title: 'Default',
       getSettings: (k) => {
-        if (k === 'output2') return { ...defaultOutput2Settings };
         if (k === 'stage') return { ...defaultStageSettings };
-        // custom outputs: caller should pass correct base via getTemplateSettings fallback; we default to regular
-        // hook will handle custom stage via output.type check before calling
-        return { ...defaultOutput1Settings };
+        // custom outputs: caller should pass the correct base via getTemplateSettings fallback.
+        return getBaseSettings(k);
       },
       settings: outputKey === 'stage' ? { ...defaultStageSettings } : getBaseSettings(outputKey),
     };
@@ -611,8 +609,8 @@ export function resolveTemplateForOutput(templateId, output, userTemplates = [])
     return {
       id: 'default',
       title: 'Default',
-      getSettings: () => isStage ? { ...defaultStageSettings } : key === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings },
-      settings: isStage ? { ...defaultStageSettings } : key === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings },
+      getSettings: () => isStage ? { ...defaultStageSettings } : getBaseSettings(key),
+      settings: isStage ? { ...defaultStageSettings } : getBaseSettings(key),
     };
   }
   const allBuiltIns = [...outputTemplates, ...bibleTemplates, ...freeNoteTemplates, ...stageTemplates];

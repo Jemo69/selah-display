@@ -1043,6 +1043,7 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
                       ...textStrokeStyles,
                       textAlign,
                       lineHeight: 1.15,
+                      marginTop: '0.35em',
                       maxWidth: '100%',
                       whiteSpace: 'nowrap',
                       overflow: 'hidden',

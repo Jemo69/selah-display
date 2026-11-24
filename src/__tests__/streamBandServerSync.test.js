@@ -65,6 +65,26 @@ describe('stream output server state', () => {
     expect(state).toHaveProperty('streamEnabled', true);
   });
 
+  it('accepts live metrics from the stream surface', () => {
+    const output = createFakeSocket('stream-output', 'output1');
+    connect(output);
+
+    output.trigger('outputMetrics', {
+      output: 'stream',
+      metrics: {
+        adjustedFontSize: 64,
+        autosizerActive: true,
+        viewportWidth: 1920,
+        viewportHeight: 1080,
+        timestamp: Date.now(),
+      },
+    });
+
+    expect(output.emit).not.toHaveBeenCalledWith('permissionError', expect.anything());
+    const broadcast = io.emit.mock.calls.find(([event, payload]) => event === 'outputMetrics' && payload?.output === 'stream');
+    expect(broadcast?.[1]?.metrics).toMatchObject({ adjustedFontSize: 64, autosizerActive: true });
+  });
+
   it('persists the stream toggle and settings in the session snapshot', async () => {
     const desktop = createFakeSocket('desktop', 'desktop');
     connect(desktop);

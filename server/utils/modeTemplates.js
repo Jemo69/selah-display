@@ -152,7 +152,7 @@ export const stageTemplates = [
 export function resolveTemplateById(templateId, outputKey, userTemplates = []) {
   if (!templateId) return null;
   if (templateId === 'default') {
-    return { id: 'default', title: 'Default', getSettings: (k) => { if (k === 'output2') return { ...defaultOutput2Settings }; if (k === 'stage') return { ...defaultStageSettings }; return { ...defaultOutput1Settings }; }, settings: outputKey === 'stage' ? { ...defaultStageSettings } : getBaseSettings(outputKey) };
+    return { id: 'default', title: 'Default', getSettings: (k) => { if (k === 'stage') return { ...defaultStageSettings }; return getBaseSettings(k); }, settings: outputKey === 'stage' ? { ...defaultStageSettings } : getBaseSettings(outputKey) };
   }
   const allBuiltIns = [...outputTemplates, ...bibleTemplates, ...freeNoteTemplates, ...stageTemplates];
   const found = allBuiltIns.find((t) => t.id === templateId);
@@ -167,7 +167,7 @@ export function resolveTemplateForOutput(templateId, output, userTemplates = [])
   if (templateId === 'default') {
     const key = output?.key || output?.id || 'output1';
     const isStage = output?.type === 'stage' || key === 'stage';
-    return { id: 'default', title: 'Default', getSettings: () => isStage ? { ...defaultStageSettings } : key === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings }, settings: isStage ? { ...defaultStageSettings } : key === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings } };
+    return { id: 'default', title: 'Default', getSettings: () => isStage ? { ...defaultStageSettings } : getBaseSettings(key), settings: isStage ? { ...defaultStageSettings } : getBaseSettings(key) };
   }
   const allBuiltIns = [...outputTemplates, ...bibleTemplates, ...freeNoteTemplates, ...stageTemplates];
   const found = allBuiltIns.find((t) => t.id === templateId);

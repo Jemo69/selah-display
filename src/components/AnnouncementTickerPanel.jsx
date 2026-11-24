@@ -2,6 +2,8 @@ import React from 'react';
 import { Megaphone, Monitor, Plus, X, Eye, EyeOff, Trash2, Bold, Italic, AlignLeft, AlignCenter, AlignRight, ChevronDown, ChevronRight } from 'lucide-react';
 import { safeGet, safeSet } from '../utils/persistentStorage';
 import { TICKER_DEFAULT_STYLE } from 'shared/showControl';
+import useLyricsStore from '../context/LyricsStore';
+import { getOutputSettings } from '../utils/outputs';
 
 /** Persisted collapse state for the text-style controls (operator preference). */
 const STYLING_OPEN_KEY = 'selah-announcement-styling-open';
@@ -33,9 +35,16 @@ const AnnouncementTickerPanel = ({
   const inputRef = React.useRef(null);
 
   const items = Array.isArray(queue) ? queue : [];
-  // The Stream band renders scripture only; announcements would not paint, so
-  // do not offer a target that cannot show them.
-  const outputOptions = Array.isArray(outputs) ? outputs.filter((output) => output.type !== 'stream') : [];
+  // Band outputs paint scripture only; announcements have no surface there,
+  // so never offer a target that cannot show them.
+  const settingsState = useLyricsStore.getState();
+  const outputOptions = Array.isArray(outputs)
+    ? outputs.filter((output) => {
+        const key = output.key || output.id;
+        if (output.type === 'stream') return false;
+        return getOutputSettings(settingsState, key)?.streamBandEnabled !== true;
+      })
+    : [];
   const selectedTarget = targetOutput === 'all' || outputOptions.some((output) => (output.key || output.id) === targetOutput)
     ? targetOutput
     : 'all';

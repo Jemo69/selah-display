@@ -127,6 +127,7 @@ Response:
     "isOutputOn": true,
     "output1Enabled": true,
     "output2Enabled": true,
+    "streamEnabled": true,
     "stageEnabled": true,
     "setlistCount": 5,
     "lyricsCount": 12,

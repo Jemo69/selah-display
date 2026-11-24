@@ -1705,7 +1705,7 @@ export default function registerSocketEvents(io, { hasPermission }) {
         socket.emit('permissionError', 'Insufficient permissions to publish metrics');
         return;
       }
-      if (!output || !metrics || (output !== 'output1' && output !== 'output2' && !output.startsWith('custom_'))) {
+      if (!output || !metrics || (output !== 'output1' && output !== 'output2' && output !== 'stream' && !output.startsWith('custom_'))) {
         return;
       }
       if (!outputInstances[output]) outputInstances[output] = new Map();

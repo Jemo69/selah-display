@@ -87,7 +87,7 @@ export function getStreamBandReferenceFontSize({
   if (!hasReference) return 0;
 
   const reserve = getStreamBandReferenceReserve(contentHeight, true);
-  const cap = Math.max(14, Math.min(Number(preferredSize) || 32, reserve * 0.7));
-  const scaled = Math.max(16, (Number(bodyFontSize) || 0) * 0.32);
+  const cap = Math.max(16, Math.min(Number(preferredSize) || 32, reserve * 0.72));
+  const scaled = Math.max(18, (Number(bodyFontSize) || 0) * 0.36);
   return Math.round(Math.min(cap, scaled));
 }
