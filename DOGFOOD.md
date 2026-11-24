@@ -1,6 +1,6 @@
 # DOGFOOD — Live-stream lower-third that never crops the preacher
 
-Date: 2026-11-24 — branch `feat/stream-lower-third-band`, PR TBD.
+Date: 2026-11-24 — branch `feat/stream-lower-third-band`, PR #88.
 
 ## Scores per surface (minimum, never average)
 
@@ -36,7 +36,7 @@ Date: 2026-11-24 — branch `feat/stream-lower-third-band`, PR TBD.
 ## Commits / PR
 
 - Branch `feat/stream-lower-third-band`, commits `9d8d5d8`, `5880670`, `b0ec5fd`, `5fc70c5`, `e4d10ec`, `a9e7e98`, `fd88ec9`, `dba1a9f`.
-- PR TBD (added after filing).
+- PR #88: https://github.com/Jemo69/selah-display/pull/88
 
 ---
 
