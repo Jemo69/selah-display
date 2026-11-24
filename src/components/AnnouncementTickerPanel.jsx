@@ -33,7 +33,9 @@ const AnnouncementTickerPanel = ({
   const inputRef = React.useRef(null);
 
   const items = Array.isArray(queue) ? queue : [];
-  const outputOptions = Array.isArray(outputs) ? outputs : [];
+  // The Stream band renders scripture only; announcements would not paint, so
+  // do not offer a target that cannot show them.
+  const outputOptions = Array.isArray(outputs) ? outputs.filter((output) => output.type !== 'stream') : [];
   const selectedTarget = targetOutput === 'all' || outputOptions.some((output) => (output.key || output.id) === targetOutput)
     ? targetOutput
     : 'all';

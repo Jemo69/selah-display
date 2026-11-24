@@ -127,6 +127,38 @@ function OBSInstructions({ darkMode, localIP }) {
             </SetupOption>
 
             <SetupOption
+                icon={<Video className="w-5 h-5" />}
+                title="Live Stream Band — Bible Over Camera"
+                badge="No preacher crop"
+                badgeColor="green"
+                darkMode={darkMode}
+            >
+                <SetupDescription darkMode={darkMode}>
+                    Show the verse on the livestream without shrinking the preacher. The Stream output paints only a transparent band at the bottom of the frame; everything above it stays camera.
+                </SetupDescription>
+
+                <StepsList>
+                    <Step number={1} darkMode={darkMode}>
+                        In Selah, open <Strong>Output Settings → Stream</Strong>. <Strong>Live Stream Band</Strong> is already on.
+                    </Step>
+                    <Step number={2} darkMode={darkMode}>
+                        Add an OBS <Strong>Browser</Strong> source with this URL:
+                        <URLBox darkMode={darkMode}>http://localhost:4000/#/stream</URLBox>
+                    </Step>
+                    <Step number={3} darkMode={darkMode}>
+                        Set it to <Strong>1920 × 1080</Strong> and place it <Strong>above</Strong> your camera source.
+                    </Step>
+                    <Step number={4} darkMode={darkMode}>
+                        Pick the band height (a third is the default; half or three-quarters are there when a verse needs more room). Long verses shrink automatically to stay inside the band.
+                    </Step>
+                </StepsList>
+
+                <TestingBox darkMode={darkMode}>
+                    <Strong>Testing:</Strong> fire a Bible verse. Only the bottom band changes — the preacher's picture above it is untouched.
+                </TestingBox>
+            </SetupOption>
+
+            <SetupOption
                 icon={<Network className="w-5 h-5" />}
                 title="Network Setup"
                 badge="Different Computers"

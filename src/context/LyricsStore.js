@@ -64,7 +64,11 @@ export const defaultOutput1Settings = {
   transitionAnimation: 'none',
   transitionSpeed: 150,
   ndiEnabled: false,
-  ndiSourceName: ''
+  ndiSourceName: '',
+  streamBandEnabled: false,
+  streamBandHeightPercent: 33,
+  streamBandBackdrop: 'gradient',
+  streamBandAutoFit: true
 };
 
 export const defaultOutput2Settings = {
@@ -122,7 +126,43 @@ export const defaultOutput2Settings = {
   transitionAnimation: 'none',
   transitionSpeed: 150,
   ndiEnabled: false,
-  ndiSourceName: ''
+  ndiSourceName: '',
+  streamBandEnabled: false,
+  streamBandHeightPercent: 33,
+  streamBandBackdrop: 'gradient',
+  streamBandAutoFit: true
+};
+
+// The stream overlay is a regular output whose natural shape is a transparent
+// lower band. It exists so a church never has to trade preacher pixels for
+// scripture pixels: the camera keeps the frame, the verse takes the bottom.
+export const defaultStreamSettings = {
+  ...defaultOutput1Settings,
+  fontStyle: 'Inter',
+  bold: true,
+  textAlign: 'center',
+  fontSize: 88,
+  fontColor: '#FFFFFF',
+  backgroundColor: '#000000',
+  backgroundOpacity: 6,
+  backgroundBandVerticalPadding: 26,
+  xMargin: 4,
+  yMargin: 0,
+  minFontSize: 20,
+  maxFontSize: 220,
+  fitWidthPercent: 94,
+  fitHeightPercent: 94,
+  bibleReferenceSize: 32,
+  dropShadowOpacity: 5,
+  dropShadowOffsetY: 4,
+  dropShadowBlur: 12,
+  lyricsPosition: 'center',
+  transitionAnimation: 'fade',
+  transitionSpeed: 200,
+  streamBandEnabled: true,
+  streamBandHeightPercent: 33,
+  streamBandBackdrop: 'gradient',
+  streamBandAutoFit: true
 };
 
 export const defaultStageSettings = {
@@ -246,6 +286,7 @@ const useLyricsStore = create(
       output1Enabled: true,
       output2Enabled: true,
       stageEnabled: true,
+      streamEnabled: true,
       customOutputs: [],
       customOutputSettings: {},
       customOutputEnabled: {},
@@ -294,6 +335,7 @@ const useLyricsStore = create(
       modeTemplates: {
         output1: { enabled: false, song: null, bible: null, freenote: null },
         output2: { enabled: false, song: null, bible: null, freenote: null },
+        stream: { enabled: false, song: null, bible: null, freenote: null },
         stage: { enabled: false, song: null, bible: null, freenote: null },
       },
       freeNotesDrafts: [],
@@ -476,6 +518,7 @@ const useLyricsStore = create(
       setOutput1Enabled: (enabled) => set({ output1Enabled: enabled }),
       setOutput2Enabled: (enabled) => set({ output2Enabled: enabled }),
       setStageEnabled: (enabled) => set({ stageEnabled: enabled }),
+      setStreamEnabled: (enabled) => set({ streamEnabled: enabled }),
       setCustomOutputEnabled: (outputKey, enabled) => {
         log.info('Custom output toggled', { outputKey, enabled });
         set((state) => ({
@@ -641,7 +684,7 @@ const useLyricsStore = create(
           next[k] = { enabled: !!v.enabled, song: v.song ?? null, bible: v.bible ?? null, freenote: v.freenote ?? null };
         }
         // ensure built-ins present
-        for (const k of ['output1', 'output2', 'stage']) if (!next[k]) next[k] = state.modeTemplates?.[k] || { enabled: false, song: null, bible: null, freenote: null };
+        for (const k of ['output1', 'output2', 'stream', 'stage']) if (!next[k]) next[k] = state.modeTemplates?.[k] || { enabled: false, song: null, bible: null, freenote: null };
         // keep custom entries that server may not yet know (offline fallback) — merge
         for (const k of Object.keys(state.modeTemplates || {})) {
           if (k.startsWith('custom_') && !next[k]) next[k] = state.modeTemplates[k];
@@ -690,6 +733,7 @@ const useLyricsStore = create(
 
       output1Settings: defaultOutput1Settings,
       output2Settings: defaultOutput2Settings,
+      streamSettings: defaultStreamSettings,
       stageSettings: defaultStageSettings,
       createCustomOutput: ({ name, slug, type, sourceOutputKey }) => {
         log.info('Creating custom output', { name, slug, type, sourceOutputKey });
@@ -770,7 +814,7 @@ const useLyricsStore = create(
       }),
       updateOutputSettings: (output, newSettings) => {
         log.debug('Output settings updated', { output, settingKeys: Object.keys(newSettings) });
-        if (!output || (output !== 'output1' && output !== 'output2' && output !== 'stage' && !output.startsWith('custom_'))) {
+        if (!output || (output !== 'output1' && output !== 'output2' && output !== 'stream' && output !== 'stage' && !output.startsWith('custom_'))) {
           log.warn('updateOutputSettings ignored invalid output key', { output });
           return;
         }
@@ -828,6 +872,7 @@ const useLyricsStore = create(
         lineToSection: state.lineToSection,
         output1Enabled: state.output1Enabled,
         output2Enabled: state.output2Enabled,
+        streamEnabled: state.streamEnabled,
         stageEnabled: state.stageEnabled,
         customOutputs: state.customOutputs,
         customOutputSettings: state.customOutputSettings,
@@ -836,6 +881,7 @@ const useLyricsStore = create(
         hasSeenWelcome: state.hasSeenWelcome,
         output1Settings: state.output1Settings,
         output2Settings: state.output2Settings,
+        streamSettings: state.streamSettings,
         stageSettings: state.stageSettings,
         autoplaySettings: state.autoplaySettings,
         performanceSettings: state.performanceSettings,
@@ -866,6 +912,7 @@ const useLyricsStore = create(
         modeTemplates: state.modeTemplates || {
           output1: { enabled: false, song: null, bible: null, freenote: null },
           output2: { enabled: false, song: null, bible: null, freenote: null },
+          stream: { enabled: false, song: null, bible: null, freenote: null },
           stage: { enabled: false, song: null, bible: null, freenote: null },
         },
         _lastAppliedModeTemplate: state._lastAppliedModeTemplate || {},
@@ -910,6 +957,16 @@ const useLyricsStore = create(
             allInstances: null,
             instanceCount: 0,
           };
+          state.streamSettings = {
+            ...defaultStreamSettings,
+            ...(state.streamSettings || {}),
+            autosizerActive: false,
+            primaryViewportWidth: null,
+            primaryViewportHeight: null,
+            allInstances: null,
+            instanceCount: 0,
+          };
+          if (state.streamEnabled === undefined) state.streamEnabled = true;
           state.contentMode = normalizeContentMode(state.contentMode);
           state.freeNotesDrafts = Array.isArray(state.freeNotesDrafts) ? state.freeNotesDrafts : [];
           if (state.freeNotesEnabled === undefined) {
@@ -966,6 +1023,7 @@ const useLyricsStore = create(
             state.modeTemplates = {
               output1: { enabled: legacyEnabled, song: null, bible: null, freenote: null },
               output2: { enabled: legacyEnabled, song: null, bible: null, freenote: null },
+              stream: { enabled: legacyEnabled, song: null, bible: null, freenote: null },
               stage: { enabled: legacyEnabled, song: null, bible: null, freenote: null },
             };
             delete state.modeTemplatesEnabled;
@@ -974,10 +1032,11 @@ const useLyricsStore = create(
             state.modeTemplates = {
               output1: { enabled: false, song: null, bible: null, freenote: null },
               output2: { enabled: false, song: null, bible: null, freenote: null },
+              stream: { enabled: false, song: null, bible: null, freenote: null },
               stage: { enabled: false, song: null, bible: null, freenote: null },
             };
           }
-          for (const key of ['output1', 'output2', 'stage']) {
+          for (const key of ['output1', 'output2', 'stream', 'stage']) {
             if (!state.modeTemplates[key] || typeof state.modeTemplates[key] !== 'object') {
               state.modeTemplates[key] = { enabled: false, song: null, bible: null, freenote: null };
             } else {
@@ -999,7 +1058,7 @@ const useLyricsStore = create(
           }
           // prune orphaned modeTemplates entries
           {
-            const validKeys = new Set(['output1', 'output2', 'stage', ...(Array.isArray(state.customOutputs) ? state.customOutputs.map((o) => o.id) : [])]);
+            const validKeys = new Set(['output1', 'output2', 'stream', 'stage', ...(Array.isArray(state.customOutputs) ? state.customOutputs.map((o) => o.id) : [])]);
             for (const k of Object.keys(state.modeTemplates)) {
               if (!validKeys.has(k)) delete state.modeTemplates[k];
             }

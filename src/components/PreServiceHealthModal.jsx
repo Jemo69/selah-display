@@ -14,7 +14,7 @@ const REQUEST_TIMEOUT_MS = 8000;
 const SOCKET_ACK_TIMEOUT_MS = 6000;
 
 const CHECK_DEFS = [
-  { id: 'routes', label: 'Projector outputs reachable', hint: 'Output 1, Output 2 and Stage pages answer over the network.' },
+  { id: 'routes', label: 'Projector outputs reachable', hint: 'Output 1, Output 2, Stream and Stage pages answer over the network.' },
   { id: 'health', label: 'Server health endpoint', hint: 'The lyric server reports healthy.' },
   { id: 'ready', label: 'Server readiness', hint: 'Secrets, join code and live sync are all ready.' },
   { id: 'socket', label: 'Control connection', hint: 'This panel reaches the server live (round-trip latency).' },
@@ -58,7 +58,7 @@ const PreServiceHealthModal = ({ darkMode }) => {
   }, []);
 
   const checkRoutes = useCallback(async () => {
-    const paths = ['/output1', '/output2', '/stage'];
+    const paths = ['/output1', '/output2', '/stream', '/stage'];
     const perRoute = [];
     for (const routePath of paths) {
       try {
@@ -70,7 +70,7 @@ const PreServiceHealthModal = ({ darkMode }) => {
     }
     const failed = perRoute.filter((entry) => !entry.ok);
     return failed.length === 0
-      ? { status: 'pass', detail: 'Output 1, Output 2 and Stage all answered.' }
+      ? { status: 'pass', detail: 'Output 1, Output 2, Stream and Stage all answered.' }
       : { status: 'fail', detail: `No answer: ${failed.map((entry) => entry.route).join(', ')}` };
   }, []);
 

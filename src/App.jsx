@@ -26,6 +26,7 @@ const log = (level, ...args) => {
 const ControlPanel = lazy(() => import('./pages/ControlPanel'));
 const Output1 = lazy(() => import('./pages/Output1'));
 const Output2 = lazy(() => import('./pages/Output2'));
+const StreamOutput = lazy(() => import('./pages/StreamOutput'));
 const Stage = lazy(() => import('./pages/Stage'));
 const Time = lazy(() => import('./pages/Time'));
 const NewSongCanvas = lazy(() => import('./components/NewSongCanvas'));
@@ -82,6 +83,7 @@ export default function App() {
                 } />
                 <Route path="/output1" element={<Output1 />} />
                 <Route path="/output2" element={<Output2 />} />
+                <Route path="/stream" element={<StreamOutput />} />
                 <Route path="/stage" element={<Stage />} />
                 <Route path="/time" element={<Time />} />
                 <Route path="/new-song" element={

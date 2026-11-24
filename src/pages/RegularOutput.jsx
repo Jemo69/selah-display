@@ -20,6 +20,13 @@ import CanvasMotionBackground from '../components/outputs/CanvasMotionBackground
 import { isMarkdownContent, calculateNoteBaseFontSize } from '../utils/freeNote';
 import ParallelBibleDisplay from '../components/Bible/ParallelBibleDisplay';
 import { sanitizeParallelPayload, normalizeParallelLayout } from '../utils/bibleParallel.js';
+import {
+  normalizeStreamBandHeightPercent,
+  normalizeStreamBandBackdrop,
+  getStreamBandBackdropStyle,
+  getStreamBandReferenceReserve,
+  getStreamBandReferenceFontSize,
+} from '../utils/streamBand.js';
 
 const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
   logger.info('RegularOutput mounted', { outputKey, displayName });
@@ -45,8 +52,10 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
   // Null = single-translation; every other path ignores it.
   const [parallelBible, setParallelBible] = useState(null);
   const [adjustedFontSize, setAdjustedFontSize] = useState(null);
+  const [bandFitReady, setBandFitReady] = useState(false);
   const [, setIsTruncated] = useState(false);
   const textContainerRef = useRef(null);
+  const bandContentRef = useRef(null);
   const autosizerActiveRef = useRef(false);
 
   const [preloadedVideoUrl, setPreloadedVideoUrl] = useState(null);
@@ -88,6 +97,16 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
   const bibleReferenceText = useMemo(() => sanitizeOutputText(isNoteMode ? '' : parsedReference), [isNoteMode, parsedReference]);
   const showBibleVersion = outputSettings?.showBibleVersion !== false;
   const bibleReferenceDisplay = useMemo(() => (showBibleVersion ? formatBibleReference(bibleReferenceText, bibleVersion) : bibleReferenceText), [showBibleVersion, bibleReferenceText, bibleVersion]);
+  // The band auto-sizer must account for the linked translation too, or a
+  // two-translation verse fits the primary text and overflows the band.
+  const parallelSecondaryText = useMemo(() => {
+    if (contentMode !== 'bible' || !parallelBible) return '';
+    const slides = parallelBible.slides?.length
+      ? parallelBible.slides
+      : (parallelBible.text ? [parallelBible.text] : []);
+    const index = Number.isInteger(selectedLine) ? Math.min(Math.max(selectedLine, 0), Math.max(slides.length - 1, 0)) : 0;
+    return slides[index] || '';
+  }, [contentMode, parallelBible, selectedLine]);
 
   const requestCurrentStateWithRetry = useCallback((retryCount = 0) => {
     const maxRetries = 3;
@@ -133,12 +152,12 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
 
     html.classList.add('transparent-background');
     body.classList.add('transparent-background');
-    root.classList.add('transparent-background');
+    root?.classList.add('transparent-background');
 
     return () => {
       html.classList.remove('transparent-background');
       body.classList.remove('transparent-background');
-      root.classList.remove('transparent-background');
+      root?.classList.remove('transparent-background');
     };
   }, []);
 
@@ -369,6 +388,11 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
     minFontSize = 24,
     maxFontSize = 300,
     bibleReferencePosition = 'bottom-center',
+    bibleReferenceSize = 28,
+    streamBandEnabled = false,
+    streamBandHeightPercent = 33,
+    streamBandBackdrop = 'gradient',
+    streamBandAutoFit = true,
     transitionAnimation = 'none',
     transitionSpeed = 150,
   } = outputSettings;
@@ -439,6 +463,13 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
     paddingRight: `${horizontalMarginRem}rem`,
     boxSizing: 'border-box',
   };
+
+  const streamBandActive = Boolean(streamBandEnabled);
+  const streamBandHeightValue = normalizeStreamBandHeightPercent(streamBandHeightPercent);
+  const streamBandBackdropValue = normalizeStreamBandBackdrop(streamBandBackdrop);
+  const streamBandPaddingPx = clamp(Number(backgroundBandVerticalPadding) || 0, 0, 100);
+  const streamBandFitActive = streamBandActive && streamBandAutoFit;
+  const autoFitActive = Boolean(maxLinesEnabled || streamBandFitActive);
 
   const getTextShadow = () => {
     if (!dropShadowColor || dropShadowStrength === 0 || performanceSettings.reducedGraphics) return 'none';
@@ -688,10 +719,21 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
     return allCaps ? text.toUpperCase() : text;
   };
 
+  // The band must never paint an oversized frame while the first fit is being
+  // measured. Hide the text until the auto-sizer has produced a size.
   useEffect(() => {
-    if (!maxLinesEnabled || isNoteMode) {
+    if (!streamBandActive) {
+      setBandFitReady(true);
+      return;
+    }
+    setBandFitReady(!streamBandAutoFit);
+  }, [streamBandActive, streamBandAutoFit, displayLine, streamBandHeightValue, streamBandPaddingPx, bibleReferenceDisplay, parallelSecondaryText]);
+
+  useEffect(() => {
+    if (!autoFitActive || isNoteMode) {
       setAdjustedFontSize((prev) => (prev === null ? prev : null));
       setIsTruncated((prev) => (prev === false ? prev : false));
+      setBandFitReady(true);
       if (autosizerActiveRef.current) {
         autosizerActiveRef.current = false;
         updateOutputSettings({ autosizerActive: false });
@@ -716,10 +758,23 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
     }
 
     const rafId = requestAnimationFrame(() => {
-      const containerWidth = textContainerRef.current ? textContainerRef.current.clientWidth : null;
-      const containerHeight = textContainerRef.current?.parentElement?.clientHeight ?? null;
+      const inBand = streamBandActive;
+      const bandContentHeight = bandContentRef.current?.clientHeight;
+      const referenceReserve = inBand
+        ? getStreamBandReferenceReserve(bandContentHeight, Boolean(bibleReferenceDisplay))
+        : 0;
+      const containerWidth = inBand
+        ? bandContentRef.current?.clientWidth ?? null
+        : (textContainerRef.current ? textContainerRef.current.clientWidth : null);
+      const containerHeight = inBand
+        ? Math.max(0, (bandContentHeight || 0) - referenceReserve)
+        : (textContainerRef.current?.parentElement?.clientHeight ?? null);
+      const measureText = inBand && parallelSecondaryText
+        ? `${displayLine}\n${parallelSecondaryText}`
+        : displayLine;
+
       const result = calculateOptimalFontSize({
-        text: displayLine,
+        text: measureText,
         fontSize,
         fitWidthPercent,
         fitHeightPercent,
@@ -728,10 +783,10 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
         fontStyle,
         bold,
         italic,
-        horizontalMarginRem,
-        verticalMarginRem: yMargin,
+        horizontalMarginRem: inBand ? 0 : horizontalMarginRem,
+        verticalMarginRem: inBand ? 0 : yMargin,
         processDisplayText,
-        maxLinesEnabled,
+        maxLinesEnabled: true,
         containerWidth,
         containerHeight,
       });
@@ -742,6 +797,7 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
 
       setAdjustedFontSize((prev) => (prev === safeAdjusted ? prev : safeAdjusted));
       setIsTruncated((prev) => (prev === Boolean(result.isTruncated) ? prev : Boolean(result.isTruncated)));
+      if (inBand) setBandFitReady(true);
 
       const autosizerActive = Boolean(maxLinesEnabled && safeAdjusted !== null && safeAdjusted !== fontSize);
 
@@ -750,7 +806,7 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
         updateOutputSettings({ autosizerActive });
       }
 
-      if (emitOutputMetrics && isConnected && isAuthenticated) {
+      if (maxLinesEnabled && emitOutputMetrics && isConnected && isAuthenticated) {
         try {
           emitOutputMetrics(outputKey, {
             adjustedFontSize: safeAdjusted,
@@ -765,6 +821,13 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
 
     return () => cancelAnimationFrame(rafId);
   }, [
+    autoFitActive,
+    streamBandActive,
+    streamBandAutoFit,
+    streamBandHeightValue,
+    streamBandPaddingPx,
+    parallelSecondaryText,
+    bibleReferenceDisplay,
     maxLinesEnabled,
     displayLine,
     fontSize,
@@ -889,6 +952,119 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
 
     return processedText;
   };
+
+  const renderStreamBand = () => {
+    const fallbackContentHeight = typeof window !== 'undefined'
+      ? Math.max(0, (window.innerHeight * streamBandHeightValue) / 100 - 2 * streamBandPaddingPx)
+      : 0;
+    const contentHeight = bandContentRef.current?.clientHeight || fallbackContentHeight;
+    const referenceFontSize = getStreamBandReferenceFontSize({
+      bodyFontSize: adjustedFontSize ?? fontSize,
+      contentHeight,
+      preferredSize: bibleReferenceSize,
+      hasReference: Boolean(bibleReferenceDisplay),
+    });
+    const fitPending = streamBandAutoFit && !bandFitReady;
+    const backdropStyle = getStreamBandBackdropStyle({
+      backdrop: streamBandBackdropValue,
+      backgroundColor,
+      backgroundOpacity,
+    });
+    const bandTextStyle = {
+      fontFamily: fontStyle,
+      fontSize: isNoteMode ? `${noteBaseFontSize}px` : `${adjustedFontSize ?? fontSize}px`,
+      fontWeight: bold ? 'bold' : 'normal',
+      fontStyle: italic ? 'italic' : 'normal',
+      textDecoration: underline ? 'underline' : 'none',
+      color: fontColor,
+      textShadow: getTextShadow(),
+      ...textStrokeStyles,
+      textAlign,
+      width: '100%',
+      maxWidth: '100%',
+      lineHeight: isNoteMode ? 1.45 : 1.15,
+      display: 'block',
+      whiteSpace: isNoteMode ? 'normal' : 'pre-wrap',
+      wordWrap: 'break-word',
+      wordBreak: 'break-word',
+      overflowWrap: 'anywhere',
+      paddingBottom: dropShadowPadding ? `${dropShadowPadding}px` : undefined,
+      opacity: isVisible && !fitPending ? 1 : 0,
+      transition: 'opacity 180ms ease-out, font-size 180ms ease-out',
+    };
+
+    return (
+      <div
+        data-testid="stream-band"
+        data-band-percent={streamBandHeightValue}
+        data-show-state={activeShowState}
+        className="fixed inset-x-0 bottom-0 overflow-hidden"
+        style={{
+          height: `${streamBandHeightValue}vh`,
+          backgroundColor: 'transparent',
+          pointerEvents: 'none',
+        }}
+      >
+        {isVisible && (
+          <>
+            <div aria-hidden="true" style={{ position: 'absolute', inset: 0, ...backdropStyle }} />
+            <div
+              style={{
+                position: 'relative',
+                zIndex: 10,
+                height: '100%',
+                boxSizing: 'border-box',
+                padding: `${streamBandPaddingPx}px ${horizontalMarginRem}rem`,
+              }}
+            >
+              <div
+                ref={bandContentRef}
+                style={{
+                  height: '100%',
+                  width: '100%',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  overflow: 'hidden',
+                }}
+              >
+                <div ref={textContainerRef} style={bandTextStyle}>
+                  {renderContent()}
+                </div>
+                {bibleReferenceDisplay && (
+                  <div
+                    style={{
+                      fontFamily: fontStyle,
+                      fontSize: `${referenceFontSize}px`,
+                      fontWeight: bold ? 'bold' : 'normal',
+                      color: fontColor,
+                      textShadow: getTextShadow(),
+                      ...textStrokeStyles,
+                      textAlign,
+                      lineHeight: 1.15,
+                      maxWidth: '100%',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      opacity: isVisible && !fitPending ? 1 : 0,
+                      transition: 'opacity 180ms ease-out',
+                    }}
+                  >
+                    {bibleReferenceDisplay}
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  };
+
+  if (streamBandActive) {
+    return renderStreamBand();
+  }
 
   return (
     <div

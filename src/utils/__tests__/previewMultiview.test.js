@@ -61,6 +61,7 @@ describe('isScriptureLive', () => {
 describe('getTileById', () => {
   it('resolves known tiles and null for unknown', () => {
     expect(getTileById('output1')?.route).toBe('output1');
+    expect(getTileById('lowerthird')?.route).toBe('stream');
     expect(getTileById('nope')).toBeNull();
   });
 });

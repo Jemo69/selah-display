@@ -77,7 +77,7 @@ export default function Preview() {
 
   const { lyrics, selectedLine, bibleVersion, lyricsFileName, songMetadata } = useLyricsState();
   const { isOutputOn } = useOutputState();
-  const { output1Enabled, output2Enabled, stageEnabled } = useIndividualOutputState();
+  const { output1Enabled, output2Enabled, streamEnabled, stageEnabled } = useIndividualOutputState();
   const { previewMultiview, setPreviewMultiviewTiles, setPreviewMultiviewColumns } =
     usePreviewMultiviewState();
 
@@ -105,6 +105,11 @@ export default function Preview() {
       live: Boolean(isOutputOn && output2Enabled),
       liveText: `LIVE — ${positionText}`,
       offText: 'Off — output disabled',
+    },
+    lowerthird: {
+      live: Boolean(isOutputOn && streamEnabled && currentLine),
+      liveText: `LIVE — ${positionText}`,
+      offText: 'Off — stream band disabled',
     },
     stage: {
       live: Boolean(isOutputOn && stageEnabled),

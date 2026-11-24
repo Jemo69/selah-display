@@ -78,10 +78,12 @@ export const useIndividualOutputState = () =>
         (state) => ({
             output1Enabled: state.output1Enabled,
             output2Enabled: state.output2Enabled,
+            streamEnabled: state.streamEnabled,
             stageEnabled: state.stageEnabled,
             customOutputEnabled: state.customOutputEnabled,
             setOutput1Enabled: state.setOutput1Enabled,
             setOutput2Enabled: state.setOutput2Enabled,
+            setStreamEnabled: state.setStreamEnabled,
             setStageEnabled: state.setStageEnabled,
             setCustomOutputEnabled: state.setCustomOutputEnabled,
         }),
@@ -147,6 +149,7 @@ export const useOutputSettingsByKey = (outputKey) =>
             setEnabled: (enabled) => {
                 if (outputKey === 'output1') return state.setOutput1Enabled(enabled);
                 if (outputKey === 'output2') return state.setOutput2Enabled(enabled);
+                if (outputKey === 'stream') return state.setStreamEnabled(enabled);
                 if (outputKey === 'stage') return state.setStageEnabled(enabled);
                 return state.setCustomOutputEnabled(outputKey, enabled);
             },

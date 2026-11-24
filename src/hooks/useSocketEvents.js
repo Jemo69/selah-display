@@ -118,6 +118,10 @@ const useSocketEvents = (role) => {
         const { autosizerActive, primaryViewportWidth, primaryViewportHeight, allInstances, instanceCount, ...styleSettings } = state.output2Settings;
         updateOutputSettings('output2', styleSettings);
       }
+      if (state.streamSettings) {
+        const { autosizerActive, primaryViewportWidth, primaryViewportHeight, allInstances, instanceCount, ...styleSettings } = state.streamSettings;
+        updateOutputSettings('stream', styleSettings);
+      }
       if (state.stageSettings && role === 'stage') {
         updateOutputSettings('stage', state.stageSettings);
       }
@@ -137,6 +141,9 @@ const useSocketEvents = (role) => {
       }
       if (typeof state.output2Enabled === 'boolean') {
         useLyricsStore.getState().setOutput2Enabled(state.output2Enabled);
+      }
+      if (typeof state.streamEnabled === 'boolean') {
+        useLyricsStore.getState().setStreamEnabled(state.streamEnabled);
       }
       if (typeof state.stageEnabled === 'boolean') {
         useLyricsStore.getState().setStageEnabled(state.stageEnabled);
@@ -276,7 +283,7 @@ const useSocketEvents = (role) => {
       }
     });
 
-    const shouldHandleOutputMetrics = role === 'control' || role === 'output' || role === 'output1' || role === 'output2' || role === 'stage';
+    const shouldHandleOutputMetrics = role === 'control' || role === 'output' || role === 'output1' || role === 'output2' || role === 'stream' || role === 'stage';
 
     if (shouldHandleOutputMetrics) {
       socket.on('styleUpdate', ({ output, settings }) => {
@@ -634,6 +641,10 @@ const useSocketEvents = (role) => {
         const { autosizerActive, primaryViewportWidth, primaryViewportHeight, allInstances, instanceCount, ...styleSettings } = state.output2Settings;
         updateOutputSettings('output2', styleSettings);
       }
+      if (state.streamSettings) {
+        const { autosizerActive, primaryViewportWidth, primaryViewportHeight, allInstances, instanceCount, ...styleSettings } = state.streamSettings;
+        updateOutputSettings('stream', styleSettings);
+      }
       if (state.stageSettings && role === 'stage') {
         updateOutputSettings('stage', state.stageSettings);
       }
@@ -651,6 +662,9 @@ const useSocketEvents = (role) => {
       }
       if (typeof state.output2Enabled === 'boolean') {
         useLyricsStore.getState().setOutput2Enabled(state.output2Enabled);
+      }
+      if (typeof state.streamEnabled === 'boolean') {
+        useLyricsStore.getState().setStreamEnabled(state.streamEnabled);
       }
       if (typeof state.stageEnabled === 'boolean') {
         useLyricsStore.getState().setStageEnabled(state.stageEnabled);
@@ -701,12 +715,12 @@ const useSocketEvents = (role) => {
         socket.emit('requestCurrentState');
       }, 500);
 
-      const shouldSyncOutputSettings = role !== 'output' && role !== 'output1' && role !== 'output2' && role !== 'stage';
+      const shouldSyncOutputSettings = role !== 'output' && role !== 'output1' && role !== 'output2' && role !== 'stream' && role !== 'stage';
 
       if (shouldSyncOutputSettings && clientType === 'desktop') {
         const syncOutputSettingsFromStore = () => {
           try {
-            const { output1Settings, output2Settings, stageSettings, customOutputs, customOutputSettings, customOutputEnabled } = useLyricsStore.getState();
+            const { output1Settings, output2Settings, streamSettings, stageSettings, customOutputs, customOutputSettings, customOutputEnabled } = useLyricsStore.getState();
 
             if (output1Settings) {
               socket.emit('styleUpdate', { output: 'output1', settings: output1Settings });
@@ -714,6 +728,10 @@ const useSocketEvents = (role) => {
 
             if (output2Settings) {
               socket.emit('styleUpdate', { output: 'output2', settings: output2Settings });
+            }
+
+            if (streamSettings) {
+              socket.emit('styleUpdate', { output: 'stream', settings: streamSettings });
             }
 
             if (stageSettings) {

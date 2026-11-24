@@ -157,7 +157,7 @@ List connected Socket.IO clients. Requires permission `lyrics:read`.
 ```
 
 ### GET /api/outputs/resolve/:slug
-Resolve an output slug (`output1`, `output2`, `stage`, or a custom output slug) to its registry entry. No auth required (used by output page routing).
+Resolve an output slug (`output1`, `output2`, `stream`, `stage`, or a custom output slug) to its registry entry. No auth required (used by output page routing).
 
 ```json
 { "id": "stage", "key": "stage", "name": "Stage", "slug": "stage", "type": "stage", "builtIn": true }
@@ -166,7 +166,7 @@ Resolve an output slug (`output1`, `output2`, `stage`, or a custom output slug) 
 Unknown slug → 404 `{ "error": "Output not found" }`.
 
 ### GET /api/v1/outputs/presence
-Live heartbeat registry of connected output instances (built-in `output1`, `output2`, `stage` plus custom outputs). Requires permission `lyrics:read`. Output pages register on socket connect with their `clientType`/`purpose`; entries expire on disconnect.
+Live heartbeat registry of connected output instances (built-in `output1`, `output2`, `stream`, `stage` plus custom outputs). Requires permission `lyrics:read`. Output pages register on socket connect with their `clientType`/`purpose`; entries expire on disconnect.
 
 ```json
 {

@@ -26,7 +26,7 @@ export const TOUR_STEPS = [
     id: 'outputs',
     icon: '🖥️',
     title: 'Outputs 1, 2, Stage & custom',
-    body: 'Right panel tabs configure each output: fonts, colors, backgrounds, ticker, templates. Create custom outputs (e.g. /lower-third) under their own URL for OBS browser sources. Stage shows the next line for musicians.',
+    body: 'Right panel tabs configure each output: fonts, colors, backgrounds, ticker, templates. /stream is a ready-made transparent lower-third band; create custom outputs under their own URL when you need another surface for OBS browser sources. Stage shows the next line for musicians.',
     tip: 'Try: Output Settings → duplicate styling via templates.',
   },
   {
@@ -60,7 +60,7 @@ export const TOUR_STEPS = [
 ];
 
 const APP_CONTEXT = `Selah is a free, local-first worship & live-event display app (Electron + web). Core model:
-- A control panel (this screen) stages content; outputs are separate browser-source URLs (/output1, /output2, /stage, plus custom outputs like /lower-third) consumed by OBS/vMix/projectors.
+- A control panel (this screen) stages content; outputs are separate browser-source URLs (/output1, /output2, /stream, /stage, plus custom outputs) consumed by OBS/vMix/projectors.
 - Three content modes: SONGS (lyric slides, .txt/.lrc/.pro/.sng with timestamps, sections, chords), BIBLE (imported translations .xml/.json, passage picker, verse slides, parallel dual-translation, versification offsets), FREE NOTES (announcements/sermon points).
 - Explicit live declaration: an amber Song/Bible pill applies per-mode output templates; the app never auto-switches styling.
 - Show states: LIVE / CLEAR / BLACKOUT / LOGO dock; master output toggle; announcement ticker queue.

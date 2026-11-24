@@ -18,13 +18,14 @@ import useFullscreenBackground from '../hooks/OutputSettingsPanel/useFullscreenB
 import useAdvancedSectionPersistence from '../hooks/OutputSettingsPanel/useAdvancedSectionPersistence';
 import useTypographyAndBands from '../hooks/OutputSettingsPanel/useTypographyAndBands';
 import useFullscreenModeState from '../hooks/OutputSettingsPanel/useFullscreenModeState';
-import { Type, PaintBucket, Contrast, TextCursorInput, Square, Frame, Move, AlignVerticalSpaceAround, ScreenShare, ListStart, ArrowUpDown, Rows3, MoveHorizontal, MoveVertical, Sparkles, Languages, Palette, Power, TextAlignJustify, SquareMenu, ArrowRightLeft, Save, Image, Video, X, Check, Zap, Gauge, MousePointer2, Book } from 'lucide-react';
+import { Type, PaintBucket, Contrast, TextCursorInput, Square, Frame, Move, AlignVerticalSpaceAround, ScreenShare, ListStart, ArrowUpDown, Rows3, MoveHorizontal, MoveVertical, Sparkles, Languages, Palette, Power, TextAlignJustify, SquareMenu, ArrowRightLeft, Save, Image, Video, X, Check, Zap, Gauge, MousePointer2, Book, PanelBottom } from 'lucide-react';
 import FontSelect from './FontSelect';
 import StageSettingsPanel from './StageSettingsPanel';
 import NdiOutputSection from './NdiOutputSection';
 import MotionBackgroundControls from './outputs/MotionBackgroundControls';
 import { blurInputOnEnter, AdvancedToggle, LabelWithIcon, EmphasisRow, AlignmentRow } from './OutputSettingsShared';
 import { sanitizeIntegerInput, sanitizeNumberInput } from '../utils/numberInput';
+import { normalizeStreamBandHeightPercent, normalizeStreamBandBackdrop } from '../utils/streamBand.js';
 
 const SettingRow = ({ icon, label, tooltip, children, rightClassName = 'flex items-center gap-2 justify-end', justifyEnd = true, darkMode }) => (
   <div className={`flex items-center justify-between gap-4 rounded-xl border px-3 py-3 ${darkMode ? 'border-gray-800 bg-gray-950/20' : 'border-gray-200 bg-gray-50/70'}`}>
@@ -39,6 +40,115 @@ const SettingRow = ({ icon, label, tooltip, children, rightClassName = 'flex ite
     </div>
   </div>
 );
+
+export function getStreamBrowserSourceUrl() {
+  if (typeof window === 'undefined') return '/stream';
+  const origin = window.location.origin;
+  const isDev = import.meta.env.MODE === 'development';
+  return isDev ? `${origin}/stream` : `${origin}/#/stream`;
+}
+
+const StreamBandSection = ({ darkMode, settings, update, showToast }) => {
+  const enabled = settings.streamBandEnabled === true;
+  const percent = normalizeStreamBandHeightPercent(settings.streamBandHeightPercent);
+  const backdrop = normalizeStreamBandBackdrop(settings.streamBandBackdrop);
+  const streamUrl = getStreamBrowserSourceUrl();
+
+  const copyStreamUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(streamUrl);
+      showToast({ title: 'Copied', message: 'Paste this URL into an OBS browser source.', variant: 'success' });
+    } catch {
+      showToast({ title: 'Could not copy', message: streamUrl, variant: 'info' });
+    }
+  };
+
+  return (
+    <div className={`rounded-xl border p-3 ${darkMode ? 'border-gray-800 bg-gray-950/30' : 'border-gray-200 bg-white'}`}>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start gap-2 min-w-0">
+          <PanelBottom className={`w-4 h-4 mt-0.5 shrink-0 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`} />
+          <div className="min-w-0">
+            <p className={`text-sm font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>Live Stream Band</p>
+            <p className={`mt-0.5 text-xs leading-relaxed ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+              Paint only the bottom of the frame. The camera above stays untouched, and every verse auto-fits inside the band.
+            </p>
+          </div>
+        </div>
+        <Switch
+          checked={enabled}
+          onCheckedChange={(checked) => update('streamBandEnabled', checked)}
+          aria-label="Toggle live stream band"
+        />
+      </div>
+
+      {enabled && (
+        <div className="mt-3 space-y-3">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div>
+              <label className={`text-xs font-semibold uppercase tracking-wide ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                Band height
+              </label>
+              <div className="mt-1 flex items-center gap-2">
+                <Input
+                  type="number"
+                  min="15"
+                  max="80"
+                  value={percent}
+                  onChange={(event) => update(
+                    'streamBandHeightPercent',
+                    sanitizeIntegerInput(event.target.value, percent, { min: 15, max: 80 })
+                  )}
+                  className={`w-20 ${darkMode ? 'bg-gray-700 border-gray-600 text-gray-200' : 'bg-white border-gray-300'}`}
+                />
+                <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>% of frame height</span>
+              </div>
+            </div>
+            <div>
+              <label className={`text-xs font-semibold uppercase tracking-wide ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                Backdrop
+              </label>
+              <Select value={backdrop} onValueChange={(value) => update('streamBandBackdrop', value)}>
+                <SelectTrigger className={`mt-1 ${darkMode ? 'bg-gray-700 border-gray-600 text-gray-200' : 'bg-white border-gray-300'}`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className={darkMode ? 'bg-gray-700 border-gray-600 text-gray-200' : 'bg-white border-gray-300'}>
+                  <SelectItem value="gradient">Soft gradient</SelectItem>
+                  <SelectItem value="solid">Solid band</SelectItem>
+                  <SelectItem value="none">No background</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className={`text-sm ${darkMode ? 'text-gray-200' : 'text-gray-700'}`}>Auto-fit verse to band</p>
+              <p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-500'}`}>Long verses shrink; short verses grow to fill the band.</p>
+            </div>
+            <Switch
+              checked={settings.streamBandAutoFit !== false}
+              onCheckedChange={(checked) => update('streamBandAutoFit', checked)}
+              aria-label="Toggle auto-fit verse to band"
+            />
+          </div>
+
+          <div className={`rounded-lg border px-2.5 py-2 ${darkMode ? 'border-gray-800 bg-gray-900/60' : 'border-gray-200 bg-gray-50'}`}>
+            <p className={`text-[11px] ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+              OBS / vMix browser source — 1920×1080, then sit it above the camera layer:
+            </p>
+            <div className="mt-1 flex items-center gap-2">
+              <code className={`min-w-0 flex-1 truncate rounded px-1.5 py-1 text-[11px] ${darkMode ? 'bg-gray-950 text-blue-200' : 'bg-white text-blue-700'}`}>
+                {streamUrl}
+              </code>
+              <Button size="sm" variant="outline" onClick={copyStreamUrl} className="h-7 shrink-0 px-2 text-xs">Copy</Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const LyricsPositionSection = ({
   darkMode,
@@ -757,6 +867,14 @@ const OutputSettingsPanel = ({ outputKey }) => {
           </Tooltip>
         </div>
       </div>
+
+      {/* Live stream lower-third geometry */}
+      <StreamBandSection
+        darkMode={darkMode}
+        settings={settings}
+        update={update}
+        showToast={showToast}
+      />
 
       {/* Lyrics Position */}
       <LyricsPositionSection
