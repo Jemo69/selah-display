@@ -1002,7 +1002,7 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
       overflowWrap: 'anywhere',
       paddingBottom: dropShadowPadding ? `${dropShadowPadding}px` : undefined,
       opacity: isVisible && !fitPending ? 1 : 0,
-      transition: 'opacity 180ms ease-out, font-size 180ms ease-out',
+      transition: 'opacity 180ms ease-out',
     };
 
     return (
