@@ -28,5 +28,9 @@ describe('Preview route smoke', () => {
     ]) {
       expect(screen.getByRole('heading', { name: label })).toBeTruthy();
     }
+
+    const streamFrame = screen.getByTitle('Stream Lower-Third');
+    expect(streamFrame.tagName).toBe('IFRAME');
+    expect(streamFrame.getAttribute('src')).toContain('stream');
   });
 });
