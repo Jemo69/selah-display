@@ -53,6 +53,7 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
   const [parallelBible, setParallelBible] = useState(null);
   const [adjustedFontSize, setAdjustedFontSize] = useState(null);
   const [bandFittedSignature, setBandFittedSignature] = useState('');
+  const [bandResizeVersion, setBandResizeVersion] = useState(0);
   const [, setIsTruncated] = useState(false);
   const textContainerRef = useRef(null);
   const bandContentRef = useRef(null);
@@ -477,6 +478,7 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
     ? [
         streamBandHeightValue,
         streamBandPaddingPx,
+        bandResizeVersion,
         horizontalMarginRem,
         displayLine,
         parallelSecondaryText,
@@ -740,6 +742,24 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
     return allCaps ? text.toUpperCase() : text;
   };
 
+  // The band is a vh-sized slice of an arbitrary OBS canvas. When that canvas
+  // is resized (or the band height changes) the measured pixel size must be
+  // recomputed, or a smaller source clips the old larger verse.
+  useEffect(() => {
+    if (!streamBandActive || !isVisible) return undefined;
+    const element = bandContentRef.current;
+    if (typeof ResizeObserver === 'function' && element) {
+      const observer = new ResizeObserver(() => {
+        setBandResizeVersion((version) => version + 1);
+      });
+      observer.observe(element);
+      return () => observer.disconnect();
+    }
+    const handleResize = () => setBandResizeVersion((version) => version + 1);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [streamBandActive, isVisible]);
+
   useEffect(() => {
     if (!autoFitActive || isNoteMode) {
       setAdjustedFontSize((prev) => (prev === null ? prev : null));
@@ -838,6 +858,7 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
     bandFitSignature,
     streamBandHeightValue,
     streamBandPaddingPx,
+    bandResizeVersion,
     parallelSecondaryText,
     bibleReferenceDisplay,
     maxLinesEnabled,
