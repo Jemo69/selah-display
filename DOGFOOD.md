@@ -1,3 +1,45 @@
+# DOGFOOD — Live-stream lower-third that never crops the preacher
+
+Date: 2026-11-24 — branch `feat/stream-lower-third-band`, PR TBD.
+
+## Scores per surface (minimum, never average)
+
+| Surface | Score | Evidence |
+|---|---|---|
+| Stream band — short verse at 33% | 10/10 | Fresh 1920×1080 capture `shots/shot-1124-004250-009.png`; the verse, reference and gradient stay inside the bottom band; the camera above is unchanged. Hosted still: <img src="https://pub-a14e3233c63f4fe79257ff018c886e81.r2.dev/pr-0/1795499676518-shot-1124-004421-019.png" width="100%" /> |
+| Stream band — long passage auto-fits at 33% | 10/10 | `shots/shot-1124-004421-010.png`; the 370-character passage shrinks and still fits, reference included. |
+| Stream band — same passage grows at 50% | 10/10 | `shots/shot-1124-004421-019.png`; height change re-fits and snaps without a clipped transition frame. |
+| Camera preserved above the band | 10/10 | Every fresh capture and the demo MP4 show the congregation/camera above the band untouched; the band backdrop is bottom-only. |
+| Stream settings UI (desktop) | 10/10 | Real Electron window capture `/home/jemo/projects/boaz/shots/selah-stream-023.png`: Stream tab selected, Live Stream Band ON, height 33, Soft gradient, Auto-fit ON, OBS URL + Copy reachable in the 230px sidebar. |
+| Preview multiview Stream tile | 10/10 | `shots/shot-1124-002501-007.png`: the “Stream Lower-Third” tile is an iframe of `/stream` with a LIVE badge, not the old placeholder. |
+| State, toggles, metrics, templates, ticker filtering | 10/10 | `npx vitest run` on 17 related files: 100/100 passed; `npx vite build` green. Covers stream toggle event + reconnect re-emit, stream outputMetrics client/server, all built-in template resolvers (object and key), default templates, ticker target filtering, and Preview iframe. |
+
+**Overall = 10/10 (minimum).** Two channels per claim: fresh headless browser/Electron pixels plus unit/component/server tests and the production build.
+
+## Bug class
+
+**A surface that changes size or content faster than its measurement can follow paints a stale size, so text clips before the next fit.** Fixed three siblings: verse change, band-height change, and OBS canvas resize. The band now hides stale text until the new fit is measured (`bandFitSignature`), snaps the fitted size instead of animating into a clip, and a `ResizeObserver` (window-resize fallback) bumps the fit version. The same class appeared in stream state sync — `individualOutputToggle` and `outputMetrics` only knew output1/output2/custom, so Stream silently missed the toggle and metrics; both now accept it.
+
+## Tests
+
+- Before: no stream-band tests existed.
+- After: 100/100 green across `streamBand`, `streamBandTemplates`, `streamBandServerSync`, `streamBandServerTemplates`, `RegularOutputStreamBand`, `Preview`, `outputTemplateSync`, `freeNoteMode`, `sessionModel`, `contentModePersistence`, `tickerRouting`, `chordEventFlow`, `serverEventsDisconnect`, `outputPresence`, `AnnouncementTickerPanel`, `previewMultiview`, and `UserPreferencesModal`; `npx vite build` green.
+- Creative test nobody asked for: mutate the live zustand store mid-output between short/long verses and 33%/50% heights while recording at 1920×1080. It exposed a real clipped transition frame; the fix removed the font-size animation and added signature-based stale-text hiding, then the recording was repeated clean.
+- Demo MP4 (fresh, 1920×1080): <video src="https://pub-a14e3233c63f4fe79257ff018c886e81.r2.dev/pr-0/1795499638400-stream-band-demo-1080.mp4" width="100%" controls></video>
+
+## Gaps (honestly unmet or intentionally out of scope)
+
+1. The band is bottom-only by request; top/left/right bands are not implemented.
+2. Band outputs are filtered out of announcement-ticker targets. Tickers still paint on the projector outputs; the band is scripture-only by design.
+3. `/stream` is consumed as a browser source (copyable URL in the Stream settings). There is no dedicated “open Stream in a window” button like the projector outputs; that is the OBS/vMix workflow, not a missing route.
+
+## Commits / PR
+
+- Branch `feat/stream-lower-third-band`, commits `9d8d5d8`, `5880670`, `b0ec5fd`, `5fc70c5`, `e4d10ec`, `a9e7e98`, `fd88ec9`, `dba1a9f`.
+- PR TBD (added after filing).
+
+---
+
 # DOGFOOD — Lyrics open: quiet Cancel + single-file Browse (no forced folder)
 
 Date: 2026-11-15 — branch `t3/3bf3af04` (this worktree), PR TBD.
