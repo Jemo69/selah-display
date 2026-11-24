@@ -52,7 +52,7 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
   // Null = single-translation; every other path ignores it.
   const [parallelBible, setParallelBible] = useState(null);
   const [adjustedFontSize, setAdjustedFontSize] = useState(null);
-  const [bandFitReady, setBandFitReady] = useState(false);
+  const [bandFittedSignature, setBandFittedSignature] = useState('');
   const [, setIsTruncated] = useState(false);
   const textContainerRef = useRef(null);
   const bandContentRef = useRef(null);
@@ -470,6 +470,27 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
   const streamBandPaddingPx = clamp(Number(backgroundBandVerticalPadding) || 0, 0, 100);
   const streamBandFitActive = streamBandActive && streamBandAutoFit;
   const autoFitActive = Boolean(maxLinesEnabled || streamBandFitActive);
+  // Everything that changes the fitted size. The fitted signature is stored
+  // only after the auto-sizer has measured the new layout, so a band height or
+  // verse change hides the old size for one paint instead of overflowing.
+  const bandFitSignature = streamBandActive
+    ? [
+        streamBandHeightValue,
+        streamBandPaddingPx,
+        horizontalMarginRem,
+        displayLine,
+        parallelSecondaryText,
+        bibleReferenceDisplay,
+        fontStyle,
+        bold,
+        italic,
+        allCaps,
+        fitWidthPercent,
+        fitHeightPercent,
+        minFontSize,
+        maxFontSize,
+      ].join('\u0001')
+    : '';
 
   const getTextShadow = () => {
     if (!dropShadowColor || dropShadowStrength === 0 || performanceSettings.reducedGraphics) return 'none';
@@ -719,21 +740,11 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
     return allCaps ? text.toUpperCase() : text;
   };
 
-  // The band must never paint an oversized frame while the first fit is being
-  // measured. Hide the text until the auto-sizer has produced a size.
-  useEffect(() => {
-    if (!streamBandActive) {
-      setBandFitReady(true);
-      return;
-    }
-    setBandFitReady(!streamBandAutoFit);
-  }, [streamBandActive, streamBandAutoFit, displayLine, streamBandHeightValue, streamBandPaddingPx, bibleReferenceDisplay, parallelSecondaryText]);
-
   useEffect(() => {
     if (!autoFitActive || isNoteMode) {
       setAdjustedFontSize((prev) => (prev === null ? prev : null));
       setIsTruncated((prev) => (prev === false ? prev : false));
-      setBandFitReady(true);
+      setBandFittedSignature(bandFitSignature);
       if (autosizerActiveRef.current) {
         autosizerActiveRef.current = false;
         updateOutputSettings({ autosizerActive: false });
@@ -797,7 +808,7 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
 
       setAdjustedFontSize((prev) => (prev === safeAdjusted ? prev : safeAdjusted));
       setIsTruncated((prev) => (prev === Boolean(result.isTruncated) ? prev : Boolean(result.isTruncated)));
-      if (inBand) setBandFitReady(true);
+      if (inBand) setBandFittedSignature(bandFitSignature);
 
       const autosizerActive = Boolean(maxLinesEnabled && safeAdjusted !== null && safeAdjusted !== fontSize);
 
@@ -824,6 +835,7 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
     autoFitActive,
     streamBandActive,
     streamBandAutoFit,
+    bandFitSignature,
     streamBandHeightValue,
     streamBandPaddingPx,
     parallelSecondaryText,
@@ -964,7 +976,7 @@ const RegularOutput = ({ outputKey = 'output1', displayName = 'Output' }) => {
       preferredSize: bibleReferenceSize,
       hasReference: Boolean(bibleReferenceDisplay),
     });
-    const fitPending = streamBandAutoFit && !bandFitReady;
+    const fitPending = streamBandAutoFit && bandFittedSignature !== bandFitSignature;
     const backdropStyle = getStreamBandBackdropStyle({
       backdrop: streamBandBackdropValue,
       backgroundColor,
