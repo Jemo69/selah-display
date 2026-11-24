@@ -183,6 +183,7 @@ If you're reading this and holding an idea you think is "not possible" — this 
 ### Live Streaming
 - OBS/VMIX browser source integration
 - Transparent overlays for professional broadcasts
+- **Stream band:** scripture over the camera without cropping the preacher, auto-fitted to the bottom third, half, or three-quarters
 - Real-time lyric synchronization for worship leaders
 
 ### Concerts & Events
@@ -194,11 +195,12 @@ If you're reading this and holding an idea you think is "not possible" — this 
 
 ### OBS Studio Integration
 1. Add **Browser Source** to your scene
-2. Set URL to: `http://localhost:4000/#/output1` or `http://localhost:4000/#/output2`
+2. Set URL to: `http://localhost:4000/#/output1`, `http://localhost:4000/#/output2`, or `http://localhost:4000/#/stream` for the transparent lower-third band
 3. Replace `localhost` with the control panel PC's local IP if capturing display from another system across a network
 4. Set dimensions of browser source to match your canvas (for example, 1920 x 1080 pixels)
-5. Enable **Shutdown source when not visible** for performance
-6. **Refresh browser when scene becomes active** for reliability
+5. For `/stream`, put the browser source **above** the camera layer. The output paints only the bottom band; the rest of the frame stays transparent, and verses auto-fit the band instead of covering the preacher.
+6. Enable **Shutdown source when not visible** for performance
+7. **Refresh browser when scene becomes active** for reliability
 
 ### vMix Integration
 - Add **Web Browser** input

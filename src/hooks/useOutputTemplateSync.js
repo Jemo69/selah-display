@@ -124,7 +124,11 @@ export function useOutputTemplateSync() {
       }
       const key = out.key;
       const cfg = currentModeTemplates[key];
-      if (!cfg?.enabled && !options?.manual) {
+      if (!cfg) {
+        skipped.push(`${out.name} (no template)`);
+        continue;
+      }
+      if (!cfg.enabled && !options?.manual) {
         skipped.push(`${out.name} (OFF)`);
         continue;
       }

@@ -15,10 +15,10 @@ import createServerLogger from '../logger.js';
 const log = createServerLogger('OutputPresence');
 
 /** Client types that count as output instances by default. */
-export const OUTPUT_CLIENT_TYPES = new Set(['output1', 'output2', 'stage']);
+export const OUTPUT_CLIENT_TYPES = new Set(['output1', 'output2', 'stream', 'stage']);
 
 /** Accepted purpose values: built-in output keys or custom_* output ids. */
-const PURPOSE_PATTERN = /^(output[12]|stage|custom_[a-z0-9_-]+)$/i;
+const PURPOSE_PATTERN = /^(output[12]|stream|stage|custom_[a-z0-9_-]+)$/i;
 
 /**
  * Normalize a declared purpose to a canonical output key.

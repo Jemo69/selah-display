@@ -77,7 +77,7 @@ export default function Preview() {
 
   const { lyrics, selectedLine, bibleVersion, lyricsFileName, songMetadata } = useLyricsState();
   const { isOutputOn } = useOutputState();
-  const { output1Enabled, output2Enabled, stageEnabled } = useIndividualOutputState();
+  const { output1Enabled, output2Enabled, streamEnabled, stageEnabled } = useIndividualOutputState();
   const { previewMultiview, setPreviewMultiviewTiles, setPreviewMultiviewColumns } =
     usePreviewMultiviewState();
 
@@ -105,6 +105,11 @@ export default function Preview() {
       live: Boolean(isOutputOn && output2Enabled),
       liveText: `LIVE — ${positionText}`,
       offText: 'Off — output disabled',
+    },
+    lowerthird: {
+      live: Boolean(isOutputOn && streamEnabled && currentLine),
+      liveText: `LIVE — ${positionText}`,
+      offText: 'Off — stream band disabled',
     },
     stage: {
       live: Boolean(isOutputOn && stageEnabled),
@@ -240,27 +245,7 @@ export default function Preview() {
               );
             }
 
-            // Stream lower-third: no lower-third route exists yet, so show the
-            // exact live line text that would feed the stream overlay.
-            return (
-              <PlaceholderTile
-                key={tile.id}
-                tile={tile}
-                live={Boolean(isOutputOn && currentLine)}
-                liveText={`LIVE — ${positionText}`}
-                offText="○ Standby — no lower-third route"
-              >
-                <div className="w-full">
-                  <p className="inline-block border-b-4 border-white px-2 pb-1 text-lg font-semibold">
-                    {currentLine || 'Nothing live — fire a line from the control panel.'}
-                  </p>
-                  <p className="mt-2 text-sm text-neutral-400">
-                    Text preview of the stream overlay feed. A dedicated lower-third route will
-                    replace this card when added.
-                  </p>
-                </div>
-              </PlaceholderTile>
-            );
+            return null;
           })}
         </main>
       </div>

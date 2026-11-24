@@ -16,7 +16,8 @@ export const defaultOutput1Settings = {
   backgroundColor: '#000000', backgroundOpacity: 0, backgroundBandVerticalPadding: 20, backgroundBandHeightMode: 'adaptive', backgroundBandCustomLines: 3, backgroundBandLockedToMaxLines: false,
   lyricsPosition: 'lower', fullScreenMode: false, fullScreenBackgroundType: 'color', fullScreenBackgroundColor: '#000000', fullScreenBackgroundMedia: null, fullScreenBackgroundMediaName: '', fullScreenBackgroundMotionPreset: 'amber-drift', fullScreenBackgroundMotionDim: 0.65, alwaysShowBackground: false, fullScreenRestorePosition: null,
   xMargin: 3.5, yMargin: 2, maxLinesEnabled: false, maxLines: 3, minFontSize: 24, maxFontSize: 300, fitWidthPercent: 90, fitHeightPercent: 90,
-  bibleReferencePosition: 'bottom-center', bibleReferenceSize: 28, showBibleVersion: true, autosizerActive: false, primaryViewportWidth: null, primaryViewportHeight: null, allInstances: null, instanceCount: 0, transitionAnimation: 'none', transitionSpeed: 150
+  bibleReferencePosition: 'bottom-center', bibleReferenceSize: 28, showBibleVersion: true, autosizerActive: false, primaryViewportWidth: null, primaryViewportHeight: null, allInstances: null, instanceCount: 0, transitionAnimation: 'none', transitionSpeed: 150,
+  streamBandEnabled: false, streamBandHeightPercent: 33, streamBandBackdrop: 'gradient', streamBandAutoFit: true
 };
 
 export const defaultOutput2Settings = {
@@ -26,7 +27,18 @@ export const defaultOutput2Settings = {
   backgroundColor: '#000000', backgroundOpacity: 0, backgroundBandVerticalPadding: 30, backgroundBandHeightMode: 'adaptive', backgroundBandCustomLines: 3, backgroundBandLockedToMaxLines: false,
   lyricsPosition: 'lower', fullScreenMode: false, fullScreenBackgroundType: 'color', fullScreenBackgroundColor: '#000000', fullScreenBackgroundMedia: null, fullScreenBackgroundMediaName: '', fullScreenBackgroundMotionPreset: 'amber-drift', fullScreenBackgroundMotionDim: 0.65, alwaysShowBackground: false, fullScreenRestorePosition: null,
   xMargin: 3.5, yMargin: 2, maxLinesEnabled: false, maxLines: 3, minFontSize: 24, maxFontSize: 300, fitWidthPercent: 90, fitHeightPercent: 90,
-  bibleReferencePosition: 'bottom-center', bibleReferenceSize: 28, showBibleVersion: true, autosizerActive: false, primaryViewportWidth: null, primaryViewportHeight: null, allInstances: null, instanceCount: 0, transitionAnimation: 'none', transitionSpeed: 150
+  bibleReferencePosition: 'bottom-center', bibleReferenceSize: 28, showBibleVersion: true, autosizerActive: false, primaryViewportWidth: null, primaryViewportHeight: null, allInstances: null, instanceCount: 0, transitionAnimation: 'none', transitionSpeed: 150,
+  streamBandEnabled: false, streamBandHeightPercent: 33, streamBandBackdrop: 'gradient', streamBandAutoFit: true
+};
+
+export const defaultStreamSettings = {
+  ...defaultOutput1Settings,
+  fontStyle: 'Inter', bold: true, textAlign: 'center', fontSize: 88, fontColor: '#FFFFFF',
+  backgroundColor: '#000000', backgroundOpacity: 6, backgroundBandVerticalPadding: 26, xMargin: 4, yMargin: 0,
+  minFontSize: 20, maxFontSize: 220, fitWidthPercent: 94, fitHeightPercent: 94, bibleReferenceSize: 32,
+  dropShadowOpacity: 5, dropShadowOffsetY: 4, dropShadowBlur: 12, lyricsPosition: 'center',
+  transitionAnimation: 'fade', transitionSpeed: 200,
+  streamBandEnabled: true, streamBandHeightPercent: 33, streamBandBackdrop: 'gradient', streamBandAutoFit: true
 };
 
 export const defaultStageSettings = {
@@ -54,65 +66,77 @@ export function stripRuntimeSettings(settings) {
 
 const baseOutputSettings = { ...defaultOutput1Settings };
 
+const getBaseSettings = (outputKeyOrOutput) => {
+  const key = typeof outputKeyOrOutput === 'object' && outputKeyOrOutput !== null
+    ? (outputKeyOrOutput.key || outputKeyOrOutput.id)
+    : outputKeyOrOutput;
+  if (key === 'output2') return { ...defaultOutput2Settings };
+  if (key === 'stream') return { ...defaultStreamSettings };
+  return { ...defaultOutput1Settings };
+};
+
 export const outputTemplates = [
-  { id: 'default', title: 'Default', description: 'Reset to default application settings', getSettings: (outputKey) => outputKey === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings } },
+  { id: 'default', title: 'Default', description: 'Reset to default application settings', getSettings: (outputKey) => getBaseSettings(outputKey) },
   { id: 'lyric-lower-third-wide', title: 'Lyric — Lower Third Wide', description: 'Wide lower-third layout', getSettings: (outputKey) => {
-      const base = outputKey === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(outputKey);
       return { ...base, fontStyle: 'Bebas Neue', fontSize: 72, textAlign: 'center', lyricsPosition: 'lower', backgroundBandVerticalPadding: 30, backgroundBandHeightMode: 'adaptive', translationFontSizeMode: 'bound', translationFontSize: 48, translationLineColor: '#FBBF24', xMargin: 5, yMargin: 3 };
+  }},
+  { id: 'stream-scripture-band', title: 'Stream — Scripture Band', description: 'Transparent bottom band that auto-fits verses for OBS/vMix', getSettings: (outputKey) => {
+      return { ...defaultStreamSettings };
   }},
 ];
 
 export const bibleTemplates = [
   { id: 'bible-reverent-serif', title: 'Bible — Reverent Serif', description: 'Elegant serif for scripture', audience: 'bible', getSettings: (outputKey) => {
-      const base = outputKey === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(outputKey);
       return { ...base, fontStyle: 'Cormorant Garamond', fontSize: 56, textAlign: 'center', lyricsPosition: 'center', fontColor: '#FFFFFF', translationLineColor: '#93C5FD', backgroundOpacity: 4, backgroundBandVerticalPadding: 24, bibleReferencePosition: 'bottom-center', bibleReferenceSize: 28, showBibleVersion: true, dropShadowOpacity: 6, dropShadowBlur: 12, dropShadowOffsetY: 6, lineHeight: 1.5 };
   }},
   { id: 'bible-scripture-bold', title: 'Bible — Scripture Bold', description: 'Bold Inter', audience: 'bible', getSettings: (outputKey) => {
-      const base = outputKey === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(outputKey);
       return { ...base, fontStyle: 'Inter', bold: true, fontSize: 64, textAlign: 'center', lyricsPosition: 'upper', fontColor: '#FFFFFF', translationLineColor: '#F59E0B', backgroundOpacity: 2, bibleReferencePosition: 'bottom-center', bibleReferenceSize: 30, showBibleVersion: true, dropShadowOpacity: 5, dropShadowBlur: 8 };
   }},
   { id: 'bible-minimal-verse', title: 'Bible — Minimal Verse', description: 'Clean Lato', audience: 'bible', getSettings: (outputKey) => {
-      const base = outputKey === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(outputKey);
       return { ...base, fontStyle: 'Lato', fontSize: 52, textAlign: 'center', lyricsPosition: 'center', fontColor: '#FFFFFF', translationLineColor: '#A7F3D0', backgroundOpacity: 2, borderSize: 0, backgroundBandVerticalPadding: 20, bibleReferencePosition: 'bottom-center', bibleReferenceSize: 26, showBibleVersion: true, dropShadowOpacity: 3, dropShadowBlur: 6 };
   }},
   { id: 'bible-stage-verse-focus', title: 'Stage — Verse Focus', description: 'Stage-optimized scripture', audience: 'bible', getSettings: (outputKeyOrOutput) => {
       const key = typeof outputKeyOrOutput === 'object' ? (outputKeyOrOutput?.key || outputKeyOrOutput?.id) : outputKeyOrOutput;
       const isStage = (() => { if (typeof outputKeyOrOutput === 'object' && outputKeyOrOutput !== null) return outputKeyOrOutput.type === 'stage' || outputKeyOrOutput.key === 'stage' || outputKeyOrOutput.id === 'stage'; return key === 'stage'; })();
       if (isStage) return { ...defaultStageSettings, fontStyle: 'Inter', liveFontSize: 96, liveAlign: 'center', liveColor: '#FFFFFF', liveBold: true, nextFontSize: 48, nextColor: '#808080', prevFontSize: 36, showNextArrow: false, showUpcomingSong: false, bibleReferencePosition: 'bottom-center', bibleReferenceSize: 32, showBibleVersion: true, transitionAnimation: 'fade', transitionSpeed: 200 };
-      const base = key === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(key);
       return { ...base, fontStyle: 'Inter', fontSize: 60, textAlign: 'center', lyricsPosition: 'center', bibleReferenceSize: 32, showBibleVersion: true };
   }},
 ];
 
 export const freeNoteTemplates = [
   { id: 'freenote-standard', title: 'Free Note — Standard', description: 'Clean, highly readable centered text for general announcements, speaker notes, and messages', audience: 'freenote', getSettings: (outputKey) => {
-      const base = outputKey === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(outputKey);
       return { ...base, fontStyle: 'Inter', fontSize: 56, textAlign: 'center', lyricsPosition: 'center', fontColor: '#FFFFFF', backgroundColor: '#000000', backgroundOpacity: 4, backgroundBandVerticalPadding: 24, dropShadowOpacity: 5, dropShadowBlur: 8, lineHeight: 1.4 };
   }},
   { id: 'freenote-lower-third', title: 'Free Note — Lower Third', description: 'Lower-third banner for speaker names, sermon points, or stream overlays', audience: 'freenote', getSettings: (outputKey) => {
-      const base = outputKey === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(outputKey);
       return { ...base, fontStyle: 'Bebas Neue', fontSize: 64, textAlign: 'center', lyricsPosition: 'lower', fontColor: '#FFFFFF', backgroundColor: '#000000', backgroundOpacity: 6, backgroundBandVerticalPadding: 28, backgroundBandHeightMode: 'adaptive', xMargin: 5, yMargin: 3 };
   }},
   { id: 'freenote-emergency-alert', title: 'Free Note — Emergency Alert', description: 'Vibrant amber/red high-visibility emergency banner for urgent announcements', audience: 'freenote', getSettings: (outputKey) => {
-      const base = outputKey === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(outputKey);
       return { ...base, fontStyle: 'Inter', bold: true, fontSize: 68, textAlign: 'center', lyricsPosition: 'center', fontColor: '#FFFFFF', backgroundColor: '#B91C1C', backgroundOpacity: 10, backgroundBandVerticalPadding: 32, dropShadowOpacity: 8, dropShadowBlur: 14 };
   }},
   { id: 'freenote-quote', title: 'Free Note — Quote / Sermon Point', description: 'Serif quote layout with elegant emphasis and citation styling', audience: 'freenote', getSettings: (outputKey) => {
-      const base = outputKey === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(outputKey);
       return { ...base, fontStyle: 'Cormorant Garamond', italic: true, fontSize: 60, textAlign: 'center', lyricsPosition: 'center', fontColor: '#FDFBF7', backgroundColor: '#0A0A0A', backgroundOpacity: 5, backgroundBandVerticalPadding: 26, dropShadowOpacity: 4, dropShadowBlur: 10, lineHeight: 1.5 };
   }},
   { id: 'freenote-stage-focus', title: 'Stage — Note Focus', description: 'Confidence monitor view for speaker notes and announcements with high visibility', audience: 'freenote', getSettings: (outputKeyOrOutput) => {
       const key = typeof outputKeyOrOutput === 'object' ? (outputKeyOrOutput?.key || outputKeyOrOutput?.id) : outputKeyOrOutput;
       const isStage = (() => { if (typeof outputKeyOrOutput === 'object' && outputKeyOrOutput !== null) return outputKeyOrOutput.type === 'stage' || outputKeyOrOutput.key === 'stage' || outputKeyOrOutput.id === 'stage'; return key === 'stage'; })();
       if (isStage) return { ...defaultStageSettings, fontStyle: 'Inter', liveFontSize: 96, liveAlign: 'center', liveColor: '#FBBF24', liveBold: true, nextFontSize: 40, nextColor: '#808080', prevFontSize: 32, showNextArrow: false, showUpcomingSong: false, transitionAnimation: 'fade', transitionSpeed: 200 };
-      const base = key === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(key);
       return { ...base, fontStyle: 'Inter', fontSize: 60, textAlign: 'center', lyricsPosition: 'center' };
   }},
   { id: 'freenote-stage-alert', title: 'Stage — Alert Banner', description: 'Stage confidence monitor urgent cue or alert banner', audience: 'freenote', getSettings: (outputKeyOrOutput) => {
       const key = typeof outputKeyOrOutput === 'object' ? (outputKeyOrOutput?.key || outputKeyOrOutput?.id) : outputKeyOrOutput;
       const isStage = (() => { if (typeof outputKeyOrOutput === 'object' && outputKeyOrOutput !== null) return outputKeyOrOutput.type === 'stage' || outputKeyOrOutput.key === 'stage' || outputKeyOrOutput.id === 'stage'; return key === 'stage'; })();
       if (isStage) return { ...defaultStageSettings, fontStyle: 'Inter', backgroundColor: '#450A0A', liveFontSize: 104, liveAlign: 'center', liveColor: '#FEF2F2', liveBold: true, nextFontSize: 0, prevFontSize: 0, showNextArrow: false, showUpcomingSong: false, transitionAnimation: 'none' };
-      const base = key === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(key);
       return { ...base, fontStyle: 'Inter', bold: true, fontSize: 68, textAlign: 'center', lyricsPosition: 'center', backgroundColor: '#B91C1C' };
   }},
 ];
@@ -131,7 +155,7 @@ export const stageTemplates = [
 export function resolveTemplateById(templateId, outputKey, userTemplates = []) {
   if (!templateId) return null;
   if (templateId === 'default') {
-    return { id: 'default', title: 'Default', getSettings: (k) => { if (k === 'output2') return { ...defaultOutput2Settings }; if (k === 'stage') return { ...defaultStageSettings }; return { ...defaultOutput1Settings }; }, settings: outputKey === 'stage' ? { ...defaultStageSettings } : outputKey === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings } };
+    return { id: 'default', title: 'Default', getSettings: (k) => { if (k === 'stage') return { ...defaultStageSettings }; return getBaseSettings(k); }, settings: outputKey === 'stage' ? { ...defaultStageSettings } : getBaseSettings(outputKey) };
   }
   const allBuiltIns = [...outputTemplates, ...bibleTemplates, ...freeNoteTemplates, ...stageTemplates];
   const found = allBuiltIns.find((t) => t.id === templateId);
@@ -146,7 +170,7 @@ export function resolveTemplateForOutput(templateId, output, userTemplates = [])
   if (templateId === 'default') {
     const key = output?.key || output?.id || 'output1';
     const isStage = output?.type === 'stage' || key === 'stage';
-    return { id: 'default', title: 'Default', getSettings: () => isStage ? { ...defaultStageSettings } : key === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings }, settings: isStage ? { ...defaultStageSettings } : key === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings } };
+    return { id: 'default', title: 'Default', getSettings: () => isStage ? { ...defaultStageSettings } : getBaseSettings(key), settings: isStage ? { ...defaultStageSettings } : getBaseSettings(key) };
   }
   const allBuiltIns = [...outputTemplates, ...bibleTemplates, ...freeNoteTemplates, ...stageTemplates];
   const found = allBuiltIns.find((t) => t.id === templateId);
@@ -205,6 +229,7 @@ export async function loadUserTemplatesForServer() {
 export function getOutputSettingsForServer(state, outputKey) {
   if (outputKey === 'output1') return state.output1Settings || defaultOutput1Settings;
   if (outputKey === 'output2') return state.output2Settings || defaultOutput2Settings;
+  if (outputKey === 'stream') return state.streamSettings || defaultStreamSettings;
   if (outputKey === 'stage') return state.stageSettings || defaultStageSettings;
   if (state.customOutputSettings?.[outputKey]) return state.customOutputSettings[outputKey];
   return defaultOutput1Settings;

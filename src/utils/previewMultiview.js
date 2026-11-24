@@ -12,7 +12,7 @@ export const PREVIEW_TILES = [
   { id: 'output2', label: 'Main Lyric — Output 2', route: 'output2', kind: 'frame' },
   { id: 'stage', label: 'Stage Confidence', route: 'stage', kind: 'frame' },
   { id: 'clock', label: 'Countdown / Time', route: 'time', kind: 'optional-frame' },
-  { id: 'lowerthird', label: 'Stream Lower-Third', route: null, kind: 'placeholder' },
+  { id: 'lowerthird', label: 'Stream Lower-Third', route: 'stream', kind: 'frame' },
   { id: 'bible', label: 'Bible Scripture Card', route: null, kind: 'scripture' },
 ];
 

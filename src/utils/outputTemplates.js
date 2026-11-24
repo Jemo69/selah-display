@@ -1,9 +1,19 @@
-import { defaultOutput1Settings, defaultOutput2Settings, defaultStageSettings } from '../context/LyricsStore';
+import { defaultOutput1Settings, defaultOutput2Settings, defaultStreamSettings, defaultStageSettings } from '../context/LyricsStore';
 import { createLogger } from './logger.js';
 
 const log = createLogger('OutputTemplates');
 
 const baseOutputSettings = { ...defaultOutput1Settings };
+
+// Stream keeps its band geometry when any template is applied to it.
+const getBaseSettings = (outputKeyOrOutput) => {
+  const key = typeof outputKeyOrOutput === 'object' && outputKeyOrOutput !== null
+    ? (outputKeyOrOutput.key || outputKeyOrOutput.id)
+    : outputKeyOrOutput;
+  if (key === 'output2') return { ...defaultOutput2Settings };
+  if (key === 'stream') return { ...defaultStreamSettings };
+  return { ...defaultOutput1Settings };
+};
 
 export const outputTemplates = [
   {
@@ -11,7 +21,7 @@ export const outputTemplates = [
     title: 'Default',
     description: 'Reset to default application settings with standard configuration',
     getSettings: (outputKey) => {
-      return outputKey === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      return getBaseSettings(outputKey);
     }
   },
   {
@@ -19,7 +29,7 @@ export const outputTemplates = [
     title: 'Lyric — Lower Third Wide',
     description: 'Wide lower-third layout for lyrics with large Bebas Neue and adaptive background band',
     getSettings: (outputKey) => {
-      const base = outputKey === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(outputKey);
       return {
         ...base,
         fontStyle: 'Bebas Neue',
@@ -36,6 +46,42 @@ export const outputTemplates = [
       };
     }
   },
+  {
+    id: 'stream-scripture-band',
+    title: 'Stream — Scripture Band',
+    description: 'Transparent bottom band that auto-fits verses for OBS/vMix without covering the preacher',
+    getSettings: (outputKey) => {
+      const base = getBaseSettings(outputKey);
+      return {
+        ...base,
+        fontStyle: 'Inter',
+        bold: true,
+        textAlign: 'center',
+        fontSize: 88,
+        fontColor: '#FFFFFF',
+        backgroundColor: '#000000',
+        backgroundOpacity: 6,
+        backgroundBandVerticalPadding: 26,
+        xMargin: 4,
+        yMargin: 0,
+        minFontSize: 20,
+        maxFontSize: 220,
+        fitWidthPercent: 94,
+        fitHeightPercent: 94,
+        bibleReferenceSize: 32,
+        dropShadowOpacity: 5,
+        dropShadowOffsetY: 4,
+        dropShadowBlur: 12,
+        lyricsPosition: 'center',
+        transitionAnimation: 'fade',
+        transitionSpeed: 200,
+        streamBandEnabled: true,
+        streamBandHeightPercent: 33,
+        streamBandBackdrop: 'gradient',
+        streamBandAutoFit: true,
+      };
+    }
+  },
 ];
 
 export const bibleTemplates = [
@@ -45,7 +91,7 @@ export const bibleTemplates = [
     description: 'Elegant serif for scripture with centered layout and reference pill',
     audience: 'bible',
     getSettings: (outputKey) => {
-      const base = outputKey === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(outputKey);
       return {
         ...base,
         fontStyle: 'Cormorant Garamond',
@@ -72,7 +118,7 @@ export const bibleTemplates = [
     description: 'Bold Inter for high-contrast scripture, upper-center with amber translation',
     audience: 'bible',
     getSettings: (outputKey) => {
-      const base = outputKey === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(outputKey);
       return {
         ...base,
         fontStyle: 'Inter',
@@ -97,7 +143,7 @@ export const bibleTemplates = [
     description: 'Clean Lato for bright projectors, centered with subtle background',
     audience: 'bible',
     getSettings: (outputKey) => {
-      const base = outputKey === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(outputKey);
       return {
         ...base,
         fontStyle: 'Lato',
@@ -123,7 +169,7 @@ export const bibleTemplates = [
     description: 'Dual-translation parallel display with per-translation labels: side-by-side on wide screens, stacked on narrow ones',
     audience: 'bible',
     getSettings: (outputKey) => {
-      const base = outputKey === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(outputKey);
       return {
         ...base,
         fontStyle: 'Inter',
@@ -177,7 +223,7 @@ export const bibleTemplates = [
           transitionSpeed: 200,
         };
       }
-      const base = key === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(key);
       return {
         ...base,
         fontStyle: 'Inter',
@@ -198,7 +244,7 @@ export const freeNoteTemplates = [
     description: 'Clean, highly readable centered text for general announcements, speaker notes, and messages',
     audience: 'freenote',
     getSettings: (outputKey) => {
-      const base = outputKey === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(outputKey);
       return {
         ...base,
         fontStyle: 'Inter',
@@ -221,7 +267,7 @@ export const freeNoteTemplates = [
     description: 'Lower-third banner for speaker names, sermon points, or stream overlays',
     audience: 'freenote',
     getSettings: (outputKey) => {
-      const base = outputKey === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(outputKey);
       return {
         ...base,
         fontStyle: 'Bebas Neue',
@@ -244,7 +290,7 @@ export const freeNoteTemplates = [
     description: 'Vibrant amber/red high-visibility emergency banner for urgent announcements',
     audience: 'freenote',
     getSettings: (outputKey) => {
-      const base = outputKey === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(outputKey);
       return {
         ...base,
         fontStyle: 'Inter',
@@ -267,7 +313,7 @@ export const freeNoteTemplates = [
     description: 'Serif quote layout with elegant emphasis and citation styling',
     audience: 'freenote',
     getSettings: (outputKey) => {
-      const base = outputKey === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(outputKey);
       return {
         ...base,
         fontStyle: 'Cormorant Garamond',
@@ -315,7 +361,7 @@ export const freeNoteTemplates = [
           transitionSpeed: 200,
         };
       }
-      const base = key === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(key);
       return {
         ...base,
         fontStyle: 'Inter',
@@ -354,7 +400,7 @@ export const freeNoteTemplates = [
           transitionAnimation: 'none',
         };
       }
-      const base = key === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings };
+      const base = getBaseSettings(key);
       return {
         ...base,
         fontStyle: 'Inter',
@@ -543,13 +589,11 @@ export function resolveTemplateById(templateId, outputKey, userTemplates = []) {
       id: 'default',
       title: 'Default',
       getSettings: (k) => {
-        if (k === 'output2') return { ...defaultOutput2Settings };
         if (k === 'stage') return { ...defaultStageSettings };
-        // custom outputs: caller should pass correct base via getTemplateSettings fallback; we default to regular
-        // hook will handle custom stage via output.type check before calling
-        return { ...defaultOutput1Settings };
+        // custom outputs: caller should pass the correct base via getTemplateSettings fallback.
+        return getBaseSettings(k);
       },
-      settings: outputKey === 'stage' ? { ...defaultStageSettings } : outputKey === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings },
+      settings: outputKey === 'stage' ? { ...defaultStageSettings } : getBaseSettings(outputKey),
     };
   }
   const allBuiltIns = [...outputTemplates, ...bibleTemplates, ...freeNoteTemplates, ...stageTemplates];
@@ -568,8 +612,8 @@ export function resolveTemplateForOutput(templateId, output, userTemplates = [])
     return {
       id: 'default',
       title: 'Default',
-      getSettings: () => isStage ? { ...defaultStageSettings } : key === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings },
-      settings: isStage ? { ...defaultStageSettings } : key === 'output2' ? { ...defaultOutput2Settings } : { ...defaultOutput1Settings },
+      getSettings: () => isStage ? { ...defaultStageSettings } : getBaseSettings(key),
+      settings: isStage ? { ...defaultStageSettings } : getBaseSettings(key),
     };
   }
   const allBuiltIns = [...outputTemplates, ...bibleTemplates, ...freeNoteTemplates, ...stageTemplates];

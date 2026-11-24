@@ -61,6 +61,7 @@ let currentLineToSection = {};
 let currentChordChart = null;
 let currentOutput1Settings = {};
 let currentOutput2Settings = {};
+let currentStreamSettings = {};
 let currentStageSettings = {};
 let currentCustomOutputs = [];
 let currentCustomOutputSettings = {};
@@ -71,12 +72,14 @@ let currentTickerQueue = [];
 let currentTickerActiveId = null;
 let currentOutput1Enabled = true;
 let currentOutput2Enabled = true;
+let currentStreamEnabled = true;
 let currentStageEnabled = true;
 let setlistFiles = [];
 let connectedClients = new Map();
 let outputInstances = {
   output1: new Map(),
   output2: new Map(),
+  stream: new Map(),
   stage: new Map()
 };
 let currentStageTimerState = { running: false, paused: false, endTime: null, remaining: null };
@@ -88,6 +91,7 @@ let lastStateFingerprintBySocket = new Map();
 let currentModeTemplates = {
   output1: { enabled: false, song: null, bible: null },
   output2: { enabled: false, song: null, bible: null },
+  stream: { enabled: false, song: null, bible: null },
   stage: { enabled: false, song: null, bible: null },
 };
 let currentContentMode = 'song';
@@ -156,11 +160,13 @@ function computeStateFingerprint() {
     currentTickerActiveId,
     currentOutput1Enabled,
     currentOutput2Enabled,
+    currentStreamEnabled,
     currentStageEnabled,
     setlistFiles.length,
     setlistFiles.map(f => f.id).join(','),
     JSON.stringify(currentOutput1Settings),
     JSON.stringify(currentOutput2Settings),
+    JSON.stringify(currentStreamSettings),
     JSON.stringify(currentStageSettings),
     JSON.stringify(currentCustomOutputs),
     JSON.stringify(currentCustomOutputSettings),
@@ -181,6 +187,7 @@ function getAllOutputsForServer() {
   const builtIns = [
     { id: 'output1', key: 'output1', name: 'Output 1', slug: 'output1', type: 'regular', builtIn: true },
     { id: 'output2', key: 'output2', name: 'Output 2', slug: 'output2', type: 'regular', builtIn: true },
+    { id: 'stream', key: 'stream', name: 'Stream', slug: 'stream', type: 'stream', builtIn: true },
     { id: 'stage', key: 'stage', name: 'Stage', slug: 'stage', type: 'stage', builtIn: true },
   ];
   const customs = (currentCustomOutputs || []).map((o) => ({ ...o, key: o.id, type: o.type === 'stage' ? 'stage' : 'regular', builtIn: false, name: o.name, slug: o.slug }));
@@ -244,11 +251,12 @@ export async function applyTemplatesForMode(mode, { silent = false } = {}) {
     if (isStageOutput && !isStageTemplate) { log.warn(`Skipping regular template for stage ${key}`); continue; }
     if (!isStageOutput && isStageTemplate) { log.warn(`Skipping stage template for regular ${key}`); continue; }
     const settings = stripRuntimeSettings(rawSettings);
-    const current = stripRuntimeSettings(getOutputSettingsForServer({ output1Settings: currentOutput1Settings, output2Settings: currentOutput2Settings, stageSettings: currentStageSettings, customOutputSettings: currentCustomOutputSettings }, key));
+    const current = stripRuntimeSettings(getOutputSettingsForServer({ output1Settings: currentOutput1Settings, output2Settings: currentOutput2Settings, streamSettings: currentStreamSettings, stageSettings: currentStageSettings, customOutputSettings: currentCustomOutputSettings }, key));
     const payload = { ...settings };
     for (const k of CLEARABLE_KEYS) { if (!(k in settings) && k in current) payload[k] = null; }
     if (key === 'output1') currentOutput1Settings = { ...currentOutput1Settings, ...payload };
     else if (key === 'output2') currentOutput2Settings = { ...currentOutput2Settings, ...payload };
+    else if (key === 'stream') currentStreamSettings = { ...currentStreamSettings, ...payload };
     else if (key === 'stage') currentStageSettings = { ...currentStageSettings, ...payload };
     else if (key && key.startsWith('custom_')) currentCustomOutputSettings = { ...currentCustomOutputSettings, [key]: { ...(currentCustomOutputSettings[key] || {}), ...payload } };
     if (ioInstance) ioInstance.emit('styleUpdate', { output: key, settings: payload });
@@ -272,13 +280,13 @@ export async function applyTemplatesForMode(mode, { silent = false } = {}) {
 export function getModeTemplates() { return { ...currentModeTemplates }; }
 export function getContentModeState() { return { mode: currentContentMode, bibleVersion: currentBibleVersion, fileName: currentContentFileName }; }
 export function setModeTemplatesInternal(templates) {
-  const validKeys = new Set(['output1', 'output2', 'stage', ...currentCustomOutputs.map((o) => o.id)]);
+  const validKeys = new Set(['output1', 'output2', 'stream', 'stage', ...currentCustomOutputs.map((o) => o.id)]);
   // allow custom keys even if not yet known — keep them, pruning only truly unknown built-ins is handled via validKeys expansion
   const sanitized = sanitizeModeTemplates(templates, null);
   // also keep any custom_* keys even if not in validKeys yet
   currentModeTemplates = sanitized;
   // ensure built-ins exist
-  for (const k of ['output1', 'output2', 'stage']) if (!currentModeTemplates[k]) currentModeTemplates[k] = { enabled: false, song: null, bible: null };
+  for (const k of ['output1', 'output2', 'stream', 'stage']) if (!currentModeTemplates[k]) currentModeTemplates[k] = { enabled: false, song: null, bible: null };
   notifySessionStateChanged();
   return currentModeTemplates;
 }
@@ -296,6 +304,7 @@ export function getStatus() {
     ticker: getTickerState(),
     output1Enabled: currentOutput1Enabled,
     output2Enabled: currentOutput2Enabled,
+    streamEnabled: currentStreamEnabled,
     stageEnabled: currentStageEnabled,
     setlistCount: setlistFiles.length,
     lyricsCount: currentLyrics.length,
@@ -683,6 +692,10 @@ export function restoreSessionStateInternal(snapshot = {}) {
     currentOutput2Enabled = snapshot.output2Enabled;
     restoredAnything = true;
   }
+  if (typeof snapshot.streamEnabled === 'boolean') {
+    currentStreamEnabled = snapshot.streamEnabled;
+    restoredAnything = true;
+  }
   if (typeof snapshot.stageEnabled === 'boolean') {
     currentStageEnabled = snapshot.stageEnabled;
     restoredAnything = true;
@@ -693,6 +706,10 @@ export function restoreSessionStateInternal(snapshot = {}) {
   }
   if (snapshot.output2Settings && typeof snapshot.output2Settings === 'object') {
     currentOutput2Settings = snapshot.output2Settings;
+    restoredAnything = true;
+  }
+  if (snapshot.streamSettings && typeof snapshot.streamSettings === 'object') {
+    currentStreamSettings = snapshot.streamSettings;
     restoredAnything = true;
   }
   if (snapshot.stageSettings && typeof snapshot.stageSettings === 'object') {
@@ -731,7 +748,7 @@ export function restoreSessionStateInternal(snapshot = {}) {
 
   if (snapshot.modeTemplates && typeof snapshot.modeTemplates === 'object') {
     currentModeTemplates = sanitizeModeTemplates(snapshot.modeTemplates, null);
-    for (const k of ['output1', 'output2', 'stage']) if (!currentModeTemplates[k]) currentModeTemplates[k] = { enabled: false, song: null, bible: null, freenote: null };
+    for (const k of ['output1', 'output2', 'stream', 'stage']) if (!currentModeTemplates[k]) currentModeTemplates[k] = { enabled: false, song: null, bible: null, freenote: null };
     restoredAnything = true;
   }
   if (typeof snapshot.contentMode === 'string') {
@@ -785,9 +802,11 @@ export function restoreSessionStateInternal(snapshot = {}) {
     ioInstance.emit('tickerUpdate', getTickerState());
     ioInstance.emit('individualOutputToggle', { output: 'output1', enabled: currentOutput1Enabled });
     ioInstance.emit('individualOutputToggle', { output: 'output2', enabled: currentOutput2Enabled });
+    ioInstance.emit('individualOutputToggle', { output: 'stream', enabled: currentStreamEnabled });
     ioInstance.emit('individualOutputToggle', { output: 'stage', enabled: currentStageEnabled });
     ioInstance.emit('styleUpdate', { output: 'output1', settings: currentOutput1Settings });
     ioInstance.emit('styleUpdate', { output: 'output2', settings: currentOutput2Settings });
+    ioInstance.emit('styleUpdate', { output: 'stream', settings: currentStreamSettings });
     ioInstance.emit('styleUpdate', { output: 'stage', settings: currentStageSettings });
     ioInstance.emit('outputRegistryUpdate', {
       customOutputs: currentCustomOutputs,
@@ -1264,6 +1283,8 @@ export default function registerSocketEvents(io, { hasPermission }) {
         currentOutput1Enabled = enabled;
       } else if (output === 'output2') {
         currentOutput2Enabled = enabled;
+      } else if (output === 'stream') {
+        currentStreamEnabled = enabled;
       } else if (output === 'stage') {
         currentStageEnabled = enabled;
       } else if (output && output.startsWith('custom_')) {
@@ -1441,7 +1462,7 @@ export default function registerSocketEvents(io, { hasPermission }) {
         return;
       }
       currentModeTemplates = sanitizeModeTemplates(modeTemplates, null);
-      for (const k of ['output1', 'output2', 'stage']) if (!currentModeTemplates[k]) currentModeTemplates[k] = { enabled: false, song: null, bible: null, freenote: null };
+      for (const k of ['output1', 'output2', 'stream', 'stage']) if (!currentModeTemplates[k]) currentModeTemplates[k] = { enabled: false, song: null, bible: null, freenote: null };
       log.info(`Mode templates updated by ${clientType} client`);
       io.emit('modeTemplatesUpdate', { modeTemplates: currentModeTemplates });
       notifySessionStateChanged();
@@ -1538,6 +1559,9 @@ export default function registerSocketEvents(io, { hasPermission }) {
       }
       if (output === 'output2') {
         currentOutput2Settings = { ...currentOutput2Settings, ...settings };
+      }
+      if (output === 'stream') {
+        currentStreamSettings = { ...currentStreamSettings, ...settings };
       }
       if (output === 'stage') {
         currentStageSettings = { ...currentStageSettings, ...settings };
@@ -1681,7 +1705,7 @@ export default function registerSocketEvents(io, { hasPermission }) {
         socket.emit('permissionError', 'Insufficient permissions to publish metrics');
         return;
       }
-      if (!output || !metrics || (output !== 'output1' && output !== 'output2' && !output.startsWith('custom_'))) {
+      if (!output || !metrics || (output !== 'output1' && output !== 'output2' && output !== 'stream' && !output.startsWith('custom_'))) {
         return;
       }
       if (!outputInstances[output]) outputInstances[output] = new Map();
@@ -1996,6 +2020,7 @@ export function buildCurrentState(clientInfo) {
     lineToSection: currentLineToSection,
     output1Settings: currentOutput1Settings,
     output2Settings: currentOutput2Settings,
+    streamSettings: currentStreamSettings,
     stageSettings: currentStageSettings,
     customOutputs: currentCustomOutputs,
     customOutputSettings: currentCustomOutputSettings,
@@ -2005,6 +2030,7 @@ export function buildCurrentState(clientInfo) {
     ticker: getTickerState(),
     output1Enabled: currentOutput1Enabled,
     output2Enabled: currentOutput2Enabled,
+    streamEnabled: currentStreamEnabled,
     stageEnabled: currentStageEnabled,
     setlistFiles,
     lyricsFileName: currentLyricsFileName || '',
@@ -2069,6 +2095,7 @@ export function buildLightState(clientInfo) {
     ticker: getTickerState(),
     output1Enabled: currentOutput1Enabled,
     output2Enabled: currentOutput2Enabled,
+    streamEnabled: currentStreamEnabled,
     stageEnabled: currentStageEnabled,
     setlist: summary,
     setlistCount: summary.length,

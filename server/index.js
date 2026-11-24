@@ -500,6 +500,7 @@ app.get('/api/outputs/resolve/:slug', (req, res) => {
   const builtIns = [
     { id: 'output1', key: 'output1', name: 'Output 1', slug: 'output1', type: 'regular', builtIn: true },
     { id: 'output2', key: 'output2', name: 'Output 2', slug: 'output2', type: 'regular', builtIn: true },
+    { id: 'stream', key: 'stream', name: 'Stream', slug: 'stream', type: 'stream', builtIn: true },
     { id: 'stage', key: 'stage', name: 'Stage', slug: 'stage', type: 'stage', builtIn: true },
   ];
   const customOutputs = global.getOutputRegistry?.().customOutputs || [];

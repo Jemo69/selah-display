@@ -555,7 +555,7 @@ components:
         properties:
           output:
             type: string
-            enum: ['output1', 'output2', 'stage']
+            enum: ['output1', 'output2', 'stream', 'stage']
           enabled:
             type: boolean
       x-permissions: ['output:control']
@@ -599,7 +599,7 @@ components:
         properties:
           output:
             type: string
-            enum: ['output1', 'output2', 'stage']
+            enum: ['output1', 'output2', 'stream', 'stage']
           settings:
             type: object
       description: Update styling for a specific output. Mirrors to all clients.
@@ -634,7 +634,7 @@ components:
         properties:
           output:
             type: string
-            enum: ['output1', 'output2']
+            enum: ['output1', 'output2', 'stream']
           metrics:
             type: object
             properties:
@@ -767,6 +767,8 @@ components:
             type: object
           output2Settings:
             type: object
+          streamSettings:
+            type: object
           stageSettings:
             type: object
           isOutputOn:
@@ -774,6 +776,8 @@ components:
           output1Enabled:
             type: boolean
           output2Enabled:
+            type: boolean
+          streamEnabled:
             type: boolean
           stageEnabled:
             type: boolean

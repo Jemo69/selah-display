@@ -32,7 +32,7 @@ export const HEARTBEAT_MS = 2000;
 
 // Mirrors the output-key guard in src/context/LyricsStore.js
 // updateOutputSettings: built-ins plus custom_* ids.
-const OUTPUT_KEY_PATTERN = /^(output1|output2|stage|custom_[A-Za-z0-9_-]+)$/;
+const OUTPUT_KEY_PATTERN = /^(output1|output2|stream|stage|custom_[A-Za-z0-9_-]+)$/;
 
 const preferences = new Store({
   name: 'preferences',
