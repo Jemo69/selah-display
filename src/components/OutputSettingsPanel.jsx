@@ -84,7 +84,7 @@ const StreamBandSection = ({ darkMode, settings, update, showToast }) => {
 
       {enabled && (
         <div className="mt-3 space-y-3">
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="space-y-2">
             <div>
               <label className={`text-xs font-semibold uppercase tracking-wide ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
                 Band height
@@ -99,9 +99,9 @@ const StreamBandSection = ({ darkMode, settings, update, showToast }) => {
                     'streamBandHeightPercent',
                     sanitizeIntegerInput(event.target.value, percent, { min: 15, max: 80 })
                   )}
-                  className={`w-20 ${darkMode ? 'bg-gray-700 border-gray-600 text-gray-200' : 'bg-white border-gray-300'}`}
+                  className={`w-16 ${darkMode ? 'bg-gray-700 border-gray-600 text-gray-200' : 'bg-white border-gray-300'}`}
                 />
-                <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>% of frame height</span>
+                <span className={`whitespace-nowrap text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>% of frame height</span>
               </div>
             </div>
             <div>
@@ -109,7 +109,7 @@ const StreamBandSection = ({ darkMode, settings, update, showToast }) => {
                 Backdrop
               </label>
               <Select value={backdrop} onValueChange={(value) => update('streamBandBackdrop', value)}>
-                <SelectTrigger className={`mt-1 ${darkMode ? 'bg-gray-700 border-gray-600 text-gray-200' : 'bg-white border-gray-300'}`}>
+                <SelectTrigger className={`mt-1 w-full ${darkMode ? 'bg-gray-700 border-gray-600 text-gray-200' : 'bg-white border-gray-300'}`}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className={darkMode ? 'bg-gray-700 border-gray-600 text-gray-200' : 'bg-white border-gray-300'}>
@@ -547,6 +547,7 @@ const OutputSettingsPanel = ({ outputKey }) => {
 
   const outputDefinition = useOutputDefinition(outputKey);
   const { settings, updateSettings, enabled: isOutputEnabled, setEnabled: setOutputEnabled } = useOutputSettingsByKey(outputKey);
+  const streamBandOn = settings.streamBandEnabled === true;
   const { settings: performanceSettings, setSettings: setPerformanceSettings } = usePerformanceSettings();
 
   const { handleToggleOutput } = useOutputToggle({
@@ -681,7 +682,7 @@ const OutputSettingsPanel = ({ outputKey }) => {
   }, [fullScreenModeChecked, setFullScreenAdvancedExpanded]);
 
   const fullScreenAdvancedVisible = fullScreenAdvancedExpanded;
-  const fullScreenControlsDisabled = !fullScreenModeChecked && fullScreenAdvancedExpanded;
+  const fullScreenControlsDisabled = streamBandOn || (!fullScreenModeChecked && fullScreenAdvancedExpanded);
 
   React.useEffect(() => {
     const wasExpanded = prevFullScreenAdvancedExpandedRef.current;
@@ -876,13 +877,15 @@ const OutputSettingsPanel = ({ outputKey }) => {
         showToast={showToast}
       />
 
-      {/* Lyrics Position */}
-      <LyricsPositionSection
-        darkMode={darkMode}
-        lyricsPositionValue={lyricsPositionValue}
-        handleLyricsPositionChange={handleLyricsPositionChange}
-        fullScreenModeChecked={fullScreenModeChecked}
-      />
+      {/* Lyrics Position — the stream band owns vertical placement. */}
+      {!streamBandOn && (
+        <LyricsPositionSection
+          darkMode={darkMode}
+          lyricsPositionValue={lyricsPositionValue}
+          handleLyricsPositionChange={handleLyricsPositionChange}
+          fullScreenModeChecked={fullScreenModeChecked}
+        />
+      )}
 
       {/* Font Picker */}
       <FontStyleSection
@@ -1634,7 +1637,7 @@ const OutputSettingsPanel = ({ outputKey }) => {
       {/* Full Screen Mode */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2">
-          <Tooltip content="Enable full screen display with custom background settings" side="right">
+          <Tooltip content={streamBandOn ? "Turn off Live Stream Band to use full screen backgrounds" : "Enable full screen display with custom background settings"} side="right">
             <LabelWithIcon icon={ScreenShare} text="Full Screen Mode" darkMode={darkMode} />
           </Tooltip>
           <Tooltip content={fullScreenAdvancedExpanded ? "Hide advanced settings" : "Show advanced settings"} side="top">
@@ -1642,6 +1645,7 @@ const OutputSettingsPanel = ({ outputKey }) => {
               expanded={fullScreenAdvancedExpanded}
               onToggle={() => setFullScreenAdvancedExpanded(!fullScreenAdvancedExpanded)}
               darkMode={darkMode}
+              disabled={streamBandOn}
               ariaLabel="Toggle full screen advanced settings"
             />
           </Tooltip>
@@ -1653,6 +1657,7 @@ const OutputSettingsPanel = ({ outputKey }) => {
           <Switch
             checked={fullScreenModeChecked}
             onCheckedChange={handleFullScreenToggleWithExpand}
+            disabled={streamBandOn}
             aria-label="Toggle full screen mode"
             className={`!h-8 !w-16 !border-0 shadow-sm transition-colors ${darkMode
               ? 'data-[state=checked]:bg-green-400 data-[state=unchecked]:bg-gray-600'
@@ -1774,6 +1779,7 @@ const OutputSettingsPanel = ({ outputKey }) => {
           <Switch
             checked={Boolean(settings.alwaysShowBackground)}
             onCheckedChange={(checked) => update('alwaysShowBackground', checked)}
+            disabled={streamBandOn}
             aria-label="Toggle always show background"
             className={`!h-7 !w-14 !border-0 shadow-sm transition-colors ${darkMode
               ? 'data-[state=checked]:bg-green-400 data-[state=unchecked]:bg-gray-600'
