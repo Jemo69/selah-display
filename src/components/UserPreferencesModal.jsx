@@ -2,7 +2,7 @@ import React from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
-import { Globe, Trash2, Monitor, Database, Zap, Keyboard, Settings, ScreenShare, AlertTriangle, X, Trash, Layers, Sparkles, Gauge, BookOpen, ListMusic, LayoutPanelLeft, Send, Crosshair, Palette, FlaskConical, FileText, Radio, GraduationCap } from 'lucide-react';
+import { Globe, Trash2, Monitor, Database, Zap, Keyboard, Settings, ScreenShare, AlertTriangle, X, Trash, Layers, Sparkles, Gauge, BookOpen, ListMusic, LayoutPanelLeft, Send, Crosshair, Palette, FlaskConical, FileText, Radio, GraduationCap, Plug } from 'lucide-react';
 import { formatForDisplay } from '@tanstack/hotkeys';
 import useRccgTphbStore from '../context/RccgTphbStore';
 import useToast from '../hooks/useToast';
@@ -27,6 +27,7 @@ import { useOutputTemplateSync } from '../hooks/useOutputTemplateSync';
 import { MidiOscSection } from './MidiOscSettings';
 import BibleImportButton from './Bible/BibleImportButton';
 import DiagnosticsSection from './DiagnosticsSection';
+import McpSettingsSection from './McpSettingsSection';
 import OnboardSection from './Onboarding/OnboardSection';
 import { useOnboardStore, ROLE_HIDDEN } from '../context/OnboardStore';
 import SpeechSettingsSection from './Speech/SpeechSettingsSection';
@@ -1509,6 +1510,7 @@ const SIDEBAR_SECTIONS = [
   { id: 'fHint', label: 'F Highlight Mode', icon: Crosshair, desc: 'Vimium-style hints' },
   { id: 'automation', label: 'Automation', icon: Zap, desc: 'On/Off hooks' },
   { id: 'hardware', label: 'MIDI + OSC', icon: Radio, desc: 'Pedals & Stream Deck' },
+  { id: 'mcp', label: 'MCP Server', icon: Plug, desc: 'AI config & control' },
   { id: 'performance', label: 'Performance', icon: Gauge, desc: 'Low power mode' },
   { id: 'onboard', label: 'Onboard', icon: GraduationCap, desc: 'Tours, demo & teaching' },
   { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard, desc: 'Key bindings' },
@@ -1545,6 +1547,8 @@ const UserPreferencesModal = ({ darkMode, onClose, initialSection = 'screens' })
         return <AutomationSection darkMode={darkMode} />;
       case 'hardware':
         return <MidiOscSection darkMode={darkMode} />;
+      case 'mcp':
+        return <McpSettingsSection darkMode={darkMode} />;
       case 'httpActions':
         return <HttpActionsSection darkMode={darkMode} />;
       case 'performance':

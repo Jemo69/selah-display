@@ -13,6 +13,13 @@ import {
   DEFAULT_SHOW_STATE,
 } from '../shared/showControl.js';
 import { isChordChart, parseChordProSource } from '../shared/chords.js';
+import {
+  APP_CONFIG_SECTIONS,
+  createDefaultAppConfig,
+  sanitizeAppConfigPatch,
+  mergeAppConfig,
+  isValidOutputKey,
+} from '../shared/appConfig.js';
 import createServerLogger from './logger.js';
 import { logServiceVerse } from './serviceVerseLog.js';
 import { scheduler, startScheduleTickLoop } from './realtime/timerScheduler.js';
@@ -101,6 +108,8 @@ let currentBibleVersion = '';
 // bibleVerseLoaded `secondary` field: { bible, text, fullText, slides }.
 let currentBibleParallel = null;
 let currentContentFileName = '';
+let currentAppConfig = createDefaultAppConfig();
+let currentAppConfigUpdatedAt = 0;
 
 let ioInstance = null;
 let sessionChangeListeners = [];
@@ -293,6 +302,193 @@ export function setModeTemplatesInternal(templates) {
 
 export function getIoInstance() {
   return ioInstance;
+}
+
+export function getAppConfigSnapshot() {
+  return JSON.parse(JSON.stringify(currentAppConfig));
+}
+
+export function updateAppConfigInternal(rawPatch, { source = 'api', strict = true } = {}) {
+  const cleanPatch = sanitizeAppConfigPatch(rawPatch, currentAppConfig, { strict });
+  const updatedSections = Object.keys(cleanPatch);
+  if (updatedSections.length === 0) {
+    return {
+      config: getAppConfigSnapshot(),
+      updatedSections: [],
+      patch: {},
+      updatedAt: currentAppConfigUpdatedAt,
+    };
+  }
+  currentAppConfig = mergeAppConfig(currentAppConfig, cleanPatch);
+  currentAppConfigUpdatedAt = Date.now();
+  const snapshot = getAppConfigSnapshot();
+  if (ioInstance) {
+    ioInstance.emit('appConfigUpdate', {
+      patch: cleanPatch,
+      config: snapshot,
+      source,
+      updatedAt: currentAppConfigUpdatedAt,
+    });
+  }
+  notifySessionStateChanged();
+  return {
+    config: snapshot,
+    updatedSections,
+    patch: cleanPatch,
+    updatedAt: currentAppConfigUpdatedAt,
+  };
+}
+
+export function resetAppConfigSectionInternal(section = 'all', { source = 'api' } = {}) {
+  const defaults = createDefaultAppConfig();
+  if (section === 'all') {
+    return updateAppConfigInternal(defaults, { source, strict: true });
+  }
+  if (!APP_CONFIG_SECTIONS.includes(section)) {
+    throw new Error(`Unknown config section "${section}". Valid sections: all, ${APP_CONFIG_SECTIONS.join(', ')}`);
+  }
+  return updateAppConfigInternal({ [section]: defaults[section] }, { source, strict: true });
+}
+
+export function getOutputSettingsSnapshot(outputKey = 'all') {
+  const outputs = getAllOutputsForServer();
+  const mapEntry = (out) => {
+    const key = out.key;
+    let settings = {};
+    let enabled = true;
+    if (key === 'output1') {
+      settings = { ...currentOutput1Settings };
+      enabled = Boolean(currentOutput1Enabled);
+    } else if (key === 'output2') {
+      settings = { ...currentOutput2Settings };
+      enabled = Boolean(currentOutput2Enabled);
+    } else if (key === 'stream') {
+      settings = { ...currentStreamSettings };
+      enabled = Boolean(currentStreamEnabled);
+    } else if (key === 'stage') {
+      settings = { ...currentStageSettings };
+      enabled = Boolean(currentStageEnabled);
+    } else {
+      settings = { ...(currentCustomOutputSettings[key] || {}) };
+      enabled = currentCustomOutputEnabled[key] !== false;
+    }
+    return {
+      key,
+      name: out.name,
+      slug: out.slug,
+      type: out.type,
+      builtIn: Boolean(out.builtIn),
+      enabled,
+      settings,
+    };
+  };
+
+  if (!outputKey || outputKey === 'all') {
+    return {
+      showState: currentShowState,
+      isOutputOn: currentIsOutputOn,
+      outputs: outputs.map(mapEntry),
+    };
+  }
+  if (!isValidOutputKey(outputKey)) {
+    throw new Error(`Invalid output key: ${outputKey}`);
+  }
+  const match = outputs.find((o) => o.key === outputKey);
+  if (!match) {
+    throw new Error(`Output not found: ${outputKey}`);
+  }
+  return {
+    showState: currentShowState,
+    isOutputOn: currentIsOutputOn,
+    ...mapEntry(match),
+  };
+}
+
+export function updateOutputSettingsInternal(outputKey, rawSettings) {
+  if (!isValidOutputKey(outputKey)) {
+    throw new Error(`Invalid output key: ${outputKey}`);
+  }
+  if (!rawSettings || typeof rawSettings !== 'object' || Array.isArray(rawSettings)) {
+    throw new Error('settings must be an object');
+  }
+  if (outputKey.startsWith('custom_') && !currentCustomOutputs.some((o) => o.id === outputKey)) {
+    throw new Error(`Custom output not found: ${outputKey}`);
+  }
+  const cleanSettings = stripRuntimeSettings(rawSettings);
+  if (Object.keys(cleanSettings).length === 0) {
+    return getOutputSettingsSnapshot(outputKey);
+  }
+  if (outputKey === 'output1') {
+    currentOutput1Settings = { ...currentOutput1Settings, ...cleanSettings };
+  } else if (outputKey === 'output2') {
+    currentOutput2Settings = { ...currentOutput2Settings, ...cleanSettings };
+  } else if (outputKey === 'stream') {
+    currentStreamSettings = { ...currentStreamSettings, ...cleanSettings };
+  } else if (outputKey === 'stage') {
+    currentStageSettings = { ...currentStageSettings, ...cleanSettings };
+  } else if (outputKey.startsWith('custom_')) {
+    currentCustomOutputSettings = {
+      ...currentCustomOutputSettings,
+      [outputKey]: {
+        ...(currentCustomOutputSettings[outputKey] || {}),
+        ...cleanSettings,
+      },
+    };
+  }
+  if (ioInstance) {
+    ioInstance.emit('styleUpdate', { output: outputKey, settings: cleanSettings });
+  }
+  notifySessionStateChanged();
+  return getOutputSettingsSnapshot(outputKey);
+}
+
+export function toggleIndividualOutputInternal(outputKey, enabled) {
+  if (!isValidOutputKey(outputKey)) {
+    throw new Error(`Invalid output key: ${outputKey}`);
+  }
+  if (outputKey.startsWith('custom_') && !currentCustomOutputs.some((o) => o.id === outputKey)) {
+    throw new Error(`Custom output not found: ${outputKey}`);
+  }
+  const next = Boolean(enabled);
+  if (outputKey === 'output1') currentOutput1Enabled = next;
+  else if (outputKey === 'output2') currentOutput2Enabled = next;
+  else if (outputKey === 'stream') currentStreamEnabled = next;
+  else if (outputKey === 'stage') currentStageEnabled = next;
+  else if (outputKey.startsWith('custom_')) {
+    currentCustomOutputEnabled = { ...currentCustomOutputEnabled, [outputKey]: next };
+  }
+  if (ioInstance) {
+    ioInstance.emit('individualOutputToggle', { output: outputKey, enabled: next });
+  }
+  notifySessionStateChanged();
+  return { output: outputKey, enabled: next };
+}
+
+export function updateModeTemplatesConfigInternal({ outputKey, enabled, song, bible, freenote, modeTemplates } = {}) {
+  if (modeTemplates && typeof modeTemplates === 'object') {
+    setModeTemplatesInternal(modeTemplates);
+  } else if (outputKey) {
+    const key = String(outputKey).trim();
+    if (!isValidOutputKey(key)) throw new Error(`Invalid output key: ${key}`);
+    if (!currentModeTemplates[key]) {
+      currentModeTemplates[key] = { enabled: false, song: null, bible: null, freenote: null };
+    }
+    if (typeof enabled === 'boolean') currentModeTemplates[key].enabled = enabled;
+    if (song !== undefined) currentModeTemplates[key].song = song ?? null;
+    if (bible !== undefined) currentModeTemplates[key].bible = bible ?? null;
+    if (freenote !== undefined) currentModeTemplates[key].freenote = freenote ?? null;
+    notifySessionStateChanged();
+  } else {
+    throw new Error('Either outputKey or modeTemplates is required');
+  }
+  if (ioInstance) {
+    ioInstance.emit('modeTemplatesUpdate', { modeTemplates: currentModeTemplates });
+  }
+  return JSON.parse(JSON.stringify(currentModeTemplates));
+}
+
+export function getModeTemplatesSnapshot() {
+  return JSON.parse(JSON.stringify(currentModeTemplates));
 }
 
 export function getStatus() {
@@ -761,6 +957,14 @@ export function restoreSessionStateInternal(snapshot = {}) {
   }
   if (typeof snapshot.currentContentFileName === 'string') {
     currentContentFileName = snapshot.currentContentFileName;
+    restoredAnything = true;
+  }
+  if (snapshot.appConfig && typeof snapshot.appConfig === 'object') {
+    const cleanConfig = sanitizeAppConfigPatch(snapshot.appConfig, null, { strict: false });
+    currentAppConfig = mergeAppConfig(createDefaultAppConfig(), cleanConfig);
+    currentAppConfigUpdatedAt = Number.isFinite(snapshot.appConfigUpdatedAt)
+      ? snapshot.appConfigUpdatedAt
+      : Date.now();
     restoredAnything = true;
   }
 
@@ -1492,6 +1696,33 @@ export default function registerSocketEvents(io, { hasPermission }) {
       socket.emit('modeTemplatesUpdate', { modeTemplates: currentModeTemplates });
     });
 
+    socket.on('appConfigSync', ({ config, patch } = {}) => {
+      if (!hasPermission(socket, 'settings:write')) {
+        socket.emit('permissionError', 'Insufficient permissions to sync app config');
+        return;
+      }
+      const incoming = patch && typeof patch === 'object' ? patch : config;
+      if (!incoming || typeof incoming !== 'object') return;
+      const cleanPatch = sanitizeAppConfigPatch(incoming, currentAppConfig, { strict: false });
+      if (Object.keys(cleanPatch).length === 0) return;
+      currentAppConfig = mergeAppConfig(currentAppConfig, cleanPatch);
+      currentAppConfigUpdatedAt = Date.now();
+      notifySessionStateChanged();
+    });
+
+    socket.on('requestAppConfig', () => {
+      if (!hasPermission(socket, 'settings:write') && !hasPermission(socket, 'settings:read')) {
+        socket.emit('permissionError', 'Insufficient permissions to read app config');
+        return;
+      }
+      socket.emit('appConfigUpdate', {
+        patch: currentAppConfig,
+        config: getAppConfigSnapshot(),
+        source: 'sync',
+        updatedAt: currentAppConfigUpdatedAt,
+      });
+    });
+
     socket.on('lyricsTimestampsUpdate', (timestamps) => {
       if (!hasPermission(socket, 'lyrics:write')) {
         socket.emit('permissionError', 'Insufficient permissions to update timestamps');
@@ -2047,6 +2278,11 @@ export function buildCurrentState(clientInfo) {
 
   if (clientInfo?.type === 'desktop' || clientInfo?.type === 'stage') {
     state.chords = currentChordChart;
+  }
+
+  if (clientInfo?.type === 'desktop') {
+    state.appConfig = getAppConfigSnapshot();
+    state.appConfigUpdatedAt = currentAppConfigUpdatedAt;
   }
 
   if (clientInfo?.type === 'stage') {

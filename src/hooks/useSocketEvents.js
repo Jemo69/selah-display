@@ -7,6 +7,11 @@ const log = createLogger('SocketEvents');
 import { detectArtistFromFilename } from '../utils/artistDetection';
 import { deriveSectionsFromProcessedLines } from '../../shared/lyricsParsing.js';
 import { mergeCustomOutputRegistry } from '../utils/outputs';
+import {
+  extractAppConfigFromStores,
+  applyAppConfigPatchToStores,
+  subscribeAppConfigChanges,
+} from '../utils/appConfigSync';
 
 const useSocketEvents = (role) => {
   const {
@@ -675,6 +680,14 @@ const useSocketEvents = (role) => {
         applyCustomOutputRegistry(state.customOutputs, state.customOutputSettings, state.customOutputEnabled);
       }
     });
+
+    socket.on('appConfigUpdate', (payload) => {
+      if (clientType !== 'desktop') return;
+      const patch = payload?.patch || payload?.config;
+      if (patch) {
+        applyAppConfigPatchToStores(patch);
+      }
+    });
   }, [role, setLyrics, setLyricsSections, setLineToSection, setLyricsTimestamps, selectLine, updateOutputSettings, setSetlistFiles, setIsDesktopApp, setLyricsFileName, setRawLyricsContent]);
 
   const registerAuthenticatedHandlers = useCallback(({
@@ -691,6 +704,20 @@ const useSocketEvents = (role) => {
   }) => {
     setIsDesktopApp(isDesktopApp);
 
+    let unsubAppConfig = null;
+    const startAppConfigSubscription = () => {
+      if (!isDesktopApp) return;
+      if (unsubAppConfig) {
+        unsubAppConfig();
+        unsubAppConfig = null;
+      }
+      unsubAppConfig = subscribeAppConfigChanges((config) => {
+        if (socket.connected) {
+          socket.emit('appConfigSync', { config });
+        }
+      });
+    };
+
     socket.on('connect', () => {
       logDebug('Authenticated socket connected:', socket.id);
       setConnectionStatus('connected');
@@ -702,6 +729,7 @@ const useSocketEvents = (role) => {
 
       startHeartbeat();
       socket.emit('clientConnect', { type: clientType });
+      startAppConfigSubscription();
 
       // Feature #03: declare which output surface this socket renders so the
       // server heartbeat registry can track built-in + custom outputs.
@@ -743,6 +771,8 @@ const useSocketEvents = (role) => {
             if (Array.isArray(customOutputs) && customOutputs.length > 0) {
               socket.emit('outputRegistryUpdate', { customOutputs, customOutputSettings, customOutputEnabled });
             }
+
+            socket.emit('appConfigSync', { config: extractAppConfigFromStores() });
 
             logDebug('Synced output settings to server after reconnect');
           } catch (error) {
@@ -821,6 +851,10 @@ const useSocketEvents = (role) => {
       logDebug('Socket disconnected:', reason);
       setConnectionStatus('disconnected');
       stopHeartbeat();
+      if (unsubAppConfig) {
+        unsubAppConfig();
+        unsubAppConfig = null;
+      }
 
       // Only skip reconnection for intentional client-side disconnects.
       // 'transport close' (network drops, wifi loss) MUST trigger reconnection.

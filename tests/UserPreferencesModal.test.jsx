@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import UserPreferencesModal from '@/components/UserPreferencesModal';
 import useRccgTphbStore from '@/context/RccgTphbStore';
 import useBibleStore from '@/context/BibleStore';
+import useLyricsStore from '@/context/LyricsStore';
 
 const getState = () => useRccgTphbStore.getState();
 
@@ -77,5 +78,20 @@ describe('UserPreferencesModal - RCCGTPHB settings', () => {
 
     expect(useBibleStore.getState().settings.truncateVersionPreviews).toBe(false);
     expect(screen.getByLabelText('Trim long verses in translation previews').getAttribute('data-state')).toBe('unchecked');
+  });
+
+  it('renders the MCP Server config section with MCP enabled by default and lets the user toggle settings', () => {
+    useLyricsStore.setState({ mcpSettings: { enabled: true, allowRemote: false } });
+    render(<UserPreferencesModal darkMode={false} onClose={() => {}} initialSection="mcp" />);
+
+    expect(screen.getByTestId('mcp-settings-section')).toBeTruthy();
+    const enabledSwitch = screen.getByLabelText('Enable MCP Server for Config');
+    expect(enabledSwitch.getAttribute('data-state')).toBe('checked');
+
+    fireEvent.click(screen.getByTestId('mcp-allow-remote-toggle'));
+    expect(useLyricsStore.getState().mcpSettings.allowRemote).toBe(true);
+
+    fireEvent.click(screen.getByTestId('mcp-enabled-toggle'));
+    expect(useLyricsStore.getState().mcpSettings.enabled).toBe(false);
   });
 });

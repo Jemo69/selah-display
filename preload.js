@@ -450,7 +450,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   serviceLog: {
     today: () => ipcRenderer.invoke('service-log:today'),
     revealToday: () => ipcRenderer.invoke('service-log:reveal-today'),
-  }
+  },
+  mcp: {
+    getInfo: () => ipcRenderer.invoke('mcp:get-info'),
+  },
 });
 
 contextBridge.exposeInMainWorld('electronStore', {

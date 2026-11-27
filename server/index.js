@@ -17,6 +17,8 @@ import { issueObsDockPin, verifyObsDockPin, getObsDockPairingSnapshot } from './
 import SimpleSecretManager from './secretManager.js';
 import createServerLogger from './logger.js';
 import apiRouter from './api.js';
+import { createMcpRouter } from './mcpHttp.js';
+import { getAppConfigSnapshot } from './events.js';
 import mdnsAdvertiser from './mdnsAdvertiser.js';
 import {
   loadPersistedSessionState,
@@ -166,7 +168,8 @@ const corsMiddleware = (req, res, next) => {
   }
 
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Mcp-Session-Id, Accept');
+  res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
 
   if (req.method === 'OPTIONS') {
@@ -235,6 +238,13 @@ const authenticateRequest = (requiredPermission) => (req, res, next) => {
 
 // Mount REST API v1 routes (requires authentication)
 app.use('/api/v1', authenticateRequest(null), apiRouter);
+
+// Mount Streamable HTTP MCP endpoint (localhost-only by default; remote requires Bearer token)
+app.use('/mcp', createMcpRouter({
+  getMcpConfig: () => getAppConfigSnapshot().mcp,
+  verifyBearerToken: (token) => verifyToken(token),
+  getClientPermissions: (clientType) => getClientPermissions(clientType),
+}));
 
 // Token generation utilities
 const generateToken = (payload, expiresIn = TOKEN_EXPIRY) => {

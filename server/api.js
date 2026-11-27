@@ -27,6 +27,10 @@ import {
   getScheduleSnapshot,
   loadScheduleInternal,
   controlScheduleInternal,
+  getAppConfigSnapshot,
+  updateAppConfigInternal,
+  resetAppConfigSectionInternal,
+  getOutputSettingsSnapshot,
 } from './events.js';
 import {
   parseFileNavigatorQuery,
@@ -496,6 +500,58 @@ router.post('/schedule/control', (req, res) => {
     if (!action) return res.status(400).json({ success: false, error: 'action required (start, pause, resume, stop, next, prev, replan, reconcile)' });
     const snapshot = controlScheduleInternal(String(action), rest);
     res.json({ success: true, ...snapshot });
+  } catch (e) {
+    res.status(400).json({ success: false, error: e.message });
+  }
+});
+
+// ---- App configuration (settings + outputs) ----
+const canReadSettings = (user) =>
+  user?.permissions?.includes('settings:read')
+  || user?.permissions?.includes('settings:write')
+  || user?.permissions?.includes('admin:full');
+
+const canWriteSettings = (user) =>
+  user?.permissions?.includes('settings:write')
+  || user?.permissions?.includes('admin:full');
+
+router.get('/config', (req, res) => {
+  try {
+    if (!canReadSettings(req.user)) {
+      return res.status(403).json({ success: false, error: 'Insufficient permissions' });
+    }
+    res.json({
+      success: true,
+      config: getAppConfigSnapshot(),
+      outputs: getOutputSettingsSnapshot('all'),
+      timestamp: Date.now(),
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+router.patch('/config', (req, res) => {
+  try {
+    if (!canWriteSettings(req.user)) {
+      return res.status(403).json({ success: false, error: 'Insufficient permissions' });
+    }
+    const patch = req.body?.config && typeof req.body.config === 'object' ? req.body.config : req.body;
+    const result = updateAppConfigInternal(patch, { source: 'api', strict: true });
+    res.json({ success: true, ...result, timestamp: Date.now() });
+  } catch (e) {
+    res.status(400).json({ success: false, error: e.message });
+  }
+});
+
+router.post('/config/reset', (req, res) => {
+  try {
+    if (!canWriteSettings(req.user)) {
+      return res.status(403).json({ success: false, error: 'Insufficient permissions' });
+    }
+    const section = req.body?.section || 'all';
+    const result = resetAppConfigSectionInternal(String(section), { source: 'api' });
+    res.json({ success: true, ...result, timestamp: Date.now() });
   } catch (e) {
     res.status(400).json({ success: false, error: e.message });
   }

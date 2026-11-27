@@ -15,6 +15,7 @@ function defaultSetlistsPath(userHome, separator) {
   return `${documents}${separator}Selah${separator}Setlists`;
 }
 import { getLocalIPAddress, getAllLocalIPAddresses, backendBaseUrl } from './utils.js';
+import { resolveProductionPath } from './paths.js';
 import * as secureTokenStore from './secureTokenStore.js';
 import updaterPkg from 'electron-updater';
 import { saveTextFileAtomically } from './atomicFileSave.js';
@@ -144,6 +145,18 @@ function cacheBibleParsed(filePath, entry) {
   ipcMain.handle('app:get-version', () => {
     try {
       return { success: true, version: app.getVersion() };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mcp:get-info', () => {
+    try {
+      return {
+        success: true,
+        httpUrl: `${backendBaseUrl}/mcp`,
+        stdioScriptPath: resolveProductionPath('server', 'mcp.js'),
+      };
     } catch (error) {
       return { success: false, error: error.message };
     }

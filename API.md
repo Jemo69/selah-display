@@ -441,6 +441,25 @@ Schedule tab uses these over REST so it works even while the socket is
 reconnecting. Socket equivalents (`scheduleLoad`, `scheduleControl`,
 `requestSchedule` → `scheduleState`) are unchanged.
 
+## App Configuration & MCP Server
+
+### GET /api/v1/config
+Returns the synced application configuration across all preference sections (`interface`, `lyrics`, `bible`, `speech`, `performance`, `experimental`, `autoplay`, `metronome`, `onboard`, `database`, `mcp`) plus current output styles (`outputs`). Requires `settings:read` or `settings:write`.
+
+### PATCH /api/v1/config
+Validates and applies a partial configuration patch `{ config: { <section>: { ... } } }` (or top-level `{ <section>: { ... } }`) and syncs immediately to the connected desktop UI. Requires `settings:write`.
+
+### POST /api/v1/config/reset
+Resets one section (or `"all"`) to defaults (`{ "section": "interface" }`). Requires `settings:write`.
+
+### Streamable HTTP MCP Endpoint (`GET` / `POST` / `DELETE /mcp`)
+Exposes a zero-dependency JSON-RPC 2.0 Model Context Protocol server (`selah-display-mcp`) for reading and configuring Selah settings, output styles, show state, and mode templates:
+- Enabled on loopback (`http://127.0.0.1:4000/mcp`) by default; toggleable in **User Preferences → MCP Server** (`mcp.enabled`).
+- Remote/LAN access (`mcp.allowRemote`) is off by default; when enabled, remote clients must pass a Bearer token with `settings:write`.
+- Tools: `get_app_config`, `update_app_config`, `reset_config_section`, `get_output_settings`, `update_output_settings`, `set_output_enabled`, `set_show_state`, `set_mode_templates`, `get_status`, `list_outputs`.
+- Resources: `selah://config`, `selah://outputs`, `selah://status`, `selah://schema`.
+- Stdio bridge for CLI/desktop MCP clients: `node server/mcp.js` (respects `SELAH_URL` / `SELAH_MCP_URL`, optional `SELAH_ADMIN_KEY` or `SELAH_API_TOKEN`).
+
 ## Background Media
 
 ### POST /api/media/backgrounds

@@ -257,6 +257,11 @@ export const defaultMetronomeSettings = () => ({
   audioChannel: '',
 });
 
+export const defaultMcpSettings = () => ({
+  enabled: true,
+  allowRemote: false,
+});
+
 const useLyricsStore = create(
   persist(
     (set, get) => ({
@@ -348,6 +353,7 @@ const useLyricsStore = create(
       // Metronome (ported from FreeShow). Config only — the live beat clock
       // lives in the engine module so it survives remounts without persisting.
       metronomeSettings: defaultMetronomeSettings(),
+      mcpSettings: defaultMcpSettings(),
       _lastAppliedModeTemplate: {},
       session: createInitialSession(),
       _persistVersion: SESSION_SCHEMA_VERSION,
@@ -548,6 +554,13 @@ const useLyricsStore = create(
       setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
       setShowControlDockExpanded: (expanded) => set({ showControlDockExpanded: !!expanded }),
       setMetronomeSettings: (settings) => set({ metronomeSettings: { ...defaultMetronomeSettings(), ...(settings || {}) } }),
+      setMcpSettings: (settings) => set((state) => ({
+        mcpSettings: {
+          ...defaultMcpSettings(),
+          ...(state.mcpSettings || {}),
+          ...(settings && typeof settings === 'object' ? settings : {}),
+        },
+      })),
 
       setDefaultLayout: (layout) => set({ defaultLayout: layout }),
       setUiScale: (scale) => set({ uiScale: Math.min(150, Math.max(75, Math.round(scale) || 100)) }),
@@ -865,6 +878,7 @@ const useLyricsStore = create(
         showState: state.showState || 'LIVE',
         showControlDockExpanded: state.showControlDockExpanded ?? true,
         metronomeSettings: { ...defaultMetronomeSettings(), ...(state.metronomeSettings || {}) },
+        mcpSettings: { ...defaultMcpSettings(), ...(state.mcpSettings || {}) },
         tickerQueue: Array.isArray(state.tickerQueue) ? state.tickerQueue : [],
         tickerActiveId: state.tickerActiveId ?? null,
         announcementTargetOutputKey: state.announcementTargetOutputKey || 'all',
@@ -990,6 +1004,15 @@ const useLyricsStore = create(
           }
           if (state.showControlDockExpanded === undefined) state.showControlDockExpanded = true;
           if (!state.metronomeSettings) state.metronomeSettings = defaultMetronomeSettings();
+          else state.metronomeSettings = { ...defaultMetronomeSettings(), ...state.metronomeSettings };
+          if (!state.mcpSettings || typeof state.mcpSettings !== 'object') {
+            state.mcpSettings = defaultMcpSettings();
+          } else {
+            state.mcpSettings = {
+              enabled: state.mcpSettings.enabled !== false,
+              allowRemote: state.mcpSettings.allowRemote === true,
+            };
+          }
           if (!Array.isArray(state.tickerQueue)) state.tickerQueue = [];
           if (state.tickerActiveId === undefined) state.tickerActiveId = null;
           if (!state.announcementTargetOutputKey) state.announcementTargetOutputKey = 'all';

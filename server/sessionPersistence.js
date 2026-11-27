@@ -98,6 +98,8 @@ export const createSessionSnapshot = () => {
     contentMode: state.contentMode || 'song',
     bibleVersion: state.bibleVersion || '',
     currentContentFileName: state.lyricsFileName || '',
+    appConfig: state.appConfig || null,
+    appConfigUpdatedAt: state.appConfigUpdatedAt || 0,
     schedule: state.schedule && typeof state.schedule === 'object' ? state.schedule : null,
   };
 };
