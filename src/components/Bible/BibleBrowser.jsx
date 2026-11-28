@@ -16,6 +16,7 @@ export default function BibleBrowser({
   onSetDefaultBible,
   searchQuery,
   searchAll = false,
+  searchScope = null,
   onSearchResults,
   darkMode
 }) {
@@ -108,13 +109,14 @@ export default function BibleBrowser({
         maxResults: 30,
         defaultBibleId,
         searchAll,
+        scope: searchScope || null,
         ...(biblesChanged ? { refreshBibles: true, allBibles: bibles } : {}),
         ...(currentChanged ? { currentBible } : {})
       });
     }, 300);
 
     return () => clearTimeout(handle);
-  }, [searchQuery, currentBible, bibles, defaultBibleId, searchAll, onSearchResults]);
+  }, [searchQuery, searchScope, currentBible, bibles, defaultBibleId, searchAll, onSearchResults]);
 
   const handleBookSelect = useCallback((bookNumber) => {
     onSelectReference({

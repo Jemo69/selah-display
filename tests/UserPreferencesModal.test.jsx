@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import UserPreferencesModal from '@/components/UserPreferencesModal';
 import useRccgTphbStore from '@/context/RccgTphbStore';
 import useBibleStore from '@/context/BibleStore';
@@ -11,6 +11,22 @@ describe('UserPreferencesModal - RCCGTPHB settings', () => {
   beforeEach(() => {
     localStorage.clear();
     getState().clearCredentials();
+  });
+
+  it('gates limited text scope behind the Experimental section', async () => {
+    useLyricsStore.setState({ bibleTextScopeEnabled: false });
+    render(<UserPreferencesModal darkMode={false} onClose={() => {}} initialSection="experimental" />);
+
+    const toggle = screen.getByTestId('bible-text-scope-experimental-toggle');
+    const card = toggle.closest('.rounded-xl');
+
+    expect(screen.getByText('Limited Text Scope')).toBeTruthy();
+    expect(within(card).getByText(/Feature Inactive:/)).toBeTruthy();
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => expect(useLyricsStore.getState().bibleTextScopeEnabled).toBe(true));
+    expect(within(card).getByText(/Feature Active:/)).toBeTruthy();
   });
 
   it('renders the RCCGTPHB database configuration section', () => {

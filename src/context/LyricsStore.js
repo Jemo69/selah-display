@@ -350,6 +350,8 @@ const useLyricsStore = create(
       schedulerEnabled: false,
       previewMultiview: defaultPreviewMultiview(),
       bibleVerseEditorEnabled: false,
+      // Limited text scope for Bible search (experimental) — default OFF.
+      bibleTextScopeEnabled: false,
       // Metronome (ported from FreeShow). Config only — the live beat clock
       // lives in the engine module so it survives remounts without persisting.
       metronomeSettings: defaultMetronomeSettings(),
@@ -620,6 +622,11 @@ const useLyricsStore = create(
         const isEnabled = !!enabled;
         log.info('setBibleVerseEditorEnabled', { enabled: isEnabled });
         set({ bibleVerseEditorEnabled: isEnabled });
+      },
+      setBibleTextScopeEnabled: (enabled) => {
+        const isEnabled = !!enabled;
+        log.info('setBibleTextScopeEnabled', { enabled: isEnabled });
+        set({ bibleTextScopeEnabled: isEnabled });
       },
       setContentMode: (mode) => {
         let normalized = normalizeContentMode(mode);
@@ -923,6 +930,7 @@ const useLyricsStore = create(
         schedulerEnabled: state.schedulerEnabled ?? false,
         previewMultiview: normalizePreviewMultiview(state.previewMultiview),
         bibleVerseEditorEnabled: state.bibleVerseEditorEnabled ?? false,
+        bibleTextScopeEnabled: state.bibleTextScopeEnabled ?? false,
         modeTemplates: state.modeTemplates || {
           output1: { enabled: false, song: null, bible: null, freenote: null },
           output2: { enabled: false, song: null, bible: null, freenote: null },
@@ -1022,6 +1030,7 @@ const useLyricsStore = create(
           if (state.hotReloadEnabled === undefined) state.hotReloadEnabled = true;
           if (state.autoGroupLines === undefined) state.autoGroupLines = true;
           if (state.bibleVerseEditorEnabled === undefined) state.bibleVerseEditorEnabled = false;
+          if (state.bibleTextScopeEnabled === undefined) state.bibleTextScopeEnabled = false;
           if (!Array.isArray(state.httpActionButtons)) state.httpActionButtons = [];
           // Buttons saved before dynamic input existed have no `variables` key.
           state.httpActionButtons = state.httpActionButtons.map((b) => (

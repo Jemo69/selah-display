@@ -69,6 +69,9 @@ mocks.lyricsStoreState = () => ({
 vi.mock('shared/bible', () => ({
   orderBibleMetadata: (metadata = {}) => Object.values(metadata),
   searchBible: () => [],
+  searchBibleExperimental: () => [],
+  parsePassageScope: () => null,
+  formatPassageScope: () => '',
 }));
 
 vi.mock('../../../utils/biblePreview', () => ({
