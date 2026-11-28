@@ -152,6 +152,26 @@ describe('bibleSearch.worker experimental flag', () => {
     expect(list[0].reference).toBe('John 3:16');
   });
 
+  it('forwards a passage scope to the search and keeps its cache separate', async () => {
+    const handler = await loadHandler();
+    const bible = sentenceBible();
+    const scope = {
+      bookName: 'John',
+      ranges: [{ startChapter: 3, startVerse: 17, endChapter: 3, endVerse: 17 }],
+    };
+
+    handler({ data: { query: 'love', currentBible: bible, allBibles: {}, maxResults: 10, qid: 1, scope } });
+    const scoped = postMessage.mock.calls[0][0].results;
+    expect(scoped.length).toBeGreaterThan(0);
+    expect(scoped.every((r) => r.reference === 'John 3:17')).toBe(true);
+
+    // Same query, no scope: the scoped cache entry must not answer this.
+    handler({ data: { query: 'love', allBibles: {}, maxResults: 10, qid: 2, scope: null } });
+    const unscoped = postMessage.mock.calls[1][0];
+    expect(unscoped.cached).not.toBe(true);
+    expect(unscoped.results.some((r) => r.reference === 'John 3:16')).toBe(true);
+  });
+
   it('ignores the retired experimental flag (opt-out no longer exists)', async () => {
     const handler = await loadHandler();
     const bible = sentenceBible();

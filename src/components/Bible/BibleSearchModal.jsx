@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Search, X, BookOpen, Loader2 } from 'lucide-react';
 import useBibleStore from '../../context/BibleStore';
+import useLyricsStore from '../../context/LyricsStore';
 import useToast from '../../hooks/useToast';
-import { parseBibleFromFile } from 'shared/bible';
+import { parseBibleFromFile, parsePassageScope, formatPassageScope } from 'shared/bible';
 import { buildAllVersionsPreview, truncatePreviewText } from '../../utils/biblePreview';
 import BibleBrowser from './BibleBrowser';
 import BibleImportModal from './BibleImportModal';
@@ -22,6 +23,15 @@ export default function BibleSearchModal({ isOpen, onClose, onSelectVerses, dark
   logger.info('BibleSearchModal mounted', { isOpen });
   const [activeTab, setActiveTab] = useState(TABS.BROWSE);
   const [query, setQuery] = useState('');
+  // Limited text scope: an optional passage that the text search is confined
+  // to. Parsing is bible-independent, so "Acts 6" reads as a passage before
+  // any translation is loaded and a typo just falls back to canon-wide search.
+  // Experimental: the field only exists while the User Preferences switch is on.
+  const bibleTextScopeEnabled = useLyricsStore((s) => s.bibleTextScopeEnabled ?? false);
+  const [scopeText, setScopeText] = useState('');
+  const parsedScope = useMemo(() => parsePassageScope(scopeText), [scopeText]);
+  const scope = bibleTextScopeEnabled ? parsedScope : null;
+  const scopeLabel = scope ? formatPassageScope(scope) : '';
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [searchAll, setSearchAll] = useState(false);
@@ -56,6 +66,7 @@ export default function BibleSearchModal({ isOpen, onClose, onSelectVerses, dark
     if (!isOpen) {
       setActiveTab(TABS.BROWSE);
       setQuery('');
+      setScopeText('');
       setSearchResults([]);
       setAllVersionsPreview(null);
     }
@@ -305,6 +316,7 @@ export default function BibleSearchModal({ isOpen, onClose, onSelectVerses, dark
         maxResults: 50,
         defaultBibleId,
         searchAll,
+        scope: scope || null,
         ...(biblesChanged ? { refreshBibles: true, allBibles: bibles } : {}),
         ...(currentChanged ? { currentBible } : {})
       });
@@ -313,11 +325,16 @@ export default function BibleSearchModal({ isOpen, onClose, onSelectVerses, dark
     return () => {
       clearTimeout(handle);
     };
-  }, [query, activeBibleId, bibles, defaultBibleId, searchAll, getBibleById]);
+  }, [query, scope, activeBibleId, bibles, defaultBibleId, searchAll, getBibleById]);
 
   const handleQueryChange = useCallback((e) => {
     setAllVersionsPreview(null);
     setQuery(e.target.value);
+  }, []);
+
+  const handleScopeChange = useCallback((e) => {
+    setAllVersionsPreview(null);
+    setScopeText(e.target.value);
   }, []);
 
   if (!isOpen) return null;
@@ -383,6 +400,7 @@ export default function BibleSearchModal({ isOpen, onClose, onSelectVerses, dark
               onSetDefaultBible={handleSetDefaultBible}
               searchQuery={query}
               searchAll={searchAll}
+              searchScope={scope}
               onSearchResults={handleSearchResults}
               darkMode={darkMode}
             />
@@ -432,6 +450,31 @@ export default function BibleSearchModal({ isOpen, onClose, onSelectVerses, dark
                 </label>
               </div>
 
+              {bibleTextScopeEnabled && (
+                <div className="mt-3">
+                  <label htmlFor="bible-search-scope" className={`text-xs font-semibold uppercase tracking-wider ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                    Limit to passage <span className="font-normal normal-case italic">(optional)</span>
+                  </label>
+                  <input
+                    id="bible-search-scope"
+                    type="text"
+                    value={scopeText}
+                    onChange={handleScopeChange}
+                    placeholder="Acts 6 or Acts 6:1-10"
+                    className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm ${darkMode
+                      ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500'
+                      : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400'}`}
+                  />
+                  {scopeText.trim() && (
+                    <p className={`mt-1 text-[11px] ${scope ? 'text-blue-500' : (darkMode ? 'text-gray-500' : 'text-gray-400')}`}>
+                      {scope
+                        ? `Searching only ${scopeLabel}`
+                        : 'Not a passage yet — searching the whole Bible'}
+                    </p>
+                  )}
+                </div>
+              )}
+
               <div className="mt-4 flex-1 overflow-y-auto">
                 {allVersionsPreview && allVersionsPreview.length > 0 ? (
                   <div className="space-y-2">
@@ -466,7 +509,9 @@ export default function BibleSearchModal({ isOpen, onClose, onSelectVerses, dark
                   <>
                     {!query && (
                       <p className={`text-center py-8 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-                        Enter a search term to find verses
+                        {scopeLabel
+                          ? `Type a word or sentence to search inside ${scopeLabel}`
+                          : 'Enter a search term to find verses'}
                       </p>
                     )}
 
@@ -478,7 +523,7 @@ export default function BibleSearchModal({ isOpen, onClose, onSelectVerses, dark
 
                     {query.length >= 3 && searchResults.length === 0 && !searching && (
                       <p className={`text-center py-8 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-                        No results found for "{query}"
+                        No results found for "{query}"{scopeLabel ? ` in ${scopeLabel}` : ''}
                       </p>
                     )}
 

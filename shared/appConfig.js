@@ -125,6 +125,7 @@ export function createDefaultAppConfig() {
       freeNotesEnabled: false,
       schedulerEnabled: false,
       bibleVerseEditorEnabled: false,
+      bibleTextScopeEnabled: false,
     },
     autoplay: {
       interval: 5,
@@ -373,6 +374,7 @@ export function sanitizeAppConfigSection(section, rawPatch, baseSection = null, 
       assignBool('freeNotesEnabled');
       assignBool('schedulerEnabled');
       assignBool('bibleVerseEditorEnabled');
+      assignBool('bibleTextScopeEnabled');
       break;
     }
 

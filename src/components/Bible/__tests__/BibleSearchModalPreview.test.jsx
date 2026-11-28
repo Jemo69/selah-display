@@ -52,7 +52,11 @@ mocks.storeState = {
 // Tests swap mocks.settings per case; the store reads it through this getter.
 Object.defineProperty(mocks.storeState, 'settings', { get: () => mocks.settings, configurable: true });
 
-vi.mock('shared/bible', () => ({ parseBibleFromFile: vi.fn() }));
+vi.mock('shared/bible', () => ({
+  parseBibleFromFile: vi.fn(),
+  parsePassageScope: () => null,
+  formatPassageScope: () => '',
+}));
 
 vi.mock('../../../utils/biblePreview', () => ({
   buildAllVersionsPreview: mocks.buildAllVersionsPreview,

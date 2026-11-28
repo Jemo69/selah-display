@@ -105,8 +105,7 @@ export function sentenceTokensMatch(queryTok, verseTok) {
 }
 
 /**
- * Score one verse against a sentence query.
- * Returns null when the verse fails the sentence gate (single-word OR hit).
+ * Sentence-token book abbreviation used by matchLeadingBook().
  */
 function normalizeBookToken(value) {
   return String(value || '')
@@ -159,7 +158,30 @@ export function matchLeadingBook(books, query) {
   return null;
 }
 
-export function scoreSentenceVerse(queryNorm, queryContent, verseText, termWeights) {
+/**
+ * Score one verse against a sentence query.
+ *
+ * @param {string} queryNorm           normalized query text
+ * @param {string[]} queryContent      content tokens of the query
+ * @param {string} verseText           the verse, as the translation words it
+ * @param {number[]} [termWeights]     rarity weight per content token
+ * @param {ReadonlyArray<Iterable<string>>} [queryVariants] the KJV/modern
+ *   spellings each content token is allowed to match. Built by
+ *   archaicFormsOf() once per query in index.js — never built here, because
+ *   this function runs once per candidate verse.
+ *
+ * Two tiers, in this order, because they mean different things:
+ *   1. ORDERED — the query's content words appear in the verse in the order
+ *      they were typed. This is the quote path and it keeps its old scoring.
+ *   2. BAG OF WORDS — reached only when the ordered walk either failed the
+ *      sentence gate or stopped short of the whole query. The words are all
+ *      there but in another arrangement (query "god gave his son because he
+ *      loved the world" against "For God so loved the world, that he gave his
+ *      only begotten Son"). Filtered by the same coverage floor and scored
+ *      below an equivalent ordered hit, so an ordered match always wins a tie.
+ *      A fully-ordered hit (coverage 1) never reaches tier 2 at all.
+ */
+export function scoreSentenceVerse(queryNorm, queryContent, verseText, termWeights, queryVariants) {
   const verseNorm = normalizeSentenceText(verseText);
   if (!verseNorm || !queryNorm) return null;
   const verseToks = verseNorm.split(' ').filter(Boolean);
@@ -199,6 +221,14 @@ export function scoreSentenceVerse(queryNorm, queryContent, verseText, termWeigh
   const weights = Array.isArray(termWeights) && termWeights.length === queryContent.length
     ? termWeights
     : queryContent.map(() => 1);
+  const variants = Array.isArray(queryVariants) ? queryVariants : null;
+  // A variant hit is an EQUIVALENCE (has == hath), not a resemblance, so it
+  // scores as exact. `has` is a Set lookup, so the hot loop stays one string
+  // compare plus at most one hash probe per verse token.
+  const variantHit = (q, tok) => {
+    const vs = variants ? variants[q] : null;
+    return vs ? vs.has(tok) : false;
+  };
   // For each query token, find next matching verse token at/after cursor.
   let cursor = 0;
   for (let q = 0; q < queryContent.length; q += 1) {
@@ -207,6 +237,11 @@ export function scoreSentenceVerse(queryNorm, queryContent, verseText, termWeigh
     let foundExact = false;
     let advance = 1;
     for (let v = cursor; v < verseToks.length; v += 1) {
+      if (variantHit(q, verseToks[v])) {
+        found = v;
+        foundExact = true;
+        break;
+      }
       if (sentenceTokensMatch(qt, verseToks[v])) {
         found = v;
         foundExact = qt === verseToks[v];
@@ -237,20 +272,21 @@ export function scoreSentenceVerse(queryNorm, queryContent, verseText, termWeigh
     // (they simply don't increment matched), so scattered hits score low.
   }
 
-  if (matched === 0) return null;
-
   const coverage = matched / queryContent.length;
 
   // Sentence gate: single-word OR hits are filtered, not ranked.
   //  - 1-token query: any match passes (same as old single-word path).
   //  - 2-token query: require both (or exact phrase above).
   //  - 3+ tokens: require >=60% coverage AND >=2 matched.
-  if (queryContent.length === 1) {
-    // pass
-  } else if (queryContent.length === 2) {
-    if (matched < 2) return null;
-  } else {
-    if (matched < 2 || coverage < 0.6) return null;
+  const minimum = queryContent.length === 1 ? 1 : 2;
+  const passesGate = matched >= minimum && (queryContent.length <= 2 || coverage >= 0.6);
+
+  if (!passesGate) {
+    // Tier 2 — same words, different arrangement. Reached only on an ordered
+    // miss, so a query that already reads like the verse never pays for it.
+    const paraphrase = scoreUnorderedCoverage(queryContent, verseToks, weights, variants, verseNorm.length);
+    if (!paraphrase) return null;
+    return paraphrase;
   }
 
   const span = firstPos === -1 ? verseToks.length : lastPos - firstPos + 1;
@@ -274,6 +310,95 @@ export function scoreSentenceVerse(queryNorm, queryContent, verseText, termWeigh
   // glue like "into"), plus an exactness bonus so a literal verse always
   // outranks a fuzzy lookalike — the ambiguity policy, expressed in numbers.
   const score = coverage * 600 + orderBonus + weightSum * 400 + exactMatches * 150 - lenPenalty;
+  const ordered = { score, matched, coverage, phrase: false, ordered: orderBonus > 0, span, exact: exactMatches };
 
-  return { score, matched, coverage, phrase: false, ordered: orderBonus > 0, span, exact: exactMatches };
+  // A partially-ordered hit is not automatically the best hit. "god gave his
+  // son because he loved the world" walks God -> gave -> son in order (0.6)
+  // and quits, while the verse holds all five words. Tier 2 is only consulted
+  // for multi-word prose that did not fully walk, so the quote path (coverage
+  // 1, the overwhelmingly common case) pays nothing for it.
+  if (coverage >= 1 || queryContent.length < 3) return ordered;
+  // Cheap pre-filter: a bag-of-words hit inside a verse far longer than the
+  // query is almost never the answer, and the length penalty already says so.
+  // Skipping those keeps tier 2 off most of a 31k-verse pool.
+  if (verseToks.length > queryContent.length * 4 + 6) return ordered;
+
+  const paraphrase = scoreUnorderedCoverage(queryContent, verseToks, weights, variants, verseNorm.length);
+  if (!paraphrase) return ordered;
+  return paraphrase.score > ordered.score ? paraphrase : ordered;
+}
+
+/**
+ * Tier 2 scorer: content words present, order not required.
+ *
+ * Returns null unless the verse clears the SAME coverage floor as the ordered
+ * path, so this tier only ever rescues a paraphrase, never a one-word OR hit
+ * dressed up as a sentence.
+ *
+ * The score is deliberately built from the same parts as the ordered score
+ * minus the ordering bonus, and carries a fixed penalty: given two verses with
+ * the same coverage, the one that uses the query's word order is the better
+ * answer and must rank first.
+ *
+ * @returns {{score:number,matched:number,coverage:number,phrase:boolean,ordered:boolean,span:number,exact:number,paraphrase:boolean}|null}
+ */
+function scoreUnorderedCoverage(queryContent, verseToks, weights, variants, verseLength) {
+  const verseSet = new Set(verseToks);
+  let matched = 0;
+  let exactMatches = 0;
+  let weightSum = 0;
+
+  for (let q = 0; q < queryContent.length; q += 1) {
+    const qt = queryContent[q];
+    let hit = false;
+    let exact = false;
+    const vs = variants ? variants[q] : null;
+    if (vs) {
+      for (const form of vs) {
+        if (verseSet.has(form)) {
+          hit = true;
+          exact = true;
+          break;
+        }
+      }
+    }
+    if (!hit && verseSet.has(qt)) {
+      hit = true;
+      exact = true;
+    }
+    if (!hit) {
+      for (const vt of verseToks) {
+        if (sentenceTokensMatch(qt, vt)) {
+          hit = true;
+          break;
+        }
+      }
+    }
+    if (!hit) continue;
+    matched += 1;
+    weightSum += weights[q] || 0;
+    if (exact) exactMatches += 1;
+  }
+
+  const minimum = queryContent.length === 1 ? 1 : 2;
+  const coverage = matched / queryContent.length;
+  if (matched < minimum || (queryContent.length > 2 && coverage < 0.6)) return null;
+
+  const lenPenalty = Math.log(1 + verseLength) * 20;
+  // Same coefficients as the ordered score, minus everything that rewards
+  // arrangement: no order bonus, and a flat penalty that keeps an ordered hit
+  // ahead when both reach the same coverage. Expressible in one line: a
+  // paraphrase scores as the ordered score would, minus its ordering credit.
+  const score = coverage * 600 + weightSum * 400 + exactMatches * 150 - lenPenalty - 350;
+
+  return {
+    score,
+    matched,
+    coverage,
+    phrase: false,
+    ordered: false,
+    span: 0,
+    exact: exactMatches,
+    paraphrase: true,
+  };
 }
