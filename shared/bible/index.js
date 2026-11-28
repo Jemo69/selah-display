@@ -1,5 +1,6 @@
 import { detectBibleFormat } from './xmlUtils.js';
 import { normalizeSentenceText, sentenceContentTokens, scoreSentenceVerse, matchLeadingBook } from './sentenceSearch.js';
+import { archaicFormsOf } from './archaicForms.js';
 import { parseZefaniaBible } from './zefaniaBible.js';
 import { parseOsisBible } from './osisBible.js';
 import { parseBebliaBible } from './bebliaBible.js';
@@ -469,14 +470,23 @@ export function passageScopeContains(resolved, bookNumber, chapter, verse) {
 export function formatPassageScope(scope) {
   if (!scope || !Array.isArray(scope.ranges) || scope.ranges.length === 0) return '';
   return scope.ranges.map((range) => {
-    const chapters = range.startChapter === range.endChapter
-      ? String(range.startChapter)
-      : `${range.startChapter}-${range.endChapter}`;
-    if (range.startVerse == null) return `${scope.bookName} ${chapters}`;
+    if (range.startVerse == null) {
+      const chapters = range.startChapter === range.endChapter
+        ? String(range.startChapter)
+        : `${range.startChapter}-${range.endChapter}`;
+      return `${scope.bookName} ${chapters}`;
+    }
+    // Cross-chapter ranges keep the second chapter number: "Rom 8:38-9:2",
+    // never "Rom 8-9:38-2", which reads as a chapter span with a broken
+    // verse list.
+    if (range.startChapter !== range.endChapter) {
+      const end = range.endVerse == null ? '' : `:${range.endVerse}`;
+      return `${scope.bookName} ${range.startChapter}:${range.startVerse}-${range.endChapter}${end}`;
+    }
     const verses = range.endVerse == null || range.endVerse === range.startVerse
       ? String(range.startVerse)
       : `${range.startVerse}-${range.endVerse}`;
-    return `${scope.bookName} ${chapters}:${verses}`;
+    return `${scope.bookName} ${range.startChapter}:${verses}`;
   }).join('; ');
 }
 
@@ -1257,6 +1267,13 @@ function experimentalTermVariants(term) {
   if (term.endsWith('ed') && term.length > 5) out.push(term.slice(0, -2), term.slice(0, -1));
   else if (term.endsWith('d') && term.length > 4) out.push(term.slice(0, -1));
   if (term.endsWith('ies') && term.length > 5) out.push(`${term.slice(0, -3)}y`);
+  // Modern English -> KJV spelling (has/hath, says/saith, love/loveth).
+  // Without this the correct verse is never a candidate at all: the operator
+  // types his own English, the corpus holds the 1611 word, and postings are
+  // literal. Ranking cannot rescue a verse retrieval never returned.
+  for (const form of archaicFormsOf(term)) {
+    if (form !== term) out.push(form);
+  }
   return [...new Set(out)];
 }
 
@@ -1347,6 +1364,10 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
   const queryNorm = normalizeSentenceText(searchTerm);
   const queryContent = sentenceContentTokens(searchTerm);
   if (queryContent.length === 0) return [];
+  // One Set per content token, built once per query. The scorer treats a Set
+  // hit as an exact equivalence, so "has" and "hath" are the same word for
+  // ordering and exactness — not a typo to be tolerated.
+  const queryVariants = queryContent.map((term) => new Set(archaicFormsOf(term)));
 
   const bookFilterNumber = leading?.book?.number ?? null;
 
@@ -1391,7 +1412,7 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
       if (pairKeys && pairKeys.length > 0 && pairKeys.length <= BIBLE_PAIR_FAST_MAX) {
         // Book-scoped queries: an all-out-of-scope pair pool must fall
         // through to the union path (which finds scattered in-scope words)
-        // instead of early-returning empty.
+        // instead of early-returning empty. Same for a passage scope.
         if (perBibleFilter != null || (bookFilterNumber != null && perBibleFilter == null) || scopeFilter) {
           pairKeys = pairKeys.filter((packed) => {
             const pb = Math.floor(packed / 1000000);
@@ -1420,7 +1441,7 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
           if (!pchapter) continue;
           const pverse = pchapter.verseMap?.[pv] || pchapter.verses.find((vx) => vx.number === pv);
           if (!pverse) continue;
-          const ps = scoreSentenceVerse(queryNorm, queryContent, pverse.text || '', pairWeights);
+          const ps = scoreSentenceVerse(queryNorm, queryContent, pverse.text || '', pairWeights, queryVariants);
           if (!ps) continue;
           pairScored.push({
             book: pbook.number,
@@ -1696,7 +1717,7 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
         if (scopeFilter && !inScope(b, c, v)) continue;
         const found = lookup(b, c, v);
         if (!found) continue;
-        const s = scoreSentenceVerse(queryNorm, queryContent, found.verse.text || '', termWeights);
+        const s = scoreSentenceVerse(queryNorm, queryContent, found.verse.text || '', termWeights, queryVariants);
         if (!s) continue;
         scored.push({
           book: found.book.number,
@@ -1722,7 +1743,7 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
       for (const chapter of book.chapters || []) {
         for (const verse of chapter.verses || []) {
           if (scopeFilter && !inScope(book.number, chapter.number, verse.number)) continue;
-          const s = scoreSentenceVerse(queryNorm, queryContent, verse.text || '');
+          const s = scoreSentenceVerse(queryNorm, queryContent, verse.text || '', null, queryVariants);
           if (!s) continue;
           results.push({
             book: book.number,
