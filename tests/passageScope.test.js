@@ -148,6 +148,9 @@ describe('formatPassageScope', () => {
     expect(formatPassageScope(parsePassageScope('Acts 6'))).toBe('Acts 6');
     expect(formatPassageScope(parsePassageScope('Acts 6:1-10'))).toBe('Acts 6:1-10');
     expect(formatPassageScope(parsePassageScope('Acts 6-7'))).toBe('Acts 6-7');
+    // A cross-chapter range keeps its second chapter: "Rom 8:38-9:2" is a
+    // verse range that happens to cross a chapter, not a chapter span.
+    expect(formatPassageScope(parsePassageScope('Rom 8:38-9:2'))).toBe('Rom 8:38-9:2');
     expect(formatPassageScope(null)).toBe('');
   });
 });

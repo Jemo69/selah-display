@@ -2,9 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- A crossed-chapter passage scope now reads back as the operator typed it — `Rom 8:38-9:2`, not `Rom 8-9:38-2` — in the "Searching only …" line under the scope field (`shared/bible/index.js`, `tests/passageScope.test.js`).
+
 ### Added
 
 - **Limited text scope for Bible search (experimental):** name a passage — `Acts 6`, `Acts 6:1-10`, `Acts 6-7`, `Rom 8:38-9:2` — and the next word or sentence is searched inside that passage only. The scope field appears in the verse-search tray and the Bible search window, and says in plain words what it is doing: "Searching only Acts 6:1-10" or "Not a passage yet — searching the whole Bible", so a typo never silently widens the search. Scoping narrows candidates only: ranking, typo tolerance and modern-English bridging behave exactly as they do canon-wide, the query never turns into a verse lookup while scoped, and a translation that lacks the scoped book is skipped rather than searched unscoped. Off by default and gated by **User Preferences → Experimental → Limited Text Scope**, so the field does not exist (and nothing narrows a search) until an operator turns it on (`shared/bible/index.js`, `src/utils/bibleSearch.worker.js`, `src/components/Bible/BibleControlPanel.jsx`, `src/components/Bible/BibleSearchModal.jsx`, `src/components/UserPreferencesModal.jsx`, `shared/appConfig.js`, `src/context/LyricsStore.js`, `src/utils/appConfigSync.js`, `tests/passageScope.test.js`).
+
+- **Verse search understands how people actually quote:** an operator types the verse the way he speaks it, and the corpus answers in 1611. Modern spellings now bridge to their KJV forms on both sides of the search — retrieval expands `has`/`says`/`love` into `hath`/`saith`/`loveth`, and the scorer treats a bridged hit as an exact word rather than a typo — so a verse is found at all, not merely ranked higher. When a multi-word quote is all present but in another order ("god gave his son because he loved the world" against John 3:16), a second scoring tier reaches it, scored below an equivalent in-order hit so literal quotes always win. Verbatim KJV queries are untouched, and verse text is never rewritten — the bridge is our inference only (`shared/bible/archaicForms.js`, `shared/bible/sentenceSearch.js`, `shared/bible/index.js`, `tests/searchModernEnglish.test.js`).
 
 - **Built-in MCP server for app configuration (`POST/GET/DELETE /mcp` + stdio bridge `server/mcp.js`):** AI assistants (Claude Desktop, Cursor, Antigravity, Codex) can now inspect and update Selah preferences, output styles, show state (`LIVE`/`CLEAR`/`BLACKOUT`/`LOGO`), mode templates, and Sermon Assist settings directly through the Model Context Protocol. Enabled on localhost by default (`127.0.0.1:4000/mcp`), with optional Bearer-authenticated LAN/remote access and copyable JSON configs in **User Preferences → MCP Server** (`shared/appConfig.js`, `server/mcpCore.js`, `server/mcpHttp.js`, `server/mcp.js`, `src/utils/appConfigSync.js`, `src/components/McpSettingsSection.jsx`).
 
