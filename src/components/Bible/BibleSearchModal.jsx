@@ -450,32 +450,30 @@ export default function BibleSearchModal({ isOpen, onClose, onSelectVerses, dark
                 </label>
               </div>
 
-              <div className="mt-3">
-                {bibleTextScopeEnabled && (
-                  <>
-                    <label htmlFor="bible-search-scope" className={`text-xs font-semibold uppercase tracking-wider ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                      Limit to passage <span className="font-normal normal-case italic">(optional)</span>
-                    </label>
-                    <input
-                      id="bible-search-scope"
-                      type="text"
-                      value={scopeText}
-                      onChange={handleScopeChange}
-                      placeholder="Acts 6 or Acts 6:1-10"
-                      className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm ${darkMode
-                        ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500'
-                        : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400'}`}
-                    />
-                    {scopeText.trim() && (
-                      <p className={`mt-1 text-[11px] ${scope ? 'text-blue-500' : (darkMode ? 'text-gray-500' : 'text-gray-400')}`}>
-                        {scope
-                          ? `Searching only ${scopeLabel}`
-                          : 'Not a passage yet — searching the whole Bible'}
-                      </p>
-                    )}
-                  </>
-                )}
-              </div>
+              {bibleTextScopeEnabled && (
+                <div className="mt-3">
+                  <label htmlFor="bible-search-scope" className={`text-xs font-semibold uppercase tracking-wider ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                    Limit to passage <span className="font-normal normal-case italic">(optional)</span>
+                  </label>
+                  <input
+                    id="bible-search-scope"
+                    type="text"
+                    value={scopeText}
+                    onChange={handleScopeChange}
+                    placeholder="Acts 6 or Acts 6:1-10"
+                    className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm ${darkMode
+                      ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500'
+                      : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400'}`}
+                  />
+                  {scopeText.trim() && (
+                    <p className={`mt-1 text-[11px] ${scope ? 'text-blue-500' : (darkMode ? 'text-gray-500' : 'text-gray-400')}`}>
+                      {scope
+                        ? `Searching only ${scopeLabel}`
+                        : 'Not a passage yet — searching the whole Bible'}
+                    </p>
+                  )}
+                </div>
+              )}
 
               <div className="mt-4 flex-1 overflow-y-auto">
                 {allVersionsPreview && allVersionsPreview.length > 0 ? (

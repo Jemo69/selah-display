@@ -857,30 +857,28 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
                 </label>
               </div>
 
-              <div className="mt-2">
-                {bibleTextScopeEnabled && (
-                  <>
-                    <input
-                      type="text"
-                      value={scopeText}
-                      onChange={(e) => { setAllVersionsPreview(null); setScopeText(e.target.value); }}
-                      placeholder="Limit to passage — Acts 6 or Acts 6:1-10"
-                      aria-label="Limit search to passage"
-                      className={`w-full rounded-lg border px-2 py-1.5 text-xs ${darkMode
-                        ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400'
-                        : 'bg-white border-gray-300 text-gray-900 placeholder-gray-400'
-                        }`}
-                    />
-                    {scopeText.trim() && (
-                      <p className={`mt-1 text-[10px] ${scope ? 'text-blue-400' : (darkMode ? 'text-gray-500' : 'text-gray-400')}`}>
-                        {scope
-                          ? `Searching only ${scopeLabel}`
-                          : 'Not a passage yet — searching the whole Bible'}
-                      </p>
-                    )}
-                  </>
-                )}
-              </div>
+              {bibleTextScopeEnabled && (
+                <div className="mt-2">
+                  <input
+                    type="text"
+                    value={scopeText}
+                    onChange={(e) => { setAllVersionsPreview(null); setScopeText(e.target.value); }}
+                    placeholder="Limit to passage — Acts 6 or Acts 6:1-10"
+                    aria-label="Limit search to passage"
+                    className={`w-full rounded-lg border px-2 py-1.5 text-xs ${darkMode
+                      ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400'
+                      : 'bg-white border-gray-300 text-gray-900 placeholder-gray-400'
+                      }`}
+                  />
+                  {scopeText.trim() && (
+                    <p className={`mt-1 text-[10px] ${scope ? 'text-blue-400' : (darkMode ? 'text-gray-500' : 'text-gray-400')}`}>
+                      {scope
+                        ? `Searching only ${scopeLabel}`
+                        : 'Not a passage yet — searching the whole Bible'}
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* Search Results — allow growing past half the panel when needed */}
               {searchResults.length > 0 ? (

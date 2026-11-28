@@ -28,6 +28,19 @@ describe('appConfigSync store bridge', () => {
     expect(cfg.interface.darkMode).toBe(false);
   });
 
+  it('round-trips the experimental limited text scope switch', () => {
+    expect(useLyricsStore.getState().bibleTextScopeEnabled).toBe(false);
+    expect(extractAppConfigFromStores().experimental.bibleTextScopeEnabled).toBe(false);
+
+    expect(applyAppConfigPatchToStores({ experimental: { bibleTextScopeEnabled: true } })).toBe(true);
+    expect(useLyricsStore.getState().bibleTextScopeEnabled).toBe(true);
+    expect(extractAppConfigFromStores().experimental.bibleTextScopeEnabled).toBe(true);
+
+    // A patch that does not name the key must leave it alone.
+    applyAppConfigPatchToStores({ experimental: { freeNotesEnabled: true } });
+    expect(useLyricsStore.getState().bibleTextScopeEnabled).toBe(true);
+  });
+
   it('applies remote MCP config patches across all preference stores', () => {
     const applied = applyAppConfigPatchToStores({
       interface: { darkMode: true, uiScale: 115 },

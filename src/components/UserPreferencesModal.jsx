@@ -1359,7 +1359,12 @@ const ExperimentalSection = ({ darkMode }) => {
               Adds a <span className="font-semibold">Limit to passage</span> field under verse search. Name a passage — <span className="font-mono">Acts 6</span>, <span className="font-mono">Acts 6:1-10</span>, <span className="font-mono">Acts 6-7</span> — then search a word or sentence and only that passage is searched. Ranking and typo tolerance behave exactly as they do canon-wide.
             </p>
           </div>
-          <Switch checked={bibleTextScopeEnabled} onCheckedChange={handleToggleBibleTextScope} aria-label="Toggle Limited Text Scope (experimental)" />
+          <Switch
+            checked={bibleTextScopeEnabled}
+            onCheckedChange={handleToggleBibleTextScope}
+            aria-label="Toggle Limited Text Scope (experimental)"
+            data-testid="bible-text-scope-experimental-toggle"
+          />
         </div>
 
         {bibleTextScopeEnabled ? (
