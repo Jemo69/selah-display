@@ -7,10 +7,11 @@ let cachedCurrentBible = null;
 const queryCache = new Map();
 const QUERY_CACHE_LIMIT = 100;
 
-function cacheKey(query, maxResults, defaultBibleId, searchAll) {
+function cacheKey(query, maxResults, defaultBibleId, searchAll, scope) {
   const ids = Object.keys(cachedBibles).sort().join(',');
   const cur = cachedCurrentBible?.id || '';
-  return `${cur}|${ids}|${String(query).toLowerCase()}|${maxResults}|${defaultBibleId}|${searchAll}`;
+  const scopeKey = scope ? JSON.stringify(scope) : '';
+  return `${cur}|${ids}|${String(query).toLowerCase()}|${maxResults}|${defaultBibleId}|${searchAll}|${scopeKey}`;
 }
 
 function cacheGet(key) {
@@ -30,7 +31,7 @@ function cacheSet(key, value) {
 }
 
 self.onmessage = function(e) {
-  const { currentBible, query, allBibles, maxResults, defaultBibleId, searchAll, refreshBibles, pruneBibles, qid } = e.data; // sentence-first ranking (permanent)
+  const { currentBible, query, allBibles, maxResults, defaultBibleId, searchAll, scope, refreshBibles, pruneBibles, qid } = e.data; // sentence-first ranking (permanent)
 
   if (refreshBibles && allBibles && typeof allBibles === 'object') {
     cachedBibles = allBibles;
@@ -50,14 +51,14 @@ self.onmessage = function(e) {
 
   const activeCurrent = currentBible || cachedCurrentBible;
   if (typeof query === 'string' && query.trim().length > 0) {
-    const key = cacheKey(query, maxResults, defaultBibleId, searchAll);
+    const key = cacheKey(query, maxResults, defaultBibleId, searchAll, scope);
     const cached = cacheGet(key);
     if (cached) {
       if (qid != null) self.postMessage({ qid, results: cached, cached: true });
       else self.postMessage(cached);
       return;
     }
-    const results = searchBibleExperimental(activeCurrent, query, cachedBibles, maxResults, defaultBibleId, searchAll);
+    const results = searchBibleExperimental(activeCurrent, query, cachedBibles, maxResults, defaultBibleId, searchAll, scope || null);
     cacheSet(key, results);
     if (qid != null) self.postMessage({ qid, results });
     else self.postMessage(results);

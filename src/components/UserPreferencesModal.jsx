@@ -7,7 +7,7 @@ import { formatForDisplay } from '@tanstack/hotkeys';
 import useRccgTphbStore from '../context/RccgTphbStore';
 import useToast from '../hooks/useToast';
 import useHttpActionRunner from '../hooks/useHttpActionRunner';
-import { useOutputAutomationState, useOutputRegistry, usePerformanceSettings, useHttpActionButtonsState, useFHintEnabled, useFreeNotesEnabled, useBibleVerseEditorEnabled, useSchedulerEnabled } from '../hooks/useStoreSelectors';
+import { useOutputAutomationState, useOutputRegistry, usePerformanceSettings, useHttpActionButtonsState, useFHintEnabled, useFreeNotesEnabled, useBibleVerseEditorEnabled, useBibleTextScopeEnabled, useSchedulerEnabled } from '../hooks/useStoreSelectors';
 import { buildOutputAutomationTemplate, runOutputAutomationAction } from '../utils/outputAutomation';
 import { buildHttpExample, inspectHttpActionConfig } from '../utils/httpAction';
 import { normalizeHttpVariables } from '../utils/httpActionVariables';
@@ -1203,6 +1203,7 @@ const ExperimentalSection = ({ darkMode }) => {
   const { enabled: freeNotesEnabled, setEnabled: setFreeNotesEnabled } = useFreeNotesEnabled();
   const { enabled: schedulerEnabled, setEnabled: setSchedulerEnabled } = useSchedulerEnabled();
   const { enabled: bibleVerseEditorEnabled, setEnabled: setBibleVerseEditorEnabled } = useBibleVerseEditorEnabled();
+  const { enabled: bibleTextScopeEnabled, setEnabled: setBibleTextScopeEnabled } = useBibleTextScopeEnabled();
   // The master switch itself. Read here so the Experimental card can show the
   // real on/off state and gate the surface — the store stays the single source
   // of truth, and nothing here writes it except the toggle below.
@@ -1239,6 +1240,17 @@ const ExperimentalSection = ({ darkMode }) => {
       message: checked
         ? 'Alt+Shift+Enter and the Edit Verse button are now active in the Bible panel.'
         : 'Bible Verse Editor is now disabled and hidden from the interface.',
+      variant: checked ? 'success' : 'info'
+    });
+  };
+
+  const handleToggleBibleTextScope = (checked) => {
+    setBibleTextScopeEnabled(checked);
+    showToast({
+      title: checked ? 'Limited text scope enabled' : 'Limited text scope disabled',
+      message: checked
+        ? 'A "Limit to passage" field now appears under verse search — name a passage, then search a word inside it.'
+        : 'The passage limit is hidden and verse search covers the whole Bible again.',
       variant: checked ? 'success' : 'info'
     });
   };
@@ -1315,6 +1327,57 @@ const ExperimentalSection = ({ darkMode }) => {
             <BookOpen className="w-4 h-4 shrink-0 mt-0.5 text-gray-400" />
             <div>
               <span className="font-semibold">Feature Inactive:</span> The Bible Verse Editor modal, shortcut, and edit button are disabled, keeping scripture selection in direct-send mode.
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Limited text scope — search one passage instead of the whole canon. */}
+      <div className={`rounded-xl border p-5 space-y-4 transition-all ${darkMode ? 'border-gray-800 bg-gray-900/50' : 'border-gray-200 bg-white'}`}>
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1.5 flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`text-sm font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                Limited Text Scope
+              </span>
+              <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                darkMode
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                  : 'bg-amber-100 text-amber-800 border border-amber-300'
+              }`}>
+                Experimental
+              </span>
+              <span className={`text-[10px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded ${
+                bibleTextScopeEnabled
+                  ? (darkMode ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' : 'bg-emerald-100 text-emerald-800 border border-emerald-200')
+                  : (darkMode ? 'bg-gray-800 text-gray-400 border border-gray-700' : 'bg-gray-100 text-gray-500 border border-gray-200')
+              }`}>
+                {bibleTextScopeEnabled ? 'ON' : 'OFF'}
+              </span>
+            </div>
+            <p className={`text-xs leading-relaxed ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+              Adds a <span className="font-semibold">Limit to passage</span> field under verse search. Name a passage — <span className="font-mono">Acts 6</span>, <span className="font-mono">Acts 6:1-10</span>, <span className="font-mono">Acts 6-7</span> — then search a word or sentence and only that passage is searched. Ranking and typo tolerance behave exactly as they do canon-wide.
+            </p>
+          </div>
+          <Switch checked={bibleTextScopeEnabled} onCheckedChange={handleToggleBibleTextScope} aria-label="Toggle Limited Text Scope (experimental)" />
+        </div>
+
+        {bibleTextScopeEnabled ? (
+          <div className={`rounded-lg border p-3 text-xs leading-relaxed flex items-start gap-2.5 ${
+            darkMode ? 'bg-amber-500/10 border-amber-500/30 text-amber-200' : 'bg-amber-50 border-amber-200 text-amber-800'
+          }`}>
+            <Sparkles className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" />
+            <div>
+              <span className="font-semibold">Feature Active:</span> The passage limit is visible in the verse-search tray and the Bible search window. Leaving it empty searches the whole Bible, exactly as before.
+            </div>
+          </div>
+        ) : (
+          <div className={`rounded-lg border p-3 text-xs leading-relaxed flex items-start gap-2.5 ${
+            darkMode ? 'bg-gray-950/60 border-gray-800 text-gray-400' : 'bg-gray-50 border-gray-200 text-gray-600'
+          }`}>
+            <BookOpen className="w-4 h-4 shrink-0 mt-0.5 text-gray-400" />
+            <div>
+              <span className="font-semibold">Feature Inactive:</span> Verse search covers the whole Bible and no passage field is shown.
             </div>
           </div>
         )}

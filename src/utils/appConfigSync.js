@@ -86,6 +86,7 @@ export function extractAppConfigFromStores() {
       freeNotesEnabled: Boolean(lyrics.freeNotesEnabled),
       schedulerEnabled: Boolean(lyrics.schedulerEnabled),
       bibleVerseEditorEnabled: Boolean(lyrics.bibleVerseEditorEnabled),
+      bibleTextScopeEnabled: Boolean(lyrics.bibleTextScopeEnabled),
     },
     autoplay: {
       interval: Number(lyrics.autoplaySettings?.interval) || 5,
@@ -192,6 +193,7 @@ export function applyAppConfigPatchToStores(rawPatch) {
       if ('freeNotesEnabled' in e) lyrics.setFreeNotesEnabled?.(e.freeNotesEnabled);
       if ('schedulerEnabled' in e) lyrics.setSchedulerEnabled?.(e.schedulerEnabled);
       if ('bibleVerseEditorEnabled' in e) lyrics.setBibleVerseEditorEnabled?.(e.bibleVerseEditorEnabled);
+      if ('bibleTextScopeEnabled' in e) lyrics.setBibleTextScopeEnabled?.(e.bibleTextScopeEnabled);
     }
 
     if (patch.autoplay) {

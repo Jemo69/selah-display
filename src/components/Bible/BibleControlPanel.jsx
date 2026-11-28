@@ -2,7 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useR
 import { Search, ChevronRight, ChevronDown, Loader2, History, BookOpen, SkipBack, SkipForward, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, GripVertical, LayoutGrid, Rows3, Monitor, Pencil } from 'lucide-react';
 import useBibleStore from '../../context/BibleStore';
 import useLyricsStore from '../../context/LyricsStore';
-import { orderBibleMetadata, searchBibleExperimental } from 'shared/bible';
+import { orderBibleMetadata, searchBibleExperimental, parsePassageScope, formatPassageScope } from 'shared/bible';
 import { buildAllVersionsPreview, truncatePreviewText } from '../../utils/biblePreview';
 import useToast from '../../hooks/useToast';
 import { useControlSocket } from '../../context/ControlSocketProvider';
@@ -41,6 +41,10 @@ function hashSplitText(t) {
 export default function BibleControlPanel({ darkMode, onSelectVerse }) {
   logger.info('BibleControlPanel mounted');
   const [query, setQuery] = useState('');
+  // Limited text scope: optional passage the text search is confined to.
+  // "Acts 6" + "grace" searches grace inside Acts 6 only.
+  const [scopeText, setScopeText] = useState('');
+  const parsedScope = useMemo(() => parsePassageScope(scopeText), [scopeText]);
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [searchAll, setSearchAll] = useState(false);
@@ -88,6 +92,12 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
 
   const output1Settings = useLyricsStore((s) => s.output1Settings) || {};
   const bibleVerseEditorEnabled = useLyricsStore((s) => s.bibleVerseEditorEnabled ?? false);
+  // Limited text scope is experimental: the passage field only exists while
+  // the User Preferences > Experimental switch is on, and a leftover value
+  // never narrows a search once it is off.
+  const bibleTextScopeEnabled = useLyricsStore((s) => s.bibleTextScopeEnabled ?? false);
+  const scope = bibleTextScopeEnabled ? parsedScope : null;
+  const scopeLabel = scope ? formatPassageScope(scope) : '';
   const isOutputOn = useLyricsStore((s) => s.isOutputOn);
   const setIsOutputOn = useLyricsStore((s) => s.setIsOutputOn);
   const controlSocket = useControlSocket?.() || null;
@@ -182,6 +192,7 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
         maxResults: 20,
         defaultBibleId,
         searchAll,
+        scope: scope || null,
         ...(biblesChanged ? { refreshBibles: true, allBibles: bibles } : {}),
         ...(currentChanged ? { currentBible } : {})
       });
@@ -190,7 +201,7 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
     return () => {
       clearTimeout(handle);
     };
-  }, [query, currentBible, bibles, defaultBibleId, searchAll]);
+  }, [query, scope, currentBible, bibles, defaultBibleId, searchAll]);
 
   const handleBookToggle = useCallback((bookNumber) => {
     setExpandedBooks(prev => ({
@@ -846,6 +857,31 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
                 </label>
               </div>
 
+              <div className="mt-2">
+                {bibleTextScopeEnabled && (
+                  <>
+                    <input
+                      type="text"
+                      value={scopeText}
+                      onChange={(e) => { setAllVersionsPreview(null); setScopeText(e.target.value); }}
+                      placeholder="Limit to passage — Acts 6 or Acts 6:1-10"
+                      aria-label="Limit search to passage"
+                      className={`w-full rounded-lg border px-2 py-1.5 text-xs ${darkMode
+                        ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400'
+                        : 'bg-white border-gray-300 text-gray-900 placeholder-gray-400'
+                        }`}
+                    />
+                    {scopeText.trim() && (
+                      <p className={`mt-1 text-[10px] ${scope ? 'text-blue-400' : (darkMode ? 'text-gray-500' : 'text-gray-400')}`}>
+                        {scope
+                          ? `Searching only ${scopeLabel}`
+                          : 'Not a passage yet — searching the whole Bible'}
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+
               {/* Search Results — allow growing past half the panel when needed */}
               {searchResults.length > 0 ? (
                 <div className={`mt-2 max-h-[min(52vh,420px)] overflow-y-auto rounded-lg border ${darkMode ? 'border-gray-600 bg-gray-700' : 'border-gray-200 bg-white'
@@ -875,7 +911,7 @@ export default function BibleControlPanel({ darkMode, onSelectVerse }) {
               ) : query.length >= 3 ? (
                 <div className={`mt-2 rounded-lg border px-3 py-2 text-xs ${darkMode ? 'border-gray-700 bg-gray-800 text-gray-400' : 'border-gray-200 bg-gray-50 text-gray-500'
                   }`}>
-                  No matching verses found.
+                  No matching verses found{scopeLabel ? ` in ${scopeLabel}` : ''}.
                 </div>
               ) : (
                 <div className={`mt-2 rounded-lg border px-3 py-2 text-xs ${darkMode ? 'border-gray-700 bg-gray-800 text-gray-400' : 'border-gray-200 bg-gray-50 text-gray-500'

@@ -378,6 +378,108 @@ export function splitMultiPartReferences(query) {
     .filter(Boolean);
 }
 
+// --- Passage scope (limited text scope) ---
+// A scope restricts a TEXT search to one passage instead of the whole canon:
+// "Acts 6" + "grace" finds grace inside Acts 6. The scope never turns the
+// query into a verse lookup, and the query never widens the scope. Fully
+// anchored on purpose — a scope field must reject "Acts 6 hello" rather than
+// silently search Acts 6.
+const PASSAGE_SCOPE_REGEX = /^(.+?)\s+(\d+)(?:\s*[:.,]\s*(\d+)|\s+(\d+))?(?:\s*-\s*(\d+))?\s*$/i;
+
+/**
+ * Parse a passage scope string. Pure and bible-independent, so a UI can show
+ * "this is a passage" feedback before any translation is loaded.
+ *
+ * @param {string} text e.g. "Acts 6", "Acts 6:1-10", "Acts 6-8", "Rom 8:38-9:2"
+ * @returns {{bookName: string, ranges: Array<{startChapter:number,
+ *   startVerse:number|null, endChapter:number, endVerse:number|null}>}|null}
+ */
+export function parsePassageScope(text) {
+  const raw = normalizeReferenceDashes(text).trim();
+  if (!raw) return null;
+
+  const cross = matchCrossChapterSegment(raw);
+  // "Acts 6-7" is a chapter span; "Acts 6:1-10" and "Acts 6 1-10" are verse
+  // ranges. A verse separator, or a "book" part that ends in a digit (i.e.
+  // the real chapter number was swallowed into the book name), means the
+  // chapter-span shape is a false positive.
+  const hasVerseSeparator = /[:.,]/.test(raw);
+  const spanIsFalsePositive = cross?.isChapterSpan
+    && (hasVerseSeparator || /\d$/.test(String(cross.bookPart || '').trim()));
+  if (cross && !spanIsFalsePositive) {
+    return {
+      bookName: cross.bookPart,
+      ranges: [{
+        startChapter: cross.startChapter,
+        startVerse: cross.startVerse,
+        endChapter: cross.endChapter,
+        endVerse: cross.endVerse,
+      }],
+    };
+  }
+
+  const match = raw.match(PASSAGE_SCOPE_REGEX);
+  if (!match) return null;
+  const [, bookPart, chapterPart, versePart1, versePart2, rangeEndPart] = match;
+  const bookName = String(bookPart || '').trim();
+  const chapter = parseInt(chapterPart, 10);
+  if (!bookName || !Number.isInteger(chapter) || chapter < 1) return null;
+
+  const versePart = versePart1 || versePart2 || null;
+  const startVerse = versePart ? parseInt(versePart, 10) : null;
+  if (startVerse != null && (!Number.isInteger(startVerse) || startVerse < 1)) return null;
+  const requestedEnd = rangeEndPart ? parseInt(rangeEndPart, 10) : null;
+  if (requestedEnd != null && (!Number.isInteger(requestedEnd) || requestedEnd < 1)) return null;
+  const endVerse = startVerse == null ? null : (requestedEnd == null ? startVerse : requestedEnd);
+  if (startVerse != null && endVerse < startVerse) return null;
+
+  return { bookName, ranges: [{ startChapter: chapter, startVerse, endChapter: chapter, endVerse }] };
+}
+
+/**
+ * Resolve a parsed scope against one translation. Returns null when that
+ * translation has no such book — the caller must skip that bible instead of
+ * searching it unscoped.
+ */
+export function resolvePassageScope(bible, scope) {
+  if (!bible || !Array.isArray(bible.books) || !scope) return null;
+  const book = findBookInArray(bible.books, scope.bookName);
+  if (!book) return null;
+  const ranges = (scope.ranges || []).filter(
+    (range) => range && Number.isInteger(range.startChapter) && Number.isInteger(range.endChapter)
+  );
+  if (ranges.length === 0) return null;
+  return { bookNumber: book.number, bookName: book.name, ranges };
+}
+
+/** True when the verse sits inside a resolved scope. */
+export function passageScopeContains(resolved, bookNumber, chapter, verse) {
+  if (!resolved) return false;
+  if (bookNumber !== resolved.bookNumber) return false;
+  for (const range of resolved.ranges) {
+    if (chapter < range.startChapter || chapter > range.endChapter) continue;
+    if (range.startVerse != null && chapter === range.startChapter && verse < range.startVerse) continue;
+    if (range.endVerse != null && chapter === range.endChapter && verse > range.endVerse) continue;
+    return true;
+  }
+  return false;
+}
+
+/** Human label for a parsed scope, for the search UI badge. */
+export function formatPassageScope(scope) {
+  if (!scope || !Array.isArray(scope.ranges) || scope.ranges.length === 0) return '';
+  return scope.ranges.map((range) => {
+    const chapters = range.startChapter === range.endChapter
+      ? String(range.startChapter)
+      : `${range.startChapter}-${range.endChapter}`;
+    if (range.startVerse == null) return `${scope.bookName} ${chapters}`;
+    const verses = range.endVerse == null || range.endVerse === range.startVerse
+      ? String(range.startVerse)
+      : `${range.startVerse}-${range.endVerse}`;
+    return `${scope.bookName} ${chapters}:${verses}`;
+  }).join('; ');
+}
+
 /**
  * Expand a cross-chapter (or whole-chapter-span) segment into per-chapter
  * verse groups. Pure function: no Node/browser APIs, safe in Node, workers,
@@ -1158,10 +1260,14 @@ function experimentalTermVariants(term) {
   return [...new Set(out)];
 }
 
-export function searchBibleExperimental(currentBible, query, allBibles = {}, maxResults = 50, defaultBibleId = null, searchAll = false) {
+export function searchBibleExperimental(currentBible, query, allBibles = {}, maxResults = 50, defaultBibleId = null, searchAll = false, scope = null) {
   if (!currentBible || !currentBible.books) return [];
   const rawQuery = String(query || '').trim();
   if (!rawQuery) return [];
+  // Limited text scope: the query stays a text query and the scope only
+  // filters eligible verses. Reference lookups are disabled while scoped so
+  // typing "grace" in Acts 6 can never fall through to a verse lookup.
+  const scopeActive = Boolean(scope && Array.isArray(scope.ranges) && scope.ranges.length > 0);
 
   const biblesToSearch = (searchAll && Object.keys(allBibles).length > 0)
     ? Object.values(allBibles).sort((a, b) => {
@@ -1174,10 +1280,12 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
     : [currentBible];
 
   // 1. Reference path identical to searchBible — grouped + single.
-  const groupedReferences = searchGroupedReferences(biblesToSearch, rawQuery, maxResults, currentBible?.id);
-  if (groupedReferences) return groupedReferences;
+  if (!scopeActive) {
+    const groupedReferences = searchGroupedReferences(biblesToSearch, rawQuery, maxResults, currentBible?.id);
+    if (groupedReferences) return groupedReferences;
+  }
 
-  const referenceMatch = rawQuery.match(REFERENCE_REGEX);
+  const referenceMatch = scopeActive ? null : rawQuery.match(REFERENCE_REGEX);
   if (referenceMatch) {
     const results = [];
     const [, bookPart, chapterPart, versePart1, versePart2, rangeEndPart] = referenceMatch;
@@ -1231,7 +1339,7 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
   // anywhere via prefix/substring, so "so"->Song, "in"->Corinthians,
   // "a"->Amos hijacked every sentence containing a function word and
   // scoped the search to one wrong book. References never reach here.
-  const leading = matchLeadingBook(currentBible.books, rawQuery);
+  const leading = scopeActive ? null : matchLeadingBook(currentBible.books, rawQuery);
   if (leading && !leading.rest) return [];
   const searchTerm = leading && leading.rest ? leading.rest : rawQuery;
   if (!searchTerm || searchTerm.trim().length < 2) return [];
@@ -1247,6 +1355,14 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
     const isCurrent = bible.id === currentBible.id;
     const isDefault = bible.id === defaultBibleId;
     const priorityBoost = (isDefault ? 100 : 0) + (isCurrent ? 50 : 0);
+    // Per-translation scope: book names differ between translations (Salmos
+    // vs Psalms), and a translation missing the book must be skipped rather
+    // than searched unscoped.
+    const scopeFilter = scopeActive ? resolvePassageScope(bible, scope) : null;
+    if (scopeActive && !scopeFilter) continue;
+    const inScope = scopeFilter
+      ? (b, c, v) => passageScopeContains(scopeFilter, b, c, v)
+      : () => true;
     const perBibleFilter = leading?.book
       ? findBookInArray(bible.books, leading.book.name)?.number ?? null
       : null;
@@ -1276,11 +1392,14 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
         // Book-scoped queries: an all-out-of-scope pair pool must fall
         // through to the union path (which finds scattered in-scope words)
         // instead of early-returning empty.
-        if (perBibleFilter != null || (bookFilterNumber != null && perBibleFilter == null)) {
+        if (perBibleFilter != null || (bookFilterNumber != null && perBibleFilter == null) || scopeFilter) {
           pairKeys = pairKeys.filter((packed) => {
             const pb = Math.floor(packed / 1000000);
+            const pc = Math.floor((packed % 1000000) / 1000);
+            const pv = packed % 1000;
             if (perBibleFilter != null && pb !== perBibleFilter) return false;
             if (bookFilterNumber != null && perBibleFilter == null && pb !== bookFilterNumber) return false;
+            if (scopeFilter && !inScope(pb, pc, pv)) return false;
             return true;
           });
         }
@@ -1294,6 +1413,7 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
           if (bookFilterNumber != null && perBibleFilter == null && pb !== bookFilterNumber) continue;
           const pc = Math.floor((packed % 1000000) / 1000);
           const pv = packed % 1000;
+          if (scopeFilter && !inScope(pb, pc, pv)) continue;
           const pbook = bible.bookMap?.[pb] || bible.books.find((bk) => bk.number === pb);
           if (!pbook) continue;
           const pchapter = pbook.chapterMap?.[pc] || pbook.chapters.find((ch) => ch.number === pc);
@@ -1339,6 +1459,7 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
       const makePush = (set) => {
         const push = (rec) => {
           if (perBibleFilter != null && rec.b !== perBibleFilter) return true;
+          if (scopeFilter && !inScope(rec.b, rec.c, rec.v)) return true;
           const k = rec.b * 1000000 + rec.c * 1000 + rec.v;
           if (set.has(k)) return true;
           if (singleTerm && set.size >= 2000) return false;
@@ -1572,6 +1693,7 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
         const v = key % 1000;
         if (perBibleFilter != null && b !== perBibleFilter) continue;
         if (bookFilterNumber != null && perBibleFilter == null && b !== bookFilterNumber) continue;
+        if (scopeFilter && !inScope(b, c, v)) continue;
         const found = lookup(b, c, v);
         if (!found) continue;
         const s = scoreSentenceVerse(queryNorm, queryContent, found.verse.text || '', termWeights);
@@ -1596,8 +1718,10 @@ export function searchBibleExperimental(currentBible, query, allBibles = {}, max
     // No index: full scan with sentence scoring (same gate).
     for (const book of bible.books) {
       if (perBibleFilter != null && book.number !== perBibleFilter) continue;
+      if (scopeFilter && book.number !== scopeFilter.bookNumber) continue;
       for (const chapter of book.chapters || []) {
         for (const verse of chapter.verses || []) {
+          if (scopeFilter && !inScope(book.number, chapter.number, verse.number)) continue;
           const s = scoreSentenceVerse(queryNorm, queryContent, verse.text || '');
           if (!s) continue;
           results.push({

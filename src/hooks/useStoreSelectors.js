@@ -369,6 +369,16 @@ export const useBibleVerseEditorEnabled = () =>
         shallow
     );
 
+export const useBibleTextScopeEnabled = () =>
+    useStoreWithEqualityFn(
+        useLyricsStore,
+        (state) => ({
+            enabled: state.bibleTextScopeEnabled ?? false,
+            setEnabled: state.setBibleTextScopeEnabled,
+        }),
+        shallow
+    );
+
 
 export const usePreviewMultiviewState = () =>
     useStoreWithEqualityFn(
